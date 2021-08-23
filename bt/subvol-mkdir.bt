@@ -1,0 +1,12 @@
+#include <linux/dcache.h>
+
+kprobe:btrfs_unlink_subvol {
+  printf("unlink subvol: %s\n", str(arg4, arg5));
+  @del_subvol[str(arg4, arg5)] = 1
+}
+
+tracepoint:syscalls:sys_enter_mkdir {
+  if (@del_subvol[str(args->pathname)]) {
+    cat("/proc/%d/cmdline", pid);
+  }
+}

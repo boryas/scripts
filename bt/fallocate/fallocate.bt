@@ -1,0 +1,4 @@
+kprobe:btrfs_fallocate {
+        printf("btrfs_fallocate: (%s %d) %llu, %llu\n", comm, pid, arg2, arg3);
+        @lens[comm, pid] = hist(arg3);
+}

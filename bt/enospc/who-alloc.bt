@@ -1,0 +1,20 @@
+tracepoint:btrfs:btrfs_chunk_alloc {
+        printf("chunk alloc (%s %d): type: %llu, offset: %llu, size: %llu, stack: %s\n", comm, pid, args->type, args->offset, args->size, kstack);
+        @allocs[comm, kstack] = hist(args->size);
+}
+
+kprobe:btrfs_fallocate {
+        printf("falloc (%s %d) ino: %lu, mode: %d, offset: %llu, size: %llu\n", comm, pid, ((struct file *)arg0)->f_inode->i_ino, arg1, arg2, arg3);
+        @fallocs[comm] = hist(arg3);
+        @live[tid] = 1;
+}
+
+kretprobe:btrfs_fallocate {
+        delete(@live[tid]);
+}
+
+tracepoint:btrfs:find_free_extent {
+        if (@live[tid]) {
+                printf("ffe for falloc (%s %d) len: %llu, empty: %llu, flags: %llu\n", comm, pid, args->num_bytes, args->empty_size, args->data);
+        }
+}

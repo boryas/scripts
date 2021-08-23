@@ -1,0 +1,15 @@
+kprobe:btrfs_commit_transaction {
+  @[pid] = nsecs;
+}
+kretprobe:btrfs_commit_transaction {
+  $delta = nsecs - @[pid];
+  // 500 ms
+  if ($delta > 500000000) {
+        $out = ($delta, pid, comm);
+        print($out)
+  }
+  delete(@[pid]);
+}
+END {
+  clear(@);
+}

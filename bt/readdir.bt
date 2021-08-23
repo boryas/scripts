@@ -1,0 +1,8 @@
+#include <linux/fs.h>
+
+kprobe:btrfs_real_readdir {
+       $ino = ((struct file *)arg0)->f_inode->i_ino;
+       if ($ino == 256) {
+               @readdirs = count();
+       }
+}

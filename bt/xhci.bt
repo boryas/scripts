@@ -1,0 +1,28 @@
+kprobe:hub_event {
+	printf("hub_event: %d %s %d\n", nsecs / 1000000, comm, pid);
+}
+kprobe:port_event {
+	printf("port_event: %d %s %d\n", nsecs / 1000000, comm, pid);
+}
+kprobe:hub_port_connect {
+	printf("hub_port_connect: %d %s %d port %d\n", nsecs / 1000000, comm, pid, arg2);
+}
+kprobe:usb_disconnect {
+	printf("usb_disconnect: %d %s %d\n", nsecs / 1000000, comm, pid);
+}
+kprobe:xhci_free_dev {
+	printf("xhci_free_dev: %d %s %d dev: %p\n", nsecs / 1000000, comm, pid, arg1);
+}
+
+kprobe:xhci_urb_dequeue {
+	@deq[pid] = 1;
+}
+kprobe:xhci_queue_stop_endpoint {
+	if (@deq[pid] == 1) {
+		printf("xhci_queue_stop_endpoint: %d %s %d slot id: %d, ep index: %d\n", nsecs / 1000000, comm, pid, arg3, arg4);
+		delete(@deq[pid]);
+	}
+}
+tracepoint:xhci-hcd:xhci_handle_cmd_stop_ep {
+	printf("xhci_handle_cmd_stop_ep: %d %s %d\n", nsecs / 1000000, comm, pid);
+}

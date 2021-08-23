@@ -1,0 +1,209 @@
+kprobe:btrfs_sync_file {
+        @live[tid] = 1;
+        @start[tid] = nsecs / 1000000;
+}
+kretprobe:btrfs_sync_file {
+        if (@live[tid]) {
+                $now = nsecs / 1000000;
+                $delta = $now - @start[tid];
+                @sync_lat = hist($delta);
+                if ($delta > 100) {
+                        printf("slow btrfs_sync_file (%d %lu): %lu ms: %s\n", tid, @start[tid], $delta, comm);
+                }
+        }
+        delete(@live[tid]);
+        delete(@start[tid]);
+}
+
+kprobe:__lock_page {
+        if(@live[tid]) {
+                @lock_page_start[tid] = nsecs / 1000000;
+                @lock_page_kstack[tid] = kstack;
+        }
+}
+kretprobe:__lock_page {
+        if(@live[tid] && @lock_page_start[tid]) {
+                $now = nsecs / 1000000;
+                $delta = $now - @lock_page_start[tid];
+                if ($delta > 10) {
+                        printf("slow __lock_page (%d %lu): %lu ms %s %s\n", tid, @start[tid], $delta, comm, @lock_page_kstack[tid]);
+                }
+                @lock_page_lat = hist($delta);
+        }
+}
+
+kprobe:mutex_lock {
+        if(@live[tid]) {
+                @mutex_lock_start[tid] = nsecs / 1000000;
+                @mutex_lock_kstack[tid] = kstack;
+        }
+}
+kretprobe:mutex_lock {
+        if(@live[tid] && @mutex_lock_start[tid]) {
+                $now = nsecs / 1000000;
+                $delta = $now - @mutex_lock_start[tid];
+                if ($delta > 10) {
+                        printf("slow mutex_lock (%d %lu): %lu ms %s %s\n", tid, @start[tid], $delta, comm, @mutex_lock_kstack[tid]);
+                }
+                @mutex_lock_lat = hist($delta);
+        }
+}
+
+kprobe:down_read {
+        if(@live[tid]) {
+                @down_read_start[tid] = nsecs / 1000000;
+                @down_read_kstack[tid] = kstack;
+        }
+}
+kretprobe:down_read {
+        if(@live[tid] && @down_read_start[tid]) {
+                $now = nsecs / 1000000;
+                $delta = $now - @down_read_start[tid];
+                if ($delta > 10) {
+                        printf("slow down_read (%d %lu): %lu ms %s %s\n", tid, @start[tid], $delta, comm, @down_read_kstack[tid]);
+                }
+                @down_read_lat = hist($delta);
+        }
+}
+
+kprobe:down_write {
+        if(@live[tid]) {
+                @down_write_start[tid] = nsecs / 1000000;
+                @down_write_kstack[tid] = kstack;
+        }
+}
+kretprobe:down_write {
+        if(@live[tid] && @down_write_start[tid]) {
+                $now = nsecs / 1000000;
+                $delta = $now - @down_write_start[tid];
+                if ($delta > 10) {
+                        printf("slow down_write (%d %lu): %lu ms %s %s\n", tid, @start[tid], $delta, comm, @down_write_kstack[tid]);
+                }
+                @down_write_lat = hist($delta);
+        }
+}
+
+kprobe:wait_on_page_bit {
+        if(@live[tid]) {
+                @wait_on_page_bit_start[tid] = nsecs / 1000000;
+                @wait_on_page_bit_kstack[tid] = kstack;
+                @wait_on_page_bit_bit[tid] = arg1;
+        }
+}
+kretprobe:wait_on_page_bit {
+        if(@live[tid] && @wait_on_page_bit_start[tid]) {
+                $now = nsecs / 1000000;
+                $delta = $now - @wait_on_page_bit_start[tid];
+                if ($delta > 10) {
+                        printf("slow wait_on_page_bit (%d) (%d %lu): %lu ms %s %s\n", @wait_on_page_bit_bit[tid], tid, @start[tid], $delta, comm, @wait_on_page_bit_kstack[tid]);
+                }
+                @wait_on_page_bit_lat[@wait_on_page_bit_bit[tid]] = hist($delta);
+        }
+}
+
+kprobe:wait_current_trans {
+        if(@live[tid]) {
+                @wait_current_trans_start[tid] = nsecs / 1000000;
+                @wait_current_trans_kstack[tid] = kstack;
+        }
+}
+kretprobe:wait_current_trans {
+        if(@live[tid] && @wait_current_trans_start[tid]) {
+                $now = nsecs / 1000000;
+                $delta = $now - @wait_current_trans_start[tid];
+                if ($delta > 10) {
+                        printf("slow wait_current_trans (%d %lu): %lu ms %s %s\n", tid, @start[tid], $delta, comm, @wait_current_trans_kstack[tid]);
+                }
+                @wait_current_trans_lat = hist($delta);
+        }
+}
+
+kprobe:wait_log_commit {
+        if(@live[tid]) {
+                @wait_log_commit_start[tid] = nsecs / 1000000;
+                @wait_log_commit_kstack[tid] = kstack;
+        }
+}
+kretprobe:wait_log_commit {
+        if(@live[tid] && @wait_log_commit_start[tid]) {
+                $now = nsecs / 1000000;
+                $delta = $now - @wait_log_commit_start[tid];
+                if ($delta > 10) {
+                        printf("slow wait_log_commit (%d %lu): %lu ms %s %s\n", tid, @start[tid], $delta, comm, @wait_log_commit_kstack[tid]);
+                }
+                @wait_log_commit_lat = hist($delta);
+        }
+}
+
+kprobe:wait_for_writer {
+        if(@live[tid]) {
+                @wait_for_writer_start[tid] = nsecs / 1000000;
+                @wait_for_writer_kstack[tid] = kstack;
+        }
+}
+kretprobe:wait_for_writer {
+        if(@live[tid] && @wait_for_writer_start[tid]) {
+                $now = nsecs / 1000000;
+                $delta = $now - @wait_for_writer_start[tid];
+                if ($delta > 10) {
+                        printf("slow wait_for_writer (%d %lu): %lu ms %s %s\n", tid, @start[tid], $delta, comm, @wait_for_writer_kstack[tid]);
+                }
+                @wait_for_writer_lat = hist($delta);
+        }
+}
+
+kprobe:__wait_on_buffer {
+        if(@live[tid]) {
+                @__wait_on_buffer_start[tid] = nsecs / 1000000;
+                @__wait_on_buffer_kstack[tid] = kstack;
+        }
+}
+kretprobe:__wait_on_buffer {
+        if(@live[tid] && @__wait_on_buffer_start[tid]) {
+                $now = nsecs / 1000000;
+                $delta = $now - @__wait_on_buffer_start[tid];
+                if ($delta > 10) {
+                        printf("slow __wait_on_buffer (%d %lu): %lu ms %s %s\n", tid, @start[tid], $delta, comm, @__wait_on_buffer_kstack[tid]);
+                }
+                @__wait_on_buffer_lat = hist($delta);
+        }
+}
+
+kprobe:wait_for_completion_io {
+        if(@live[tid]) {
+                @wait_for_completion_io_start[tid] = nsecs / 1000000;
+                @wait_for_completion_io_kstack[tid] = kstack;
+        }
+}
+kretprobe:wait_for_completion_io {
+        if(@live[tid] && @wait_for_completion_io_start[tid]) {
+                $now = nsecs / 1000000;
+                $delta = $now - @wait_for_completion_io_start[tid];
+                if ($delta > 10) {
+                        printf("slow wait_for_completion_io (%d %lu): %lu ms %s %s\n", tid, @start[tid], $delta, comm, @wait_for_completion_io_kstack[tid]);
+                }
+                @wait_for_completion_io_lat = hist($delta);
+        }
+}
+
+END {
+        clear(@lock_page_start);
+        clear(@lock_page_kstack);
+        clear(@mutex_lock_start);
+        clear(@mutex_lock_kstack);
+        clear(@down_read_start);
+        clear(@down_read_kstack);
+        clear(@down_write_start);
+        clear(@down_write_kstack);
+        clear(@wait_on_page_bit_start);
+        clear(@wait_on_page_bit_kstack);
+        clear(@wait_on_page_bit_bit);
+        clear(@wait_for_writer_start);
+        clear(@wait_for_writer_kstack);
+        clear(@wait_log_commit_start);
+        clear(@wait_log_commit_kstack);
+        clear(@__wait_on_buffer_start);
+        clear(@__wait_on_buffer_kstack);
+        clear(@wait_for_completion_io_start);
+        clear(@wait_for_completion_io_kstack);
+}

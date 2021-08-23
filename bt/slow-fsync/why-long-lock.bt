@@ -1,0 +1,379 @@
+BEGIN {
+        @BIG_THRESH = (uint64)200;
+        @LIL_THRESH = (uint64)50;
+}
+
+kprobe:btrfs_commit_transaction {
+        @txn[tid] = 1;
+        @start[tid] = nsecs / 1000000;
+}
+kretprobe:btrfs_commit_transaction {
+        if (@txn[tid]) {
+                $now = nsecs / 1000000;
+                $delta = $now - @start[tid];
+                @commit_lat = hist($delta);
+                if ($delta > @BIG_THRESH) {
+                        printf("slow btrfs_commit_transaction (%d %lu): %lu ms: %s\n", tid, @start[tid], $delta, comm);
+                }
+        }
+        delete(@txn[tid]);
+        delete(@start[tid]);
+}
+
+kprobe:mutex_lock {
+        if (@txn[tid]) {
+                @mutex_lock_lock[tid] = arg0;
+                @mutex_lock_start[tid, arg0] = nsecs / 1000000;
+                @mutex_lock_kstack[tid, arg0] = kstack;
+        }
+}
+kretprobe:mutex_lock {
+        if(@mutex_lock_lock[tid]) {
+                $lock = @mutex_lock_lock[tid];
+                $now = nsecs / 1000000;
+                $delta = $now - @mutex_lock_start[tid, $lock];
+                if ($delta > @LIL_THRESH) {
+                        printf("slow mutex_lock acquire (%d %lu %lu): %lu ms %s %s\n", tid, @start[tid], $lock, $delta, comm, @mutex_lock_kstack[tid, $lock]);
+                }
+                @mutex_lock_lat = hist($delta);
+
+                delete(@mutex_lock_lock[tid]);
+                @mutex_hold_start[tid, $lock] = $now;
+                if (@locks[tid, 0] == 0) {
+                        @locks[tid, 0] = $lock;
+                        @lock_slot[tid, $lock] = 0;
+                } else if (@locks[tid, 1] == 0) {
+                        @locks[tid, 1] = $lock;
+                        @lock_slot[tid, $lock] = 1;
+                } else if (@locks[tid, 2] == 0) {
+                        @locks[tid, 2] = $lock;
+                        @lock_slot[tid, $lock] = 2;
+                } else if (@locks[tid, 3] == 0) {
+                        @locks[tid, 3] = $lock;
+                        @lock_slot[tid, $lock] = 3;
+                } else {
+                        printf("too many locks!!!!! %s\n", @mutex_lock_kstack[tid, $lock]);
+                }
+        }
+}
+kprobe:mutex_unlock {
+        $lock = arg0;
+        if(@mutex_hold_start[tid, $lock]) {
+                $now = nsecs / 1000000;
+                $delta = $now - @mutex_hold_start[tid, $lock];
+                $lock_slot = @lock_slot[tid, $lock];
+                if ($delta > @BIG_THRESH) {
+                        printf("long mutex hold (%d %lu %lu): %lu ms %s lock stack: %s unlock stack: %s\n", tid, @start[tid], $lock, $delta, comm, @mutex_lock_kstack[tid, $lock], kstack);
+                        printf("btree_write_cache_pages: %lu\n", @btree_write_cache_pages_portion[tid, $lock_slot]);
+                        printf("lock_extent_buffer_for_io: %lu\n", @lock_extent_buffer_for_io_portion[tid, $lock_slot]);
+                        printf("wait_on_extent_buffer_writeback: %lu\n", @wait_on_extent_buffer_writeback_portion[tid, $lock_slot]);
+                        printf("__lock_page: %lu\n", @__lock_page_portion[tid, $lock_slot]);
+                        printf("down_read: %lu\n", @down_read_portion[tid, $lock_slot]);
+                        printf("down_write: %lu\n", @down_write_portion[tid, $lock_slot]);
+                        printf("wait_on_page_bit: %lu\n", @wait_on_page_bit_portion[tid, $lock_slot]);
+                        printf("__wait_on_buffer: %lu\n", @__wait_on_buffer_portion[tid, $lock_slot]);
+                        printf("wait_for_completion_io: %lu\n", @wait_for_completion_io_portion[tid, $lock_slot]);
+                }
+                @mutex_hold_duration = hist($delta);
+                delete(@mutex_hold_start[tid, $lock]);
+                delete(@locks[tid, $lock_slot]);
+                delete(@lock_slot[tid, $lock]);
+                delete(@__lock_page_portion[tid, $lock_slot]);
+                delete(@down_read_portion[tid, $lock_slot]);
+                delete(@down_write_portion[tid, $lock_slot]);
+                delete(@wait_on_page_bit_portion[tid, $lock_slot]);
+                delete(@__wait_on_buffer_portion[tid, $lock_slot]);
+                delete(@wait_for_completion_io_portion[tid, $lock_slot]);
+                delete(@btree_write_cache_pages_portion[tid, $lock_slot]);
+                delete(@lock_extent_buffer_for_io_portion[tid, $lock_slot]);
+                delete(@wait_on_extent_buffer_writeback_portion[tid, $lock_slot]);
+        }
+}
+
+kprobe:__lock_page {
+        if(@txn[tid]) {
+                @lock_page_start[tid] = nsecs / 1000000;
+                @lock_page_kstack[tid] = kstack;
+        }
+}
+kretprobe:__lock_page {
+        if(@txn[tid] && @lock_page_start[tid]) {
+                $now = nsecs / 1000000;
+                $delta = $now - @lock_page_start[tid];
+                if ($delta > @LIL_THRESH) {
+                        printf("slow __lock_page (%d %lu): %lu ms %s %s\n", tid, @start[tid], $delta, comm, @lock_page_kstack[tid]);
+                }
+                if (@locks[tid, 0] != 0) {
+                        @__lock_page_portion[tid, 0] += $delta;
+                }
+                if (@locks[tid, 1] != 0) {
+                        @__lock_page_portion[tid, 1] += $delta;
+                }
+                if (@locks[tid, 2] != 0) {
+                        @__lock_page_portion[tid, 2] += $delta;
+                }
+                if (@locks[tid, 3] != 0) {
+                        @__lock_page_portion[tid, 3] += $delta;
+                }
+                @lock_page_lat = hist($delta);
+        }
+}
+
+kprobe:down_read {
+        if(@txn[tid]) {
+                @down_read_start[tid] = nsecs / 1000000;
+                @down_read_kstack[tid] = kstack;
+        }
+}
+kretprobe:down_read {
+        if(@txn[tid] && @down_read_start[tid]) {
+                $now = nsecs / 1000000;
+                $delta = $now - @down_read_start[tid];
+                if ($delta > @LIL_THRESH) {
+                        printf("slow down_read (%d %lu): %lu ms %s %s\n", tid, @start[tid], $delta, comm, @down_read_kstack[tid]);
+                }
+                if (@locks[tid, 0] != 0) {
+                        @down_read_portion[tid, 0] += $delta;
+                }
+                if (@locks[tid, 1] != 0) {
+                        @down_read_portion[tid, 1] += $delta;
+                }
+                if (@locks[tid, 2] != 0) {
+                        @down_read_portion[tid, 2] += $delta;
+                }
+                if (@locks[tid, 3] != 0) {
+                        @down_read_portion[tid, 3] += $delta;
+                }
+                @down_read_lat = hist($delta);
+        }
+}
+
+kprobe:down_write {
+        if(@txn[tid]) {
+                @down_write_start[tid] = nsecs / 1000000;
+                @down_write_kstack[tid] = kstack;
+        }
+}
+kretprobe:down_write {
+        if(@txn[tid] && @down_write_start[tid]) {
+                $now = nsecs / 1000000;
+                $delta = $now - @down_write_start[tid];
+                if ($delta > @LIL_THRESH) {
+                        printf("slow down_write (%d %lu): %lu ms %s %s\n", tid, @start[tid], $delta, comm, @down_write_kstack[tid]);
+                }
+                if (@locks[tid, 0] != 0) {
+                        @down_write_portion[tid, 0] += $delta;
+                }
+                if (@locks[tid, 1] != 0) {
+                        @down_write_portion[tid, 1] += $delta;
+                }
+                if (@locks[tid, 2] != 0) {
+                        @down_write_portion[tid, 2] += $delta;
+                }
+                if (@locks[tid, 3] != 0) {
+                        @down_write_portion[tid, 3] += $delta;
+                }
+                @down_write_lat = hist($delta);
+        }
+}
+
+kprobe:wait_on_page_bit {
+        if(@txn[tid]) {
+                @wait_on_page_bit_start[tid] = nsecs / 1000000;
+                @wait_on_page_bit_kstack[tid] = kstack;
+                @wait_on_page_bit_bit[tid] = arg1;
+        }
+}
+kretprobe:wait_on_page_bit {
+        if(@txn[tid] && @wait_on_page_bit_start[tid]) {
+                $now = nsecs / 1000000;
+                $delta = $now - @wait_on_page_bit_start[tid];
+                if ($delta > @LIL_THRESH) {
+                        printf("slow wait_on_page_bit (%d) (%d %lu): %lu ms %s %s\n", @wait_on_page_bit_bit[tid], tid, @start[tid], $delta, comm, @wait_on_page_bit_kstack[tid]);
+                }
+                if (@locks[tid, 0] != 0) {
+                        @wait_on_page_bit_portion[tid, 0] += $delta;
+                }
+                if (@locks[tid, 1] != 0) {
+                        @wait_on_page_bit_portion[tid, 1] += $delta;
+                }
+                if (@locks[tid, 2] != 0) {
+                        @wait_on_page_bit_portion[tid, 2] += $delta;
+                }
+                if (@locks[tid, 3] != 0) {
+                        @wait_on_page_bit_portion[tid, 3] += $delta;
+                }
+                @wait_on_page_bit_lat[@wait_on_page_bit_bit[tid]] = hist($delta);
+        }
+}
+
+kprobe:__wait_on_buffer {
+        if(@txn[tid]) {
+                @__wait_on_buffer_start[tid] = nsecs / 1000000;
+                @__wait_on_buffer_kstack[tid] = kstack;
+        }
+}
+kretprobe:__wait_on_buffer {
+        if(@txn[tid] && @__wait_on_buffer_start[tid]) {
+                $now = nsecs / 1000000;
+                $delta = $now - @__wait_on_buffer_start[tid];
+                if ($delta > @LIL_THRESH) {
+                        printf("slow __wait_on_buffer (%d %lu): %lu ms %s %s\n", tid, @start[tid], $delta, comm, @__wait_on_buffer_kstack[tid]);
+                }
+                if (@locks[tid, 0] != 0) {
+                        @__wait_on_buffer_portion[tid, 0] += $delta;
+                }
+                if (@locks[tid, 1] != 0) {
+                        @__wait_on_buffer_portion[tid, 1] += $delta;
+                }
+                if (@locks[tid, 2] != 0) {
+                        @__wait_on_buffer_portion[tid, 2] += $delta;
+                }
+                if (@locks[tid, 3] != 0) {
+                        @__wait_on_buffer_portion[tid, 3] += $delta;
+                }
+                @__wait_on_buffer_lat = hist($delta);
+        }
+}
+
+kprobe:wait_for_completion_io {
+        if(@txn[tid]) {
+                @wait_for_completion_io_start[tid] = nsecs / 1000000;
+                @wait_for_completion_io_kstack[tid] = kstack;
+        }
+}
+kretprobe:wait_for_completion_io {
+        if(@txn[tid] && @wait_for_completion_io_start[tid]) {
+                $now = nsecs / 1000000;
+                $delta = $now - @wait_for_completion_io_start[tid];
+                if ($delta > @LIL_THRESH) {
+                        printf("slow wait_for_completion_io (%d %lu): %lu ms %s %s\n", tid, @start[tid], $delta, comm, @wait_for_completion_io_kstack[tid]);
+                }
+                if (@locks[tid, 0] != 0) {
+                        @wait_for_completion_io_portion[tid, 0] += $delta;
+                }
+                if (@locks[tid, 1] != 0) {
+                        @wait_for_completion_io_portion[tid, 1] += $delta;
+                }
+                if (@locks[tid, 2] != 0) {
+                        @wait_for_completion_io_portion[tid, 2] += $delta;
+                }
+                if (@locks[tid, 3] != 0) {
+                        @wait_for_completion_io_portion[tid, 3] += $delta;
+                }
+                @wait_for_completion_io_lat = hist($delta);
+        }
+}
+
+kprobe:lock_extent_buffer_for_io {
+        if(@txn[tid]) {
+                @lock_extent_buffer_for_io_start[tid] = nsecs / 1000000;
+                @lock_extent_buffer_for_io_kstack[tid] = kstack;
+        }
+}
+kretprobe:lock_extent_buffer_for_io {
+        if(@txn[tid] && @lock_extent_buffer_for_io_start[tid]) {
+                $now = nsecs / 1000000;
+                $delta = $now - @lock_extent_buffer_for_io_start[tid];
+                if ($delta > @LIL_THRESH) {
+                        printf("slow lock_extent_buffer_for_io (%d %lu): %lu ms %s %s\n", tid, @start[tid], $delta, comm, @lock_extent_buffer_for_io_kstack[tid]);
+                }
+                if (@locks[tid, 0] != 0) {
+                        @lock_extent_buffer_for_io_portion[tid, 0] += $delta;
+                }
+                if (@locks[tid, 1] != 0) {
+                        @lock_extent_buffer_for_io_portion[tid, 1] += $delta;
+                }
+                if (@locks[tid, 2] != 0) {
+                        @lock_extent_buffer_for_io_portion[tid, 2] += $delta;
+                }
+                if (@locks[tid, 3] != 0) {
+                        @lock_extent_buffer_for_io_portion[tid, 3] += $delta;
+                }
+                @lock_extent_buffer_for_io_lat = hist($delta);
+        }
+}
+
+kprobe:wait_on_extent_buffer_writeback {
+        if(@txn[tid]) {
+                @wait_on_extent_buffer_writeback_start[tid] = nsecs / 1000000;
+                @wait_on_extent_buffer_writeback_kstack[tid] = kstack;
+        }
+}
+kretprobe:wait_on_extent_buffer_writeback {
+        if(@txn[tid] && @wait_on_extent_buffer_writeback_start[tid]) {
+                $now = nsecs / 1000000;
+                $delta = $now - @wait_on_extent_buffer_writeback_start[tid];
+                if ($delta > @LIL_THRESH) {
+                        printf("slow wait_on_extent_buffer_writeback (%d %lu): %lu ms %s %s\n", tid, @start[tid], $delta, comm, @wait_on_extent_buffer_writeback_kstack[tid]);
+                }
+                if (@locks[tid, 0] != 0) {
+                        @wait_on_extent_buffer_writeback_portion[tid, 0] += $delta;
+                }
+                if (@locks[tid, 1] != 0) {
+                        @wait_on_extent_buffer_writeback_portion[tid, 1] += $delta;
+                }
+                if (@locks[tid, 2] != 0) {
+                        @wait_on_extent_buffer_writeback_portion[tid, 2] += $delta;
+                }
+                if (@locks[tid, 3] != 0) {
+                        @wait_on_extent_buffer_writeback_portion[tid, 3] += $delta;
+                }
+                @wait_on_extent_buffer_writeback_lat = hist($delta);
+        }
+}
+
+kprobe:btree_write_cache_pages {
+        if(@txn[tid]) {
+                @btree_write_cache_pages_start[tid] = nsecs / 1000000;
+                @btree_write_cache_pages_kstack[tid] = kstack;
+        }
+}
+kretprobe:btree_write_cache_pages {
+        if(@txn[tid] && @btree_write_cache_pages_start[tid]) {
+                $now = nsecs / 1000000;
+                $delta = $now - @btree_write_cache_pages_start[tid];
+                if ($delta > @LIL_THRESH) {
+                        printf("slow btree_write_cache_pages (%d %lu): %lu ms %s %s\n", tid, @start[tid], $delta, comm, @btree_write_cache_pages_kstack[tid]);
+                }
+                if (@locks[tid, 0] != 0) {
+                        @btree_write_cache_pages_portion[tid, 0] += $delta;
+                }
+                if (@locks[tid, 1] != 0) {
+                        @btree_write_cache_pages_portion[tid, 1] += $delta;
+                }
+                if (@locks[tid, 2] != 0) {
+                        @btree_write_cache_pages_portion[tid, 2] += $delta;
+                }
+                if (@locks[tid, 3] != 0) {
+                        @btree_write_cache_pages_portion[tid, 3] += $delta;
+                }
+                @btree_write_cache_pages_lat = hist($delta);
+        }
+}
+
+END {
+        clear(@mutex_lock_lock);
+        clear(@mutex_lock_start);
+        clear(@mutex_lock_kstack);
+        clear(@mutex_hold_start);
+        clear(@lock_page_start);
+        clear(@lock_page_kstack);
+        clear(@down_read_start);
+        clear(@down_read_kstack);
+        clear(@down_write_start);
+        clear(@down_write_kstack);
+        clear(@wait_on_page_bit_start);
+        clear(@wait_on_page_bit_kstack);
+        clear(@wait_on_page_bit_bit);
+        clear(@__wait_on_buffer_start);
+        clear(@__wait_on_buffer_kstack);
+        clear(@wait_for_completion_io_start);
+        clear(@wait_for_completion_io_kstack);
+        clear(@lock_extent_buffer_for_io_start);
+        clear(@lock_extent_buffer_for_io_kstack);
+        clear(@wait_on_extent_buffer_writeback_start);
+        clear(@wait_on_extent_buffer_writeback_kstack);
+        clear(@btree_write_cache_pages_start);
+        clear(@btree_write_cache_pages_kstack);
+}

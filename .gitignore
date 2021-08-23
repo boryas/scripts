@@ -1,3 +1,8 @@
+# typical name for output files
+*.out
+# stupid scp typos
+root@
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

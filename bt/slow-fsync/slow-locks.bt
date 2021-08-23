@@ -1,0 +1,56 @@
+kprobe:btrfs_sync_file {
+        @sync[tid] = 1;
+}
+kretprobe:btrfs_sync_file {
+        delete(@sync[tid]);
+}
+
+kprobe:btrfs_commit_transaction {
+        @commit[tid] = 1;
+}
+kretprobe:btrfs_commit_transaction {
+        delete(@commit[tid]);
+}
+
+kprobe:mutex_lock {
+        if (@sync[tid] || @commit[tid]) {
+                @mutex_lock_lock[tid] = arg0;
+                @mutex_lock_start[tid, arg0] = nsecs / 1000000;
+                @mutex_lock_kstack[tid, arg0] = kstack;
+        }
+}
+
+kretprobe:mutex_lock {
+        if(@mutex_lock_lock[tid]) {
+                $lock = @mutex_lock_lock[tid];
+                $now = nsecs / 1000000;
+                $delta = $now - @mutex_lock_start[tid, $lock];
+                if ($delta > 50) {
+                        printf("slow mutex_lock acquire (%d %lu %lu): %lu ms %s %s\n", tid, @mutex_lock_start[tid, $lock], $lock, $delta, comm, @mutex_lock_kstack[tid, $lock]);
+                }
+                @mutex_lock_lat = hist($delta);
+
+                delete(@mutex_lock_lock[tid]);
+                @mutex_hold_start[tid, $lock] = $now;
+        }
+}
+
+kprobe:mutex_unlock {
+        $lock = arg0;
+        if(@mutex_hold_start[tid, $lock]) {
+                $now = nsecs / 1000000;
+                $delta = $now - @mutex_hold_start[tid, $lock];
+                if ($delta > 50) {
+                        printf("long mutex hold (%d %lu %lu): %lu ms %s lock stack: %s unlock stack: %s\n", tid, @mutex_hold_start[tid, $lock], $lock, $delta, comm, @mutex_lock_kstack[tid, $lock], kstack);
+                }
+                @mutex_hold_duration = hist($delta);
+                delete(@mutex_hold_start[tid, $lock]);
+        }
+}
+
+END {
+        clear(@mutex_lock_lock);
+        clear(@mutex_lock_start);
+        clear(@mutex_lock_kstack);
+        clear(@mutex_hold_start);
+}

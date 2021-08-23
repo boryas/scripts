@@ -1,0 +1,23 @@
+tracepoint:xfs:xfs_inode_unpin {
+	if (@reclaim[args->ino] > 0) {
+		printf("unpin under reclaim: %lu\n", args->ino);
+		@unpinned[args->ino] = 1;
+	}
+	if (@pinned[args->ino] > 0) {
+		@pinned[args->ino]--;
+		if (@pinned[args->ino] == 0) {
+			@zeroed = count();
+		}
+	}
+}
+
+tracepoint:xfs:xfs_inode_pin {
+	@pinned[args->ino]++;
+	@pinned_ever = count();
+}
+
+kprobe:xfs_reclaim_inode {
+	$xfs_ino = (struct xfs_inode *)arg1;
+	//printf("reclaim: %lld. pincount: %d\n", $xfs_ino->i_ino, $xfs_ino->i_pincount.counter);
+	@reclaim[$xfs_ino->i_ino]++;
+}

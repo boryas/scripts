@@ -1,0 +1,19 @@
+#include <linux/fs.h>
+
+kprobe:do_dentry_open {
+  $filp = (struct file *)arg0;
+  $ino = (struct inode *)arg1;
+  if ($filp->f_flags & 0x20) { // FMODE_EXEC
+    $verity = $ino->i_flags & 65536; // S_VERITY
+    $fname = @execat[tid];
+    @verity[$fname, $verity] = count();
+  }
+}
+
+kprobe:do_open_execat {
+  @execat[tid] = str(((struct filename *)arg1)->name);
+}
+
+kretprobe:do_open_execat {
+  delete(@execat[tid]);
+}

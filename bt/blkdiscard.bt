@@ -1,0 +1,10 @@
+kprobe:blk_ioctl_discard {
+  $dev = ((struct block_device *)arg0)->bd_disk->disk_name;
+  if (((struct block_device *)arg0)->bd_holders > 0) {
+    printf("%s called discard ioctl on held dev: %s\n", comm, $dev);
+    @held[$dev] = count();
+    @villain[comm] = count();
+  } else {
+    @unheld[$dev] = count();
+  }
+}

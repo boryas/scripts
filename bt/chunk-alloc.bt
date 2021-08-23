@@ -1,0 +1,4 @@
+kprobe:btrfs_alloc_chunk {
+        $out = (nsecs, pid, comm, kstack);
+        print($out)
+}

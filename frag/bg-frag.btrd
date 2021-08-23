@@ -1,0 +1,74 @@
+filesystem "/mnt/lol";
+k = key(0, BTRFS_BLOCK_GROUP_ITEM_KEY, 0, 0);
+k.max_type = BTRFS_BLOCK_GROUP_ITEM_KEY;
+bgs = search(BTRFS_EXTENT_TREE_OBJECTID, k);
+
+last_bg_end = 0;
+for bg in bgs {
+	bg_key = keyof(bg);
+	if bg_key.type != BTRFS_BLOCK_GROUP_ITEM_KEY {
+		continue;
+	}
+
+	if !(bg.flags & BTRFS_BLOCK_GROUP_DATA) {
+		continue;
+	}
+
+	bg_start = bg_key.objectid;
+	bg_len = bg_key.offset;
+	last_extent_end = bg_start;
+
+	bg_free_bytes = 0;
+	bg_max_free_bytes = 0;
+	bg_num_extents = 0;
+	bg_num_free = 0;
+
+	k2 = key(bg_start, BTRFS_EXTENT_ITEM_KEY, 0, 0);
+	k2.max_objectid = bg_start + bg_len - 1;
+	k2.max_type = BTRFS_EXTENT_ITEM_KEY;
+	extents = search(BTRFS_EXTENT_TREE_OBJECTID, k2);
+
+	for extent in extents {
+		extent_key = keyof(extent);
+		extent_start = extent_key.objectid;
+		extent_len = extent_key.offset;
+
+		if extent_key.type != BTRFS_EXTENT_ITEM_KEY {
+			continue;
+		}
+
+		if extent_start >= bg_start + bg_len {
+			break;
+		}
+
+		bg_num_extents += 1;
+
+		ref = extent.inline_ref;
+		if ref.type == BTRFS_EXTENT_DATA_REF_KEY {
+			ref_key = key(ref.data_ref.objectid, BTRFS_EXTENT_DATA_KEY, ref.data_ref.offset, 0);
+			ref_key.max_objectid = ref.data_ref.objectid;
+			ref_key.max_type = BTRFS_EXTENT_DATA_KEY;
+			ref_key.max_offset = ref.data_ref.offset;
+			resolved = search(ref.data_ref.root, ref_key);
+			for ed in resolved {
+				ed_key = keyof(ed);
+				print("EXTENT-RESOLVED-REF " + str(bg_start) + " " + str(extent_len) + " " + str(ref.data_ref.root) + " " + str(ed_key.objectid) + " " + str(ed_key.offset));
+			}
+		}
+		if ref.type == BTRFS_SHARED_DATA_REF_KEY {
+			print("EXTENT-SHARED-REF " + str(bg_start) + " " + str(extent_len) + " " + str(ref.offset));
+		}
+
+		if last_extent_end < extent_start {
+			free_bytes = extent_start - last_extent_end;
+			bg_free_bytes += free_bytes;
+			bg_num_free += 1;
+			if free_bytes > bg_max_free_bytes {
+				bg_max_free_bytes = free_bytes;
+			}
+			print("FREE " + str(bg_start) + " " + str(free_bytes));
+		}
+		last_extent_end = extent_start + extent_len;
+	}
+	print("BG-SUMMARY " + str(bg_start) + " " + str(bg_len) + " " + str(bg_free_bytes) + " " + str(bg_max_free_bytes) + " " + str(bg_num_extents) + " " + str(bg_num_free));
+}

@@ -1,0 +1,3 @@
+kprobe:btrfs_new_inode {
+  @[comm] = count();
+}

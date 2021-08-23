@@ -1,0 +1,29 @@
+kprobe:sk_stream_wait_connect {
+        @conn_stack[pid] = kstack;
+}
+
+kretprobe:sk_stream_wait_connect {
+        if ((int32)retval == -32) {
+                $s = @conn_stack[pid];
+                delete(@conn_stack[pid]);
+                @conn[pid, comm, $s] = count();
+        }
+}
+
+kprobe:splice_to_pipe {
+        @splice_stack[pid] = kstack;
+}
+
+kretprobe:splice_to_pipe {
+        if ((int64)retval == -32) {
+                $s = @splice_stack[pid];
+                delete(@splice_stack[pid]);
+                @splice[pid, comm, $s] = count();
+        }
+}
+
+END
+{
+        clear(@conn_stack);
+        clear(@splice_stack);
+}

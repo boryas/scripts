@@ -1,0 +1,61 @@
+BEGIN {
+  @in_syscall = 0;
+}
+
+tracepoint:syscalls:sys_enter_linkat {
+  @in_syscall = 1;
+  printf("linkat: %llu, in_syscall: %d\n", nsecs, @in_syscall);
+}
+
+tracepoint:syscalls:sys_exit_linkat {
+  @in_syscall = 0;
+  printf("linkat return: %llu, in_syscall: %d\n", nsecs, @in_syscall);
+}
+
+kprobe:btrfs_link {
+  if (@in_syscall) {
+    printf("btrfs_link: %llu\n", nsecs);
+  }
+}
+
+kretprobe:btrfs_link {
+  if (@in_syscall) {
+    printf("btrfs_link return: %llu\n", nsecs);
+  }
+}
+
+kprobe:btrfs_insert_dir_item {
+  if (@in_syscall) {
+    printf("btrfs_insert_dir_item: %llu\n", nsecs);
+  }
+}
+
+kretprobe:btrfs_insert_dir_item {
+  if (@in_syscall) {
+    printf("btrfs_insert_dir_item return: %llu\n", nsecs);
+  }
+}
+
+kprobe:btrfs_update_inode {
+  if (@in_syscall) {
+    printf("btrfs_update_inode: %llu\n", nsecs);
+  }
+}
+
+kretprobe:btrfs_update_inode {
+  if (@in_syscall) {
+    printf("btrfs_update_inode return: %llu\n", nsecs);
+  }
+}
+
+kprobe:btrfs_log_new_name {
+  if (@in_syscall) {
+    printf("btrfs_log_new_name: %llu\n", nsecs);
+  }
+}
+
+kretprobe:btrfs_log_new_name {
+  if (@in_syscall) {
+    printf("btrfs_log_new_name return: %llu\n", nsecs);
+  }
+}

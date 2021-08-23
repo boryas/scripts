@@ -1,0 +1,20 @@
+#include <linux/filter.h>
+#include <linux/bpf.h>
+
+kprobe:bpf_trampoline_link_prog
+{
+        $prog = (struct bpf_prog *)arg0;
+        printf("trampoline link: attach type: %d (want %d)\n", $prog->expected_attach_type, BPF_TRACE_FENTRY);
+        printf("trampoline link: extension_prog: %p\n", $prog->aux->trampoline->extension_prog);
+        printf("trampoline link: hlist->pprev: %p\n", $prog->aux->tramp_hlist.pprev);
+}
+
+kretprobe:bpf_trampoline_update
+{
+        printf("tramp update ret: %d\n", retval);
+}
+
+kretprobe:bpf_arch_text_poke
+{
+        printf("arch text poke ret: %d\n", retval);
+}

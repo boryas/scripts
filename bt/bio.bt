@@ -1,0 +1,80 @@
+kprobe:btrfs_readpage {
+        @readpage[tid] = 1;
+        @readpage_start[tid] = nsecs;
+        @readpage_comm[tid] = comm;
+        @readpage_stack[tid] = kstack();
+}
+
+kretprobe:btrfs_readpage {
+        $delta = (nsecs - @readpage_start[tid]) / 1000000;
+        if ($delta > 100) {
+                printf("slow readpage: %s, %s\n", @readpage_comm[tid], @readpage_stack[tid]);
+        }
+        delete(@readpage[tid]);
+        delete(@readpage_start[tid]);
+        delete(@readpage_comm[tid]);
+        delete(@readpage_stack[tid]);
+}
+
+kprobe:btrfs_writepages {
+        @writepages[tid] = 1;
+        @writepages_start[tid] = nsecs;
+        @writepages_comm[tid] = comm;
+        @writepages_stack[tid] = kstack();
+}
+
+kretprobe:btrfs_writepages {
+        $delta = (nsecs - @writepages_start[tid]) / 1000000;
+        if ($delta > 100) {
+                printf("slow writepages: %s, %s\n", @writepages_comm[tid], @writepages_stack[tid]);
+        }
+        delete(@writepages[tid]);
+        delete(@writepages_start[tid]);
+        delete(@writepages_comm[tid]);
+        delete(@writepages_stack[tid]);
+}
+
+kprobe:submit_one_bio {
+        $bio = arg0;
+        if (@readpage[tid]) {
+                @read_bio_start[$bio] = nsecs;
+                @read_bio_stack[$bio] = kstack();
+                @read_bio_comm[$bio] = comm;
+        }
+        else if (@writepages[tid]) {
+                @write_bio_start[$bio] = nsecs;
+                @write_bio_stack[$bio] = kstack();
+                @write_bio_comm[$bio] = comm;
+        }
+}
+
+kprobe:end_bio_extent_readpage {
+        $bio = arg0;
+        if (@read_bio_start[$bio]) {
+                $delta = (nsecs - @read_bio_start[$bio]) / 1000000;
+                if ($delta > 100) {
+                        printf("slow read bio: %s: %s\n", @read_bio_comm[$bio], @read_bio_stack[$bio]);
+                }
+                delete(@read_bio_start[$bio]);
+                delete(@read_bio_stack[$bio]);
+                delete(@read_bio_comm[$bio]);
+        }
+}
+
+kprobe:end_bio_extent_writepage {
+        $bio = arg0;
+        if (@write_bio_start[$bio]) {
+                $delta = (nsecs - @write_bio_start[$bio]) / 1000000;
+                if ($delta > 100) {
+                        printf("slow write bio: %s: %s\n", @write_bio_comm[$bio], @write_bio_stack[$bio]);
+                }
+                delete(@write_bio_start[$bio]);
+                delete(@write_bio_stack[$bio]);
+                delete(@write_bio_comm[$bio]);
+        }
+}
+
+END {
+        clear(@read_bio_start);
+        clear(@write_bio_start);
+}
