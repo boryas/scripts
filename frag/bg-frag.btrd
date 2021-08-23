@@ -18,11 +18,6 @@ for bg in bgs {
 	bg_len = bg_key.offset;
 	last_extent_end = bg_start;
 
-	bg_free_bytes = 0;
-	bg_max_free_bytes = 0;
-	bg_num_extents = 0;
-	bg_num_free = 0;
-
 	k2 = key(bg_start, BTRFS_EXTENT_ITEM_KEY, 0, 0);
 	k2.max_objectid = bg_start + bg_len - 1;
 	k2.max_type = BTRFS_EXTENT_ITEM_KEY;
@@ -41,7 +36,10 @@ for bg in bgs {
 			break;
 		}
 
-		bg_num_extents += 1;
+		if last_extent_end < extent_start {
+			free_bytes = extent_start - last_extent_end;
+			print("FREE " + str(bg_start) + " " + str(last_extent_end) + " " + str(free_bytes));
+		}
 
 		ref = extent.inline_ref;
 		if ref.type == BTRFS_EXTENT_DATA_REF_KEY {
@@ -52,23 +50,18 @@ for bg in bgs {
 			resolved = search(ref.data_ref.root, ref_key);
 			for ed in resolved {
 				ed_key = keyof(ed);
-				print("EXTENT-RESOLVED-REF " + str(bg_start) + " " + str(extent_len) + " " + str(ref.data_ref.root) + " " + str(ed_key.objectid) + " " + str(ed_key.offset));
+				print("EXTENT-RESOLVED-REF " + str(bg_start) + " " + str(extent_start) + " " + str(extent_len) + " " + str(ref.data_ref.root) + " " + str(ed_key.objectid) + " " + str(ed_key.offset));
 			}
 		}
 		if ref.type == BTRFS_SHARED_DATA_REF_KEY {
-			print("EXTENT-SHARED-REF " + str(bg_start) + " " + str(extent_len) + " " + str(ref.offset));
+			print("EXTENT-SHARED-REF " + str(bg_start) + " " + str(extent_start) + " " + str(extent_len) + " " + str(ref.offset));
 		}
 
-		if last_extent_end < extent_start {
-			free_bytes = extent_start - last_extent_end;
-			bg_free_bytes += free_bytes;
-			bg_num_free += 1;
-			if free_bytes > bg_max_free_bytes {
-				bg_max_free_bytes = free_bytes;
-			}
-			print("FREE " + str(bg_start) + " " + str(free_bytes));
-		}
 		last_extent_end = extent_start + extent_len;
 	}
-	print("BG-SUMMARY " + str(bg_start) + " " + str(bg_len) + " " + str(bg_free_bytes) + " " + str(bg_max_free_bytes) + " " + str(bg_num_extents) + " " + str(bg_num_free));
+	if last_extent_end < bg_start + bg_len {
+		free_bytes = bg_start + bg_len - last_extent_end;
+		print("FREE " + str(bg_start) + " " + str(last_extent_end) + " " + str(free_bytes));
+	}
+	print("BG-DONE " + str(bg_start) + " " + str(bg_start) + " " + str(bg_len));
 }
