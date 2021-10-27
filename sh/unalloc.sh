@@ -72,6 +72,11 @@ _balance_and_alloc() {
   local uuid=$(_uuid $mnt)
   local meta=$(_meta $mnt)
 
+  if [ $meta -gt $desired_bytes ]; then
+    echo "ENOUGH-META-SKIP $meta"
+    return
+  fi
+
   _try_balance $mnt $desired
 
   while [ $meta -lt $desired_bytes ] && [ $tries -lt $desired ]; do
