@@ -8,6 +8,10 @@ DUSAGE_START=30
 DUSAGE_STEP=10
 BALANCE_LIMIT=5
 
+_check_kernel() {
+  uname -r | grep -e '5.6.13-0_fbk1[78]_'
+}
+
 _unalloc() {
   local mnt=$1
   btrfs fi usage -b $mnt | grep unallocated | cut -d: -f2 | tr -d '\t' | tr -d ' '
@@ -68,6 +72,12 @@ _balance_and_alloc() {
   local desired=$2
   local desired_bytes=$(($desired * $GB))
   local tries=0
+
+  _check_kernel > /dev/null
+  if [ $? -ne 0 ]; then
+    echo "kernel $(uname -r) not 5.6 fbk17 or fbk18; skip"
+    return
+  fi
 
   _check_mount $mnt > /dev/null
   if [ $? -ne 0 ]; then
