@@ -39,6 +39,7 @@ _try_balance() {
   local desired_bytes=$(($desired * $GB))
   local tries=0
   local dusage=$DUSAGE_START
+  local dlimit=$desired
   local add_to_tier=0
 
   echo "TRY-BALANCE $mnt $desired_bytes"
@@ -48,13 +49,18 @@ _try_balance() {
   local want=$(($desired_bytes - $meta + $GB))
 
   while [ $unalloc -lt $want ] && [ $tries -lt $MAX_TRIES ]; do
-    echo "unalloc $unalloc less than $want. Balance with dusage $dusage."
-    btrfs filesystem balance start -dusage=$dusage,limit=$desired $mnt
+    echo "unalloc $unalloc less than $want. Balance $mnt with dusage $dusage dlimit $dlimit."
+    local start_t=$(date +%s)
+    btrfs filesystem balance start -dusage=$dusage,limit=$dlimit $mnt
+    local end_t=$(date +%s)
+    if [ $((end_t - start_t)) -lt 1 ]; then
+      let dlimit+=10
+    fi
     let dusage+=10
     let tries+=1
     unalloc=$(_unalloc $mnt)
   done
-  echo "TRY-BALANCE-DONE: $mnt $(_unalloc $mnt) $desired_bytes"
+  echo "TRY-BALANCE-DONE: $mnt $desired_bytes $(_unalloc $mnt) $want"
 }
 
 _balance_and_alloc() {
