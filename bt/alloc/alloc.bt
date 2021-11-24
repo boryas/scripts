@@ -1,3 +1,37 @@
-kprobe:btrfs_chunk_alloc {
-        printf("btrfs_chunk_alloc: (%s %d) %llu %s\n", comm, pid, arg2, kstack);
+#include <linux/btrfs_tree.h>
+
+tracepoint:btrfs:btrfs_setup_item_for_insert {
+	// Extents
+	if (args->rootid == 2) {
+		// Data extent
+		if (args->type == 168) {
+			printf("INS DATA-EXTENT %llu %llu\n", args->objectid, args->offset);
+		}
+		// Metadata extent (skinny)
+		if (args->type == 169) {
+			printf("INS METADATA-EXTENT %llu 16384\n", args->objectid);
+		}
+		// Block group
+		if (args->type == 192) {
+			printf("INS BLOCK-GROUP %llu %llu\n", args->objectid, args->offset);
+		}
+	}
+}
+
+tracepoint:btrfs:btrfs_del_item {
+	// Extents
+	if (args->rootid == 2) {
+		// Data extent
+		if (args->type == 168) {
+			printf("DEL DATA-EXTENT %llu\n", args->objectid);
+		}
+		// Metadata extent (skinny)
+		if (args->type == 169) {
+			printf("DEL METADATA-EXTENT %llu\n", args->objectid);
+		}
+		// Block group
+		if (args->type == 192) {
+			printf("DEL BLOCK-GROUP %llu\n", args->objectid);
+		}
+	}
 }
