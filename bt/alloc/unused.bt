@@ -1,0 +1,25 @@
+tracepoint:btrfs:btrfs_add_block_group {
+	printf("add %llu\n", args->offset);
+	@bgs[args->offset] = 1;
+}
+
+tracepoint:btrfs:btrfs_remove_block_group {
+	printf("remove %llu\n", args->bytenr);
+	delete(@bgs[args->bytenr]);
+	delete(@unused[args->bytenr]);
+}
+
+tracepoint:btrfs:btrfs_add_unused_block_group {
+	printf("unused %llu\n", args->bytenr);
+	@unused[args->bytenr] = 1;
+}
+
+tracepoint:btrfs:btrfs_skip_unused_block_group {
+	printf("skip %llu\n", args->bytenr);
+}
+
+kprobe:btrfs_update_block_group {
+	if (@unused[arg1]) {
+		printf("update unused bg %llu %llu %u\n", arg1, arg2, arg3);
+	}
+}

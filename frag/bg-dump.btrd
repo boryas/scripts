@@ -9,13 +9,9 @@ for bg in bgs {
 		continue;
 	}
 
-	if !(bg.flags & BTRFS_BLOCK_GROUP_DATA) && !(bg.flags & BTRFS_BLOCK_GROUP_METADATA) {
-		continue;
-	}
-
 	bg_start = bg_key.objectid;
 	bg_len = bg_key.offset;
-	print("BLOCK-GROUP " + str(bg_start) + " " + str(bg_len));
+	print("INS BLOCK-GROUP " + str(bg_start) + " " + str(bg_len));
 
 	k2 = key(bg_start, BTRFS_EXTENT_ITEM_KEY, 0, 0);
 	k2.max_objectid = bg_start + bg_len - 1;
@@ -41,6 +37,6 @@ for bg in bgs {
 			type = "METADATA-EXTENT";
 			extent_len = 16384;
 		}
-		print(type + " " + str(extent_start) + " " + str(extent_len));
+		print("INS " + type + " " + str(extent_start) + " " + str(extent_len));
 	}
 }

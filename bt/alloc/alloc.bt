@@ -5,15 +5,15 @@ tracepoint:btrfs:btrfs_setup_item_for_insert {
 	if (args->rootid == 2) {
 		// Data extent
 		if (args->type == 168) {
-			printf("INS DATA-EXTENT %llu %llu\n", args->objectid, args->offset);
+			printf("%llu INS DATA-EXTENT %llu %llu\n", nsecs, args->objectid, args->offset);
 		}
 		// Metadata extent (skinny)
 		if (args->type == 169) {
-			printf("INS METADATA-EXTENT %llu 16384\n", args->objectid);
+			printf("%llu INS METADATA-EXTENT %llu 16384\n", nsecs, args->objectid);
 		}
 		// Block group
 		if (args->type == 192) {
-			printf("INS BLOCK-GROUP %llu %llu\n", args->objectid, args->offset);
+			printf("%llu INS BLOCK-GROUP %llu %llu\n", nsecs, args->objectid, args->offset);
 		}
 	}
 }
@@ -23,15 +23,18 @@ tracepoint:btrfs:btrfs_del_item {
 	if (args->rootid == 2) {
 		// Data extent
 		if (args->type == 168) {
-			printf("DEL DATA-EXTENT %llu\n", args->objectid);
+			printf("%llu DEL DATA-EXTENT %llu\n", nsecs, args->objectid);
+			//printf("DEL DATA-EXTENT %s\n", kstack);
 		}
 		// Metadata extent (skinny)
 		if (args->type == 169) {
-			printf("DEL METADATA-EXTENT %llu\n", args->objectid);
+			printf("%llu DEL METADATA-EXTENT %llu\n", nsecs, args->objectid);
+			//printf("DEL METADATA-EXTENT %s\n", kstack);
 		}
 		// Block group
 		if (args->type == 192) {
-			printf("DEL BLOCK-GROUP %llu\n", args->objectid);
+			printf("%llu DEL BLOCK-GROUP %llu\n", nsecs, args->objectid);
+			//printf("DEL BLOCK-GROUP %s\n", kstack);
 		}
 	}
 }
