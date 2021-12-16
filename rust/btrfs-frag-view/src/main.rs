@@ -3,18 +3,20 @@ extern crate image;
 /*
 TODO:
 [x] decide structure (std::collections::BTreeMap)
-[ ] read dump from btrd into structure
-[ ] read one alloc from bpftrace into changing structure
-[ ] "draw" allocation into an imgbuf
+[x] read dump from btrd into structure
+[x] read one alloc from bpftrace into changing structure
+[x] "draw" allocation into an imgbuf
 [x] render imgbuf
 [ ] collection of images (or imgbufs) into animation
 */
 
 use core::ops::{Deref, DerefMut};
-use image::{ImageBuffer, Pixel, Rgb, RgbImage};
+use image::{ImageBuffer, ImageError, Pixel, Rgb, RgbImage};
 use std::collections::{BTreeMap, HashSet};
 use std::collections::Bound::{Included, Unbounded};
+use std::fmt;
 use std::fs;
+use std::io;
 
 const K: u64 = 1 << 10;
 const M: u64 = 1 << 20;
@@ -35,15 +37,54 @@ enum AllocType {
     Extent(ExtentType)
 }
 
+#[derive(Debug)]
+enum FragViewError {
+    BeforeStart,
+    PastEnd,
+    Missing,
+    Image,
+    Parse,
+    Os,
+}
+
+impl fmt::Display for FragViewError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            FragViewError::BeforeStart => write!(f, "extent start before bg start"),
+            FragViewError::PastEnd => write!(f, "extent end past bg end"),
+            FragViewError::Missing => write!(f, "missing bg or extent"),
+            FragViewError::Image => write!(f, "error saving or modifying image"),
+            FragViewError::Parse => write!(f, "invalid allocation change format"),
+            FragViewError::Os => write!(f, "system error"),
+        }
+    }
+}
+
+impl From<io::Error> for FragViewError {
+    fn from(_: io::Error) -> Self {
+        FragViewError::Os
+    }
+}
+
+impl From<ImageError> for FragViewError {
+    fn from(_: ImageError) -> Self {
+        FragViewError::Image
+    }
+}
+
+type FragViewResult<T> = Result<T, FragViewError>;
+
 // TODO Resultify
 impl AllocType {
-    fn from_str(type_str: &str) -> Self {
+    fn from_str(type_str: &str) -> FragViewResult<Self> {
         if type_str == "BLOCK-GROUP" {
-            AllocType::BlockGroup
+            Ok(AllocType::BlockGroup)
         } else if type_str == "METADATA-EXTENT" {
-            AllocType::Extent(ExtentType::Metadata)
+            Ok(AllocType::Extent(ExtentType::Metadata))
+        } else if type_str == "DATA-EXTENT" {
+            Ok(AllocType::Extent(ExtentType::Data))
         } else {
-            AllocType::Extent(ExtentType::Data)
+            Err(FragViewError::Parse)
         }
     }
 }
@@ -62,20 +103,20 @@ enum AllocChange {
 
 // TODO Resultify
 impl AllocChange {
-    fn from_dump(dump_line: &str) -> Self {
+    fn from_dump(dump_line: &str) -> FragViewResult<Self> {
         let vec: Vec<&str> = dump_line.split(" ").collect();
         let change_str = vec[0];
         let type_str = vec[1];
-        let alloc_type = AllocType::from_str(type_str);
+        let alloc_type = AllocType::from_str(type_str)?;
         let offset: u64 = vec[2].parse().unwrap();
         let eid = AllocId { alloc_type, offset };
         if change_str == "INS" {
             let len: u64 = vec[3].parse().unwrap();
-            AllocChange::Insert(eid, len)
+            Ok(AllocChange::Insert(eid, len))
         } else if change_str == "DEL" {
-            AllocChange::Delete(eid)
+            Ok(AllocChange::Delete(eid))
         } else {
-            panic!("bogus extent change dump '{}'", dump_line);
+            Err(FragViewError::Parse)
         }
     }
 }
@@ -173,31 +214,33 @@ impl BlockGroup {
         }
     }
 
-    fn ins_extent(&mut self, offset: u64, len: u64) {
+    fn ins_extent(&mut self, offset: u64, len: u64) -> FragViewResult<()> {
         if offset < self.offset {
-            panic!("bad extent! starts before BG {} {} {} {}", self.offset, self.len, offset, len);
+            return Err(FragViewError::BeforeStart);
         }
         if offset + len > self.offset + self.len {
-            panic!("bad extent! ends after BG {} {} {} {}", self.offset, self.len, offset, len);
+            return Err(FragViewError::PastEnd);
         }
         self.extents.insert(offset, len);
         self.draw_extent(offset, len, RED_PIXEL);
         if self.dump {
-            self.dump_next();
+            self.dump_next()?;
         }
+        Ok(())
     }
 
-    fn del_extent(&mut self, offset: u64) {
+    fn del_extent(&mut self, offset: u64) -> FragViewResult<()> {
         let extent = self.extents.remove(&offset);
         match extent {
             Some(len) => {
                 self.draw_extent(offset, len, WHITE_PIXEL);
                 if self.dump {
-                    self.dump_next();
+                    self.dump_next()?;
                 }
+                Ok(())
             },
             None => {
-                println!("bg {} cannot del {}, missing.", self.offset, offset);
+                Err(FragViewError::Missing)
             }
         }
     }
@@ -231,20 +274,21 @@ impl BlockGroup {
         format!("{}-{}", type_names, self.offset)
     }
 
-    fn dump_next(&mut self) {
-        let f = format!("{}", self.dump_count);
-        self.dump_img(&f);
-        self.dump_count = self.dump_count + 1;
-    }
-
-    fn dump_img(&self, f: &str) {
+    fn dump_img(&self, f: &str) -> FragViewResult<()> {
         let d = self.name();
         if d.contains("Meta") {
-            return;
+            return Ok(());
         }
-        let x = fs::create_dir_all(&d);
+        let _ = fs::create_dir_all(&d)?;
         let path = format!("{}/{}.png", d, f);
-        self.img.save(path).unwrap();
+        Ok(self.img.save(path)?)
+    }
+
+    fn dump_next(&mut self) -> FragViewResult<()> {
+        let f = format!("{}", self.dump_count);
+        self.dump_img(&f)?;
+        self.dump_count = self.dump_count + 1;
+        Ok(())
     }
 }
 
@@ -268,35 +312,36 @@ impl SpaceInfo {
     fn del_block_group(&mut self, offset: u64) {
         self.block_groups.remove(&offset);
     }
-    fn find_block_group(&mut self, offset: u64) -> Option<&mut BlockGroup> {
+    fn find_block_group(&mut self, offset: u64) -> FragViewResult<&mut BlockGroup> {
         let r = self.block_groups.range_mut((Unbounded, Included(offset)));
         // TODO check that size covers our extent
         match r.last() {
-            Some((_, bg)) => Some(bg),
-            None => None,
+            Some((_, bg)) => Ok(bg),
+            None => Err(FragViewError::Missing),
         }
     }
     // TODO errors when no bg exists?
-    fn ins_extent(&mut self, extent_type: ExtentType, offset: u64, len: u64) {
+    fn ins_extent(&mut self, extent_type: ExtentType, offset: u64, len: u64) -> FragViewResult<()> {
         let offset = offset;
-        let bg = self.find_block_group(offset).unwrap();
-        //println!("insert extent {} {} {} {} {:?}", bg.offset, bg.len, offset, len, extent_type);
-        bg.ins_extent(offset, len);
+        let bg = self.find_block_group(offset)?;
+        bg.ins_extent(offset, len)?;
         bg.extent_types.insert(extent_type);
+        Ok(())
     }
-    fn del_extent(&mut self, offset: u64) {
-        let bg = self.find_block_group(offset).unwrap();
-        bg.del_extent(offset);
+    fn del_extent(&mut self, offset: u64) -> FragViewResult<()> {
+        let bg = self.find_block_group(offset)?;
+        bg.del_extent(offset)?;
+        Ok(())
     }
 
-    fn handle_alloc_change(&mut self, alloc_change: AllocChange) {
+    fn handle_alloc_change(&mut self, alloc_change: AllocChange) -> FragViewResult<()> {
         match alloc_change {
             AllocChange::Insert(AllocId { alloc_type, offset }, len) => match alloc_type {
                 AllocType::BlockGroup => {
                     self.ins_block_group(offset, len);
                 }
                 AllocType::Extent(extent_type) => {
-                    self.ins_extent(extent_type, offset, len);
+                    self.ins_extent(extent_type, offset, len)?;
                 }
             },
             AllocChange::Delete(AllocId { alloc_type, offset }) => match alloc_type {
@@ -304,10 +349,11 @@ impl SpaceInfo {
                     self.del_block_group(offset);
                 }
                 _ => {
-                    self.del_extent(offset);
+                    self.del_extent(offset)?;
                 }
             },
         }
+        Ok(())
     }
 
     fn toggle_dump(&mut self) {
@@ -317,21 +363,23 @@ impl SpaceInfo {
         }
     }
 
-    fn dump_imgs(&self, name: &str) {
+    fn dump_imgs(&self, name: &str) -> FragViewResult<()> {
         for (_, bg) in &self.block_groups {
-            bg.dump_img(name);
+            bg.dump_img(name)?;
         }
+        Ok(())
     }
 
-    fn handle_file(&mut self, filename: &str) {
-        let contents = fs::read_to_string(filename).unwrap();
+    fn handle_file(&mut self, filename: &str) -> FragViewResult<()> {
+        let contents = fs::read_to_string(filename)?;
         for line in contents.split("\n") {
             if line.is_empty() {
                 continue;
             }
-            let ac = AllocChange::from_dump(line);
-            self.handle_alloc_change(ac);
+            let ac = AllocChange::from_dump(line)?;
+            self.handle_alloc_change(ac)?;
         }
+        Ok(())
     }
 }
 
@@ -353,8 +401,8 @@ fn main() {
         println!("{}: {} {:?}", bg.name(), frag.percentage(), frag);
     }
     */
-    si.handle_file("final.txt");
-    si.dump_imgs("final");
+    si.handle_file("final.txt").unwrap();
+    si.dump_imgs("final").unwrap();
 }
 
 #[cfg(test)]
@@ -363,7 +411,7 @@ mod test {
     #[test]
     fn parse_dump_lines() {
         let dummy_dump_line = "INS BLOCK-GROUP 420 42";
-        let ac = AllocChange::from_dump(dummy_dump_line);
+        let ac = AllocChange::from_dump(dummy_dump_line).unwrap();
         assert_eq!(
             ac,
             AllocChange::Insert(
@@ -376,7 +424,7 @@ mod test {
         );
 
         let dummy_dump_line = "DEL BLOCK-GROUP 420";
-        let ac = AllocChange::from_dump(dummy_dump_line);
+        let ac = AllocChange::from_dump(dummy_dump_line).unwrap();
         assert_eq!(
             ac,
             AllocChange::Delete(AllocId {
@@ -386,7 +434,7 @@ mod test {
         );
 
         let dummy_dump_line = "INS DATA-EXTENT 420 42";
-        let ac = AllocChange::from_dump(dummy_dump_line);
+        let ac = AllocChange::from_dump(dummy_dump_line).unwrap();
         assert_eq!(
             ac,
             AllocChange::Insert(
@@ -399,7 +447,7 @@ mod test {
         );
 
         let dummy_dump_line = "DEL DATA-EXTENT 420";
-        let ac = AllocChange::from_dump(dummy_dump_line);
+        let ac = AllocChange::from_dump(dummy_dump_line).unwrap();
         assert_eq!(
             ac,
             AllocChange::Delete(AllocId {
@@ -409,7 +457,7 @@ mod test {
         );
 
         let dummy_dump_line = "INS METADATA-EXTENT 420 42";
-        let ac = AllocChange::from_dump(dummy_dump_line);
+        let ac = AllocChange::from_dump(dummy_dump_line).unwrap();
         assert_eq!(
             ac,
             AllocChange::Insert(
@@ -422,7 +470,7 @@ mod test {
         );
 
         let dummy_dump_line = "DEL METADATA-EXTENT 420";
-        let ac = AllocChange::from_dump(dummy_dump_line);
+        let ac = AllocChange::from_dump(dummy_dump_line).unwrap();
         assert_eq!(
             ac,
             AllocChange::Delete(AllocId {
@@ -452,7 +500,7 @@ mod test {
         si.ins_extent(G + 10 * K, 256 * M);
         si.ins_extent(2 * G + 10 * K, 256 * M);
         assert_eq!(si.block_groups.len(), 2);
-        si.del_extent(G + 10 * K);
+        si.del_extent(G + 10 * K).unwrap();
         for bg in si.block_groups.values() {
             assert_eq!(bg.extents.len(), 1);
         }
