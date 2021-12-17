@@ -14,6 +14,7 @@ use core::ops::{Deref, DerefMut};
 use image::{ImageBuffer, ImageError, Pixel, Rgb, RgbImage};
 use std::collections::{BTreeMap, HashSet};
 use std::collections::Bound::{Included, Unbounded};
+use std::error;
 use std::fmt;
 use std::fs;
 use std::io;
@@ -39,44 +40,31 @@ enum AllocType {
 
 #[derive(Debug)]
 enum FragViewError {
-    BeforeStart,
-    PastEnd,
-    Missing,
-    Image,
+    BeforeStart(u64, u64),
+    PastEnd(u64, u64),
+    MissingBg(u64),
+    MissingExtent(u64, u64),
     Parse,
-    Os,
 }
+
+impl error::Error for FragViewError { }
 
 impl fmt::Display for FragViewError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            FragViewError::BeforeStart => write!(f, "extent start before bg start"),
-            FragViewError::PastEnd => write!(f, "extent end past bg end"),
-            FragViewError::Missing => write!(f, "missing bg or extent"),
-            FragViewError::Image => write!(f, "error saving or modifying image"),
+            FragViewError::BeforeStart(e, bg) => write!(f, "extent start {} before bg start {}", e, bg),
+            FragViewError::PastEnd(e, bg) => write!(f, "extent end {} past bg end {}", e, bg),
+            FragViewError::MissingBg(bg) => write!(f, "missing bg {}", bg),
+            FragViewError::MissingExtent(e, bg) => write!(f, "missing extent {} in bg {}", e, bg),
             FragViewError::Parse => write!(f, "invalid allocation change format"),
-            FragViewError::Os => write!(f, "system error"),
         }
     }
 }
 
-impl From<io::Error> for FragViewError {
-    fn from(_: io::Error) -> Self {
-        FragViewError::Os
-    }
-}
+type BoxResult<T> = Result<T, Box<dyn error::Error>>;
 
-impl From<ImageError> for FragViewError {
-    fn from(_: ImageError) -> Self {
-        FragViewError::Image
-    }
-}
-
-type FragViewResult<T> = Result<T, FragViewError>;
-
-// TODO Resultify
 impl AllocType {
-    fn from_str(type_str: &str) -> FragViewResult<Self> {
+    fn from_str(type_str: &str) -> BoxResult<Self> {
         if type_str == "BLOCK-GROUP" {
             Ok(AllocType::BlockGroup)
         } else if type_str == "METADATA-EXTENT" {
@@ -84,7 +72,7 @@ impl AllocType {
         } else if type_str == "DATA-EXTENT" {
             Ok(AllocType::Extent(ExtentType::Data))
         } else {
-            Err(FragViewError::Parse)
+            Err(FragViewError::Parse)?
         }
     }
 }
@@ -101,9 +89,8 @@ enum AllocChange {
     Delete(AllocId),
 }
 
-// TODO Resultify
 impl AllocChange {
-    fn from_dump(dump_line: &str) -> FragViewResult<Self> {
+    fn from_dump(dump_line: &str) -> BoxResult<Self> {
         let vec: Vec<&str> = dump_line.split(" ").collect();
         let change_str = vec[0];
         let type_str = vec[1];
@@ -116,7 +103,7 @@ impl AllocChange {
         } else if change_str == "DEL" {
             Ok(AllocChange::Delete(eid))
         } else {
-            Err(FragViewError::Parse)
+            Err(FragViewError::Parse)?
         }
     }
 }
@@ -214,12 +201,12 @@ impl BlockGroup {
         }
     }
 
-    fn ins_extent(&mut self, offset: u64, len: u64) -> FragViewResult<()> {
+    fn ins_extent(&mut self, offset: u64, len: u64) -> BoxResult<()> {
         if offset < self.offset {
-            return Err(FragViewError::BeforeStart);
+            return Err(FragViewError::BeforeStart(offset, self.offset))?;
         }
         if offset + len > self.offset + self.len {
-            return Err(FragViewError::PastEnd);
+            return Err(FragViewError::PastEnd(offset+len, self.offset+self.len))?;
         }
         self.extents.insert(offset, len);
         self.draw_extent(offset, len, RED_PIXEL);
@@ -229,7 +216,7 @@ impl BlockGroup {
         Ok(())
     }
 
-    fn del_extent(&mut self, offset: u64) -> FragViewResult<()> {
+    fn del_extent(&mut self, offset: u64) -> BoxResult<()> {
         let extent = self.extents.remove(&offset);
         match extent {
             Some(len) => {
@@ -240,7 +227,7 @@ impl BlockGroup {
                 Ok(())
             },
             None => {
-                Err(FragViewError::Missing)
+                Err(FragViewError::MissingExtent(offset, self.offset))?
             }
         }
     }
@@ -274,7 +261,7 @@ impl BlockGroup {
         format!("{}-{}", type_names, self.offset)
     }
 
-    fn dump_img(&self, f: &str) -> FragViewResult<()> {
+    fn dump_img(&self, f: &str) -> BoxResult<()> {
         let d = self.name();
         if d.contains("Meta") {
             return Ok(());
@@ -284,7 +271,7 @@ impl BlockGroup {
         Ok(self.img.save(path)?)
     }
 
-    fn dump_next(&mut self) -> FragViewResult<()> {
+    fn dump_next(&mut self) -> BoxResult<()> {
         let f = format!("{}", self.dump_count);
         self.dump_img(&f)?;
         self.dump_count = self.dump_count + 1;
@@ -312,29 +299,27 @@ impl SpaceInfo {
     fn del_block_group(&mut self, offset: u64) {
         self.block_groups.remove(&offset);
     }
-    fn find_block_group(&mut self, offset: u64) -> FragViewResult<&mut BlockGroup> {
+    fn find_block_group(&mut self, offset: u64) -> BoxResult<&mut BlockGroup> {
         let r = self.block_groups.range_mut((Unbounded, Included(offset)));
-        // TODO check that size covers our extent
         match r.last() {
             Some((_, bg)) => Ok(bg),
-            None => Err(FragViewError::Missing),
+            None => Err(FragViewError::MissingBg(offset))?,
         }
     }
-    // TODO errors when no bg exists?
-    fn ins_extent(&mut self, extent_type: ExtentType, offset: u64, len: u64) -> FragViewResult<()> {
+    fn ins_extent(&mut self, extent_type: ExtentType, offset: u64, len: u64) -> BoxResult<()> {
         let offset = offset;
         let bg = self.find_block_group(offset)?;
         bg.ins_extent(offset, len)?;
         bg.extent_types.insert(extent_type);
         Ok(())
     }
-    fn del_extent(&mut self, offset: u64) -> FragViewResult<()> {
+    fn del_extent(&mut self, offset: u64) -> BoxResult<()> {
         let bg = self.find_block_group(offset)?;
         bg.del_extent(offset)?;
         Ok(())
     }
 
-    fn handle_alloc_change(&mut self, alloc_change: AllocChange) -> FragViewResult<()> {
+    fn handle_alloc_change(&mut self, alloc_change: AllocChange) -> BoxResult<()> {
         match alloc_change {
             AllocChange::Insert(AllocId { alloc_type, offset }, len) => match alloc_type {
                 AllocType::BlockGroup => {
@@ -363,14 +348,14 @@ impl SpaceInfo {
         }
     }
 
-    fn dump_imgs(&self, name: &str) -> FragViewResult<()> {
+    fn dump_imgs(&self, name: &str) -> BoxResult<()> {
         for (_, bg) in &self.block_groups {
             bg.dump_img(name)?;
         }
         Ok(())
     }
 
-    fn handle_file(&mut self, filename: &str) -> FragViewResult<()> {
+    fn handle_file(&mut self, filename: &str) -> BoxResult<()> {
         let contents = fs::read_to_string(filename)?;
         for line in contents.split("\n") {
             if line.is_empty() {
