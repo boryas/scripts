@@ -44,7 +44,7 @@ enum FragViewError {
     PastEnd(u64, u64),
     MissingBg(u64),
     MissingExtent(u64, u64),
-    Parse,
+    Parse(String),
 }
 
 impl error::Error for FragViewError { }
@@ -56,7 +56,7 @@ impl fmt::Display for FragViewError {
             FragViewError::PastEnd(e, bg) => write!(f, "extent end {} past bg end {}", e, bg),
             FragViewError::MissingBg(bg) => write!(f, "missing bg {}", bg),
             FragViewError::MissingExtent(e, bg) => write!(f, "missing extent {} in bg {}", e, bg),
-            FragViewError::Parse => write!(f, "invalid allocation change format"),
+            FragViewError::Parse(s) => write!(f, "invalid allocation change {}", s),
         }
     }
 }
@@ -72,7 +72,7 @@ impl AllocType {
         } else if type_str == "DATA-EXTENT" {
             Ok(AllocType::Extent(ExtentType::Data))
         } else {
-            Err(FragViewError::Parse)?
+            Err(FragViewError::Parse(String::from(type_str)))?
         }
     }
 }
@@ -103,7 +103,7 @@ impl AllocChange {
         } else if change_str == "DEL" {
             Ok(AllocChange::Delete(eid))
         } else {
-            Err(FragViewError::Parse)?
+            Err(FragViewError::Parse(String::from(change_str)))?
         }
     }
 }
