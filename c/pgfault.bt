@@ -1,0 +1,5 @@
+kprobe:handle_mm_fault {
+	if (comm == "pgfault") {
+		@fault[kstack] = count();
+	}
+}
