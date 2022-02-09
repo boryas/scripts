@@ -14,6 +14,7 @@ use core::ops::{Deref, DerefMut};
 use image::{ImageBuffer, ImageError, Pixel, Rgb, RgbImage};
 use std::collections::{BTreeMap, HashSet};
 use std::collections::Bound::{Included, Unbounded};
+use std::env;
 use std::error;
 use std::fmt;
 use std::fs;
@@ -355,8 +356,10 @@ impl SpaceInfo {
         Ok(())
     }
 
-    fn handle_file(&mut self, filename: &str) -> BoxResult<()> {
-        let contents = fs::read_to_string(filename)?;
+    // expects "<name>.txt"
+    fn handle_file(&mut self, name: &str) -> BoxResult<()> {
+        let f = format!("{}.txt", name);
+        let contents = fs::read_to_string(&f)?;
         for line in contents.split("\n") {
             if line.is_empty() {
                 continue;
@@ -366,28 +369,22 @@ impl SpaceInfo {
         }
         Ok(())
     }
+
+    fn handle_stream(&mut self, name: &str) -> BoxResult<()> {
+        self.toggle_dump();
+        self.handle_file(name)?;
+        self.toggle_dump();
+        Ok(())
+    }
 }
 
-fn main() {
-    let mut si = SpaceInfo::new();
-    /*
-    si.handle_file("init.txt");
-    si.dump_imgs("00-init");
-    println!("INIT FRAG");
-    for (_, bg) in &si.block_groups {
-        let frag = bg.fragmentation();
-        println!("{}: {} {:?}", bg.name(), frag.percentage(), frag);
+fn main() -> BoxResult<()> {
+    for n in env::args().skip(1) {
+        let mut si = SpaceInfo::new();
+        si.handle_file(&n)?;
+        si.dump_imgs(&n)?;
     }
-    si.toggle_dump();
-    si.handle_file("stream.txt");
-    println!("FINAL FRAG");
-    for (_, bg) in &si.block_groups {
-        let frag = bg.fragmentation();
-        println!("{}: {} {:?}", bg.name(), frag.percentage(), frag);
-    }
-    */
-    si.handle_file("final.txt").unwrap();
-    si.dump_imgs("final").unwrap();
+    Ok(())
 }
 
 #[cfg(test)]
