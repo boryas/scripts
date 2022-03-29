@@ -82,6 +82,7 @@ worker() {
 
 # let the fs reclaim empty data BGs
 finish() {
+	echo "done. sync and sleep 30 to reclaim empty block groups"
 	rm $DIR/falloc*
 	sync
 	sleep 30
@@ -94,6 +95,7 @@ done
 for i in $(seq $NR_LOGGERS); do
 	worker do_overwrite $i &
 done
+echo "workers started. sleep $TIME"
 sleep $TIME
 finish
 ls -lh $DIR
