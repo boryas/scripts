@@ -1,38 +1,78 @@
-#!/bin/sh
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+find_loop() {
+	local img=$1
+	losetup -a | grep $img | cut -d: -f1
+}
 
 del_loop() {
-  local img=$1
-  local loop=$(losetup -a | grep $img | cut -d: -f1)
-  losetup -d $loop
-  rm $img
+	local img=$1
+	local loop=$(find_loop $img)
+	umount $loop
+	losetup -d $loop
+	rm $img
 }
 
 mk_loop() {
-  local img=$1
-  dd if=/dev/zero of=$img bs=100M count=2
-  losetup -f $img
-  losetup -a | grep $img | cut -d: -f1
+	local img=$1
+	del_loop $img
+	dd if=/dev/zero of=$img bs=100M count=2
+	losetup -f $img
+	find_loop $img
+}
+
+do_seed() {
+	mkdir -p $SEED_MNT
+	mkfs.btrfs -f $SEED_DEV
+	mount $SEED_DEV $SEED_MNT
+	echo "seed things" | tee $SEED_MNT/seedfile
+	dd if=/dev/zero of=$SEED_MNT/bigseedfile bs=4k count=100
+	umount $SEED_DEV
+	btrfstune -S 1 $SEED_DEV
+}
+
+do_sprout() {
+	if [ $# -ne 2 ]
+	then
+		echo "do_sprout expects sprout_img, sprout_mnt"
+		exit 1
+	fi
+	local sprout_img=$1
+	local sprout_mnt=$2
+
+	sprout_dev=$(mk_loop $sprout_img)
+	echo "sprout dev: $sprout_dev"
+	mkdir -p $sprout_mnt
+	mount $SEED_DEV $SEED_MNT
+	btrfs device add $sprout_dev $SEED_MNT
+	umount $SEED_MNT
+	mount $sprout_dev $sprout_mnt
+	echo "sprout things" | tee $sprout_mnt/sproutfile
 }
 
 clean_loop() {
-  local img=$1
-  del_loop $img
-  mk_loop $img
+	local img=$1
+	del_loop $img
+	mk_loop $img
 }
 
-mnt=$1
+if [ $# -ne 1 ]
+then
+	echo "usage: mkseed.sh $mnt"
+	exit 1
+fi
 
-seed_img=/tmp/seed.img
-del_loop $seed_img
-seed_dev=$(mk_loop $seed_img)
-echo "seed_dev: " $seed_dev
+SEED_MNT=$1
+SEED_IMG=/tmp/seed.img
+SEED_DEV=$(mk_loop $SEED_IMG)
+echo "seed dev: " $SEED_DEV
+do_seed
 
-sprout_img=/tmp/sprout.img
-del_loop $sprout_img
-sprout_dev=$(mk_loop $sprout_img)
-
-mkfs.btrfs -f $seed_dev
-btrfstune -S 1 $seed_dev
-mount $seed_dev $mnt
-btrfs device add $sprout_dev $mnt
-mount -o remount,rw $mnt
+SPROUT_IMG1=/tmp/sprout1.img
+SPROUT_IMG2=/tmp/sprout2.img
+SPROUT_MNT1="$SEED_MNT-sprout1"
+SPROUT_MNT2="$SEED_MNT-sprout2"
+do_sprout $SPROUT_IMG1 $SPROUT_MNT1
+do_sprout $SPROUT_IMG2 $SPROUT_MNT2
