@@ -1,0 +1,11 @@
+kprobe:find_free_extent {
+	@start[tid] = nsecs;
+}
+
+kretprobe:find_free_extent {
+	if (@start[tid]) {
+		$latency = nsecs - @start[tid];
+		@latencies = hist($latency);
+		delete(@start[tid]);
+	}
+}

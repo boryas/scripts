@@ -1,0 +1,4 @@
+kprobe:find_free_extent {
+	$ffe_ctl_sz = (uint64 *)(arg2 + 16);
+	@ffe_sz = hist(*$ffe_ctl_sz);
+}
