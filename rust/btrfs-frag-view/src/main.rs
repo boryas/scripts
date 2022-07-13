@@ -12,6 +12,7 @@ TODO:
 
 use core::ops::{Deref, DerefMut};
 use image::{ImageBuffer, ImageError, Pixel, Rgb, RgbImage};
+use fast_hilbert::h2xy;
 use std::collections::{BTreeMap, HashSet};
 use std::collections::Bound::{Included, Unbounded};
 use std::env;
@@ -26,7 +27,10 @@ const G: u64 = 1 << 30;
 const BLOCK: u64 = 4 * K;
 
 const WHITE_PIXEL: Rgb<u8> = Rgb([255, 255, 255]);
+const BLACK_PIXEL: Rgb<u8> = Rgb([0, 0, 0]);
 const RED_PIXEL: Rgb<u8> = Rgb([255, 0, 0]);
+const GREEN_PIXEL: Rgb<u8> = Rgb([0, 255, 0]);
+const BLUE_PIXEL: Rgb<u8> = Rgb([0, 0, 255]);
 
 #[derive(Debug, Hash, Eq, PartialEq)]
 enum ExtentType {
@@ -138,19 +142,19 @@ struct BlockGroup {
     extents: BTreeMap<u64, u64>,
     extent_types: HashSet<ExtentType>,
     img: RgbImage,
+    next_extent_color: Rgb<u8>,
     dump: bool,
     dump_count: usize,
 }
 
+// fast_hilbert outputs 4 regions of size 256x256
+// TODO: why???
 fn bg_dim(bg_len: u64) -> u32 {
-    let block_len = byte_to_block(bg_len);
-    (block_len as f64).sqrt().ceil() as u32
+    512
 }
 
 fn bg_block_to_coord(dim: u32, block_offset: u64) -> (u32, u32) {
-    let x = block_offset % dim as u64;
-    let y = block_offset / dim as u64;
-    (x as u32, y as u32)
+    h2xy::<u32>(block_offset)
 }
 
 fn global_to_bg(bg_start: u64, offset: u64) -> u64 {
@@ -197,9 +201,20 @@ impl BlockGroup {
             extent_types: HashSet::new(),
             extents: BTreeMap::new(),
             img: ImageBuffer::from_pixel(dim, dim, WHITE_PIXEL),
+            next_extent_color: RED_PIXEL,
             dump: dump,
             dump_count: 0,
         }
+    }
+
+    fn get_next_extent_color(&mut self) -> Rgb<u8> {
+        match (self.next_extent_color) {
+            RED_PIXEL => self.next_extent_color = GREEN_PIXEL,
+            GREEN_PIXEL => self.next_extent_color = BLUE_PIXEL,
+            BLUE_PIXEL => self.next_extent_color = RED_PIXEL,
+            _ => panic!("invalid extent color!"),
+        }
+        self.next_extent_color
     }
 
     fn ins_extent(&mut self, offset: u64, len: u64) -> BoxResult<()> {
@@ -210,7 +225,8 @@ impl BlockGroup {
             return Err(FragViewError::PastEnd(offset+len, self.offset+self.len))?;
         }
         self.extents.insert(offset, len);
-        self.draw_extent(offset, len, RED_PIXEL);
+        let color = self.get_next_extent_color();
+        self.draw_extent(offset, len, color);
         if self.dump {
             self.dump_next()?;
         }
@@ -267,9 +283,21 @@ impl BlockGroup {
         if d.contains("Meta") {
             return Ok(());
         }
+        if d.contains("Empty") {
+            return Ok(());
+        }
         let _ = fs::create_dir_all(&d)?;
         let path = format!("{}/{}.png", d, f);
         Ok(self.img.save(path)?)
+    }
+
+    fn dump_frag(&self) -> BoxResult<()> {
+        if !self.name().contains("Data") {
+            return Ok(());
+        }
+        let frag = self.fragmentation();
+        println!("{}: {} {:?}", self.offset, frag.percentage(), frag);
+        Ok(())
     }
 
     fn dump_next(&mut self) -> BoxResult<()> {
@@ -356,6 +384,13 @@ impl SpaceInfo {
         Ok(())
     }
 
+    fn dump_frag(&self) -> BoxResult<()> {
+        for (_, bg) in &self.block_groups {
+            bg.dump_frag()?;
+        }
+        Ok(())
+    }
+
     // expects "<name>.txt"
     fn handle_file(&mut self, name: &str) -> BoxResult<()> {
         let f = format!("{}.txt", name);
@@ -383,6 +418,7 @@ fn main() -> BoxResult<()> {
         let mut si = SpaceInfo::new();
         si.handle_file(&n)?;
         si.dump_imgs(&n)?;
+        si.dump_frag()?;
     }
     Ok(())
 }
