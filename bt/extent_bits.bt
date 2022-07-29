@@ -1,0 +1,34 @@
+BEGIN {
+	@EXTENT_LOCKED = 4;
+}
+
+kprobe:find_lock_delalloc_range {
+	@live[tid] = 1;
+}
+kretprobe:find_lock_delalloc_range {
+	if(@live[tid]) {
+		delete(@live[tid]);
+	}
+}
+
+kprobe:lock_extent_bits {
+	if (@live[tid]) {
+		$start = arg1;
+		@lock_stack[$start] = kstack();
+		@locked[$start] = 1;
+	}
+}
+
+kprobe:clear_extent_bit {
+	$start = arg1;
+	$bits = arg3;
+	$extent_bit = $bits & @EXTENT_LOCKED;
+	if ($extent_bit && @locked[$start]) {
+		printf("unlock %llu. unlock stack: %s, lock stack: %s\n", $start, kstack(), @lock_stack[$start]);
+		delete(@lock_stack[$start]);
+	}
+}
+
+END {
+	clear(@live);
+}
