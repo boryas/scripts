@@ -1,11 +1,11 @@
 extern crate image;
 
+use clap::Parser;
 use core::ops::{Deref, DerefMut};
 use image::{ImageBuffer, Pixel, Rgb, RgbImage};
 use fast_hilbert::h2xy;
 use std::collections::{BTreeMap, HashSet};
 use std::collections::Bound::{Included, Unbounded};
-use std::env;
 use std::error;
 use std::fmt;
 use std::fs;
@@ -35,6 +35,7 @@ enum FragViewError {
     MissingBg(u64),
     MissingExtent(u64, u64),
     Parse(String),
+    TooMuchFree(u64, u64),
 }
 
 impl error::Error for FragViewError { }
@@ -47,6 +48,7 @@ impl fmt::Display for FragViewError {
             FragViewError::MissingBg(bg) => write!(f, "missing bg {}", bg),
             FragViewError::MissingExtent(e, bg) => write!(f, "missing extent {} in bg {}", e, bg),
             FragViewError::Parse(s) => write!(f, "invalid allocation change {}", s),
+            FragViewError::TooMuchFree(free, len) => write!(f, "bg has more free space {} than size {}", free, len),
         }
     }
 }
@@ -109,11 +111,15 @@ impl BlockGroupFragmentation {
     fn new(len: u64) -> Self {
         Self { len: len, total_free: 0, max_free: 0 }
     }
-    fn add_free(&mut self, len: u64) {
+    fn add_free(&mut self, len: u64) -> BoxResult<()>{
         self.total_free = self.total_free + len;
+        if self.total_free > self.len {
+            Err(FragViewError::TooMuchFree(self.total_free, self.len))?
+        }
         if len > self.max_free {
             self.max_free = len;
         }
+        Ok(())
     }
     fn percentage(&self) -> f64 {
         if self.total_free == 0 {
@@ -237,22 +243,22 @@ impl BlockGroup {
         }
     }
 
-    fn fragmentation(&self) -> BlockGroupFragmentation {
+    fn fragmentation(&self) -> BoxResult<BlockGroupFragmentation> {
         let mut bg_frag = BlockGroupFragmentation::new(self.len);
         let mut last_extent_end = self.offset;
         for (off, len) in &self.extents {
             if *off > last_extent_end {
                 let free_len = off - last_extent_end;
-                bg_frag.add_free(free_len);
+                bg_frag.add_free(free_len)?;
             }
             last_extent_end = off + len;
         }
         let bg_end = self.offset + self.len;
         if last_extent_end < bg_end {
             let free_len = bg_end - last_extent_end;
-            bg_frag.add_free(free_len);
+            bg_frag.add_free(free_len)?;
         }
-        bg_frag
+        Ok(bg_frag)
     }
 
     fn draw_extent(&mut self, extent_offset: u64, len: u64, pixel: Rgb<u8>) {
@@ -283,7 +289,7 @@ impl BlockGroup {
         if !self.name().contains("Data") {
             return Ok(());
         }
-        let frag = self.fragmentation();
+        let frag = self.fragmentation()?;
         println!("{}: {} {:?}", self.offset, frag.percentage(), frag);
         Ok(())
     }
@@ -358,7 +364,6 @@ impl SpaceInfo {
         Ok(())
     }
 
-    #[allow(dead_code)]
     fn dump_imgs(&self, name: &str) -> BoxResult<()> {
         for (_, bg) in &self.block_groups {
             bg.dump_img(name)?;
@@ -373,9 +378,7 @@ impl SpaceInfo {
         Ok(())
     }
 
-    // expects "<name>.txt"
-    fn handle_file(&mut self, name: &str) -> BoxResult<()> {
-        let f = format!("{}.txt", name);
+    fn handle_file(&mut self, f: &str) -> BoxResult<()> {
         let contents = fs::read_to_string(&f)?;
         for line in contents.split("\n") {
             if line.is_empty() {
@@ -388,13 +391,26 @@ impl SpaceInfo {
     }
 }
 
+/// Analyze and visualize btrfs block group fragmentation
+#[derive(Parser, Debug)]
+#[clap(author, version, about, long_about = None)]
+struct Args {
+    /// btrd frag dump file name
+    #[clap(value_parser)]
+    file: String,
+    /// Whether or not to dump fragmentation images
+    #[clap(short, long, value_parser, default_value_t = false)]
+    images: bool,
+}
+
 fn main() -> BoxResult<()> {
-    for n in env::args().skip(1) {
-        let mut si = SpaceInfo::new();
-        si.handle_file(&n)?;
-        //si.dump_imgs(&n)?;
-        si.dump_frag()?;
+    let args = Args::parse();
+    let mut si = SpaceInfo::new();
+    si.handle_file(&args.file)?;
+    if args.images {
+        si.dump_imgs(&args.file)?;
     }
+    si.dump_frag()?;
     Ok(())
 }
 
