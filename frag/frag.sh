@@ -82,9 +82,10 @@ worker() {
 
 # let the fs reclaim empty data BGs
 finish() {
-	echo "done. erase fallocs and sync to allow reclaim of empty block groups"
-	rm $DIR/falloc*
-	sync
+	echo "done."
+	#echo "done. erase fallocs and sync to allow reclaim of empty block groups"
+	#rm $DIR/falloc*
+	#sync
 }
 
 btrfs fil usage $MNT

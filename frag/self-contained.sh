@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 DEV=$1
 MNT=$2
 TIME=$3
