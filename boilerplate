@@ -1,0 +1,11 @@
+set -euo pipefail
+
+SCRIPT=$(readlink -f "$0")
+DIR=$(dirname "$SCRIPT")
+
+_fail() {
+	local msg="$1"
+	echo "$msg"
+	_cleanup
+	exit 1
+}
