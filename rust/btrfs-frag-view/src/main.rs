@@ -1,17 +1,7 @@
 extern crate image;
 
-/*
-TODO:
-[x] decide structure (std::collections::BTreeMap)
-[x] read dump from btrd into structure
-[x] read one alloc from bpftrace into changing structure
-[x] "draw" allocation into an imgbuf
-[x] render imgbuf
-[ ] collection of images (or imgbufs) into animation
-*/
-
 use core::ops::{Deref, DerefMut};
-use image::{ImageBuffer, ImageError, Pixel, Rgb, RgbImage};
+use image::{ImageBuffer, Pixel, Rgb, RgbImage};
 use fast_hilbert::h2xy;
 use std::collections::{BTreeMap, HashSet};
 use std::collections::Bound::{Included, Unbounded};
@@ -19,15 +9,10 @@ use std::env;
 use std::error;
 use std::fmt;
 use std::fs;
-use std::io;
 
 const K: u64 = 1 << 10;
-const M: u64 = 1 << 20;
-const G: u64 = 1 << 30;
 const BLOCK: u64 = 4 * K;
-
 const WHITE_PIXEL: Rgb<u8> = Rgb([255, 255, 255]);
-const BLACK_PIXEL: Rgb<u8> = Rgb([0, 0, 0]);
 const RED_PIXEL: Rgb<u8> = Rgb([255, 0, 0]);
 const GREEN_PIXEL: Rgb<u8> = Rgb([0, 255, 0]);
 const BLUE_PIXEL: Rgb<u8> = Rgb([0, 0, 255]);
@@ -131,6 +116,9 @@ impl BlockGroupFragmentation {
         }
     }
     fn percentage(&self) -> f64 {
+        if self.total_free == 0 {
+            return 0.0;
+        }
         100.0 * (1.0 - ((self.max_free as f64) / (self.total_free as f64)))
     }
 }
@@ -149,11 +137,11 @@ struct BlockGroup {
 
 // fast_hilbert outputs 4 regions of size 256x256
 // TODO: why???
-fn bg_dim(bg_len: u64) -> u32 {
+fn bg_dim(_bg_len: u64) -> u32 {
     512
 }
 
-fn bg_block_to_coord(dim: u32, block_offset: u64) -> (u32, u32) {
+fn bg_block_to_coord(_dim: u32, block_offset: u64) -> (u32, u32) {
     h2xy::<u32>(block_offset)
 }
 
@@ -208,7 +196,7 @@ impl BlockGroup {
     }
 
     fn get_next_extent_color(&mut self) -> Rgb<u8> {
-        match (self.next_extent_color) {
+        match self.next_extent_color {
             RED_PIXEL => self.next_extent_color = GREEN_PIXEL,
             GREEN_PIXEL => self.next_extent_color = BLUE_PIXEL,
             BLUE_PIXEL => self.next_extent_color = RED_PIXEL,
@@ -370,13 +358,7 @@ impl SpaceInfo {
         Ok(())
     }
 
-    fn toggle_dump(&mut self) {
-        self.dump = !self.dump;
-        for (_, bg) in &mut self.block_groups {
-            bg.dump = self.dump;
-        }
-    }
-
+    #[allow(dead_code)]
     fn dump_imgs(&self, name: &str) -> BoxResult<()> {
         for (_, bg) in &self.block_groups {
             bg.dump_img(name)?;
@@ -404,20 +386,13 @@ impl SpaceInfo {
         }
         Ok(())
     }
-
-    fn handle_stream(&mut self, name: &str) -> BoxResult<()> {
-        self.toggle_dump();
-        self.handle_file(name)?;
-        self.toggle_dump();
-        Ok(())
-    }
 }
 
 fn main() -> BoxResult<()> {
     for n in env::args().skip(1) {
         let mut si = SpaceInfo::new();
         si.handle_file(&n)?;
-        si.dump_imgs(&n)?;
+        //si.dump_imgs(&n)?;
         si.dump_frag()?;
     }
     Ok(())
@@ -425,6 +400,10 @@ fn main() -> BoxResult<()> {
 
 #[cfg(test)]
 mod test {
+    const M: u64 = 1 << 20;
+    const G: u64 = 1 << 30;
+
+
     use super::*;
     #[test]
     fn parse_dump_lines() {
