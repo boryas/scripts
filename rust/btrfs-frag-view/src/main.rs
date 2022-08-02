@@ -9,6 +9,11 @@ use std::collections::Bound::{Included, Unbounded};
 use std::error;
 use std::fmt;
 use std::fs;
+use statrs::statistics::Data;
+use statrs::statistics::Max;
+use statrs::statistics::Min;
+use statrs::statistics::Distribution;
+use statrs::statistics::OrderStatistics;
 
 const K: u64 = 1 << 10;
 const BLOCK: u64 = 4 * K;
@@ -371,10 +376,37 @@ impl SpaceInfo {
         Ok(())
     }
 
-    fn dump_frag(&self) -> BoxResult<()> {
+    fn dump_raw(&self) -> BoxResult<()> {
         for (_, bg) in &self.block_groups {
             bg.dump_frag()?;
         }
+        Ok(())
+    }
+
+    fn dump_stats(&self) -> BoxResult<()> {
+        let mut pctv: Vec<f64> = Vec::new();
+        for (_, bg) in &self.block_groups {
+            if !bg.name().contains("Data") {
+                continue;
+            }
+            let frag = bg.fragmentation()?;
+            if frag.percentage() == 0.0 {
+                continue;
+            }
+            pctv.push(frag.percentage());
+        }
+        let mut d = Data::new(pctv);
+        let mean = match d.mean() {
+            Some(m) => m,
+            None => 0.0
+        };
+        println!("bg count: {}", d.len());
+        println!("frag mean: {}", mean as u8);
+        println!("frag min: {}", d.min() as u8);
+        println!("frag median: {}", d.median() as u8);
+        println!("frag p95: {}", d.percentile(95) as u8);
+        println!("frag p99: {}", d.percentile(99) as u8);
+        println!("frag max: {}", d.max() as u8);
         Ok(())
     }
 
@@ -398,19 +430,33 @@ struct Args {
     /// btrd frag dump file name
     #[clap(value_parser)]
     file: String,
+
+    /// Whether or not to dump fragmentation stats
+    #[clap(short, long, value_parser, default_value_t = true)]
+    stats: bool,
+
     /// Whether or not to dump fragmentation images
     #[clap(short, long, value_parser, default_value_t = false)]
     images: bool,
+
+    /// Whether or not to dump raw bg fragmentation data
+    #[clap(short, long, value_parser, default_value_t = false)]
+    raw: bool,
 }
 
 fn main() -> BoxResult<()> {
     let args = Args::parse();
     let mut si = SpaceInfo::new();
     si.handle_file(&args.file)?;
+    if args.stats {
+        si.dump_stats()?;
+    }
     if args.images {
         si.dump_imgs(&args.file)?;
     }
-    si.dump_frag()?;
+    if args.raw {
+        si.dump_raw()?;
+    }
     Ok(())
 }
 
