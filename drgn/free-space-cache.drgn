@@ -1,0 +1,50 @@
+from drgn import NULL, Object, cast, container_of, execscript, offsetof, reinterpret, sizeof
+from drgn.helpers.linux import *
+
+SINGLE = 4
+
+mnt = path_lookup(prog, "/").mnt
+fs_info = cast("struct btrfs_fs_info *", mnt.mnt_sb.s_fs_info)
+
+def get_data_space_info(fs_info):
+    for lh in list_for_each(fs_info.space_info.address_of_()):
+            si = container_of(lh, "struct btrfs_space_info", "list")
+            if si.flags & 1:
+                return si
+
+def get_block_group(space_info, raid, bg_start):
+    for lh in list_for_each(space_info.block_groups[raid].address_of_()):
+        bg = container_of(lh, "struct btrfs_block_group", "list")
+        if bg.start == bg_start:
+            return bg
+
+def dump_free_extent(offset, sz):
+    print(f"\t[{offset}, {offset + sz}] {sz}")
+
+def dump_bg_free_space(bg):
+    offset_index = bg.free_space_ctl.free_space_offset
+    rb_root = offset_index.address_of_()
+    for free_space in rbtree_inorder_for_each_entry("struct btrfs_free_space", rb_root, "offset_index"):
+        if free_space.bitmap:
+            bit_offset = None
+            last_bit = None
+            for bit in for_each_clear_bit(free_space.bitmap, 32768):
+                if bit_offset is None:
+                    bit_offset = bit
+                # we jumped, so [bit_offset, last_bit] is a free extent
+                if last_bit is not None and bit > last_bit + 1:
+                    offset = free_space.offset + bit_offset * 4096
+                    dump_free_extent(offset, (last_bit + 1 - bit_offset) * 4096)
+                    bit_offset = bit
+                last_bit = bit
+        else:
+            dump_free_extent(free_space.offset, free_space.bytes)
+
+def dump_si_free_space(space_info, raid):
+    for lh in list_for_each(space_info.block_groups[raid].address_of_()):
+        bg = container_of(lh, "struct btrfs_block_group", "list")
+        print(f"Block group: {bg.start}")
+        dump_bg_free_space(bg)
+
+si = get_data_space_info(fs_info)
+dump_si_free_space(si, SINGLE)
