@@ -4,6 +4,10 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m'
 
+_usage() {
+	exit 22
+}
+
 _fail() {
 	local msg="$1"
 	echo -e "${RED}FAIL:${NC} $msg"
