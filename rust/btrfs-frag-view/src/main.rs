@@ -385,7 +385,9 @@ impl SpaceInfo {
 
     fn dump_stats(&self) -> BoxResult<()> {
         let mut pctv: Vec<f64> = Vec::new();
+        let mut total_bgs = 0;
         for (_, bg) in &self.block_groups {
+            total_bgs = total_bgs + 1;
             if !bg.name().contains("Data") {
                 continue;
             }
@@ -400,13 +402,16 @@ impl SpaceInfo {
             Some(m) => m,
             None => 0.0
         };
-        println!("bg count: {}", d.len());
-        println!("frag mean: {}", mean as u8);
-        println!("frag min: {}", d.min() as u8);
-        println!("frag median: {}", d.median() as u8);
-        println!("frag p95: {}", d.percentile(95) as u8);
-        println!("frag p99: {}", d.percentile(99) as u8);
-        println!("frag max: {}", d.max() as u8);
+        println!("bg count: {}", total_bgs);
+        if d.len() > 0 {
+            println!("fragmented bg count: {}", d.len());
+            println!("frag mean: {}", mean as u8);
+            println!("frag min: {}", d.min() as u8);
+            println!("frag median: {}", d.median() as u8);
+            println!("frag p95: {}", d.percentile(95) as u8);
+            println!("frag p99: {}", d.percentile(99) as u8);
+            println!("frag max: {}", d.max() as u8);
+        }
         Ok(())
     }
 
