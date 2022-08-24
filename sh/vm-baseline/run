@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+
+SCRIPT=$(readlink -f "$0")
+DIR=$(dirname "$SCRIPT")
+SH_ROOT=$(dirname "$DIR")
+source "$SH_ROOT/boilerplate"
+
+if [ $# -lt 4 ]
+then
+	_usage
+fi
+
+# run it on the baseline against yesterday
+# run it on the baseline to establish today
+# run it today against the baseline
+
+_prepare_one() {
+	local commit=$1
+	local vm=$2
+
+	git checkout $commit
+	make -j16
+	vm-cycle $vm
+	_vm_ready $vm
+}
+
+_run_one() {
+	local vm=$1
+	shift
+
+	ssh $vm "cd fsperf; sudo ./fsperf $@"
+}
+
+_vm_ready() {
+	local vm=$1
+	local ready=0
+	set +e
+	while [ $ready -eq 0 ]
+	do
+		ssh $vm 'pwd' > /dev/null 2>&1
+		[ $? -eq 0 ] && ready=1
+	done
+	set -e
+}
+
+RESULTS_DIR=~/.local/share/fsperf-results
+
+linux_dir=$1
+baseline=$2
+experiment=$3
+vm=$4
+
+BASELINE_DIR="$RESULTS_DIR/$baseline"
+EXPERIMENT_DIR="$RESULTS_DIR/$experiment"
+mkdir -p $BASELINE_DIR
+mkdir -p $EXPERIMENT_DIR
+
+cd $linux_dir
+_prepare_one $baseline $vm
+
+TODAY=$(date +%F)
+NEW_BASELINE="baseline-$TODAY"
+
+LAST_BASELINE="$RESULTS_DIR/$baseline/last-run"
+if [ -f "$LAST_BASELINE" ]
+then
+	LAST_BASELINE="$(cat $LAST_BASELINE)"
+	_run_one $vm -p $LAST_BASELINE -t -n 10 > $RESULTS_DIR/$baseline/$TODAY
+fi
+
+
+_run_one $vm -p $NEW_BASELINE -n 10
+echo $NEW_BASELINE > $LAST_BASELINE
+
+_prepare_one $experiment $vm
+_run_one $vm -p $NEW_BASELINE -t -n 10 > $RESULTS_DIR/$experiment/$TODAY
