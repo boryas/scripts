@@ -1,0 +1,94 @@
+BEGIN {
+	@start_ms = nsecs / 1000000;
+}
+
+kprobe:find_free_extent {
+	@loop[tid] = -1;
+	@bgs[tid] = 0;
+	@start[tid] = nsecs;
+}
+
+kretprobe:find_free_extent {
+	if (@loop[tid]) {
+		$ms = (nsecs / 1000000) - @start_ms;
+		if (@loop[tid] != -1) {
+			printf("FFE %d %d %d\n", $ms, @loop[tid], nsecs - @start[tid]);
+		}
+		delete(@loop[tid]);
+
+		if (@bgs[tid] != 0) {
+			printf("BGS %d %d\n", $ms, @bgs[tid]);
+			delete(@bgs[tid]);
+		}
+
+		if (@loop_bgs[tid, 0]) {
+			printf("XL0BGS %d %d\n", $ms, @loop_bgs[tid, 0]);
+			delete(@loop_bgs[tid, 0]);
+		}
+		if (@loop_bgs[tid, 1]) {
+			printf("XL1BGS %d %d\n", $ms, @loop_bgs[tid, 1]);
+			delete(@loop_bgs[tid, 1]);
+		}
+		if (@loop_bgs[tid, 2]) {
+			printf("XL2BGS %d %d\n", $ms, @loop_bgs[tid, 2]);
+			delete(@loop_bgs[tid, 2]);
+		}
+		if (@loop_bgs[tid, 3]) {
+			printf("XL3BGS %d %d\n", $ms, @loop_bgs[tid, 3]);
+			delete(@loop_bgs[tid, 3]);
+		}
+		if (@loop_bgs[tid, 4]) {
+			printf("XL4BGS %d %d\n", $ms, @loop_bgs[tid, 4]);
+			delete(@loop_bgs[tid, 4]);
+		}
+		if (@loop_bgs[tid, 5]) {
+			printf("XL5BGS %d %d\n", $ms, @loop_bgs[tid, 5]);
+			delete(@loop_bgs[tid, 5]);
+		}
+	}
+}
+
+tracepoint:btrfs:find_free_extent_search_loop {
+	if (!(args->flags & 1)) {
+		return;
+	}
+	@loop[tid] = args->loop;
+
+	$ms = (nsecs / 1000000) - @start_ms;
+	if (@loop_bgs[tid, 0]) {
+		printf("L0BGS %d %d\n", $ms, @loop_bgs[tid, 0]);
+	}
+	if (@loop_bgs[tid, 1]) {
+		printf("L1BGS %d %d\n", $ms, @loop_bgs[tid, 1]);
+	}
+	if (@loop_bgs[tid, 2]) {
+		printf("L2BGS %d %d\n", $ms, @loop_bgs[tid, 2]);
+	}
+	if (@loop_bgs[tid, 3]) {
+		printf("L3BGS %d %d\n", $ms, @loop_bgs[tid, 3]);
+	}
+	if (@loop_bgs[tid, 4]) {
+		printf("L4BGS %d %d\n", $ms, @loop_bgs[tid, 4]);
+	}
+	if (@loop_bgs[tid, 5]) {
+		printf("L5BGS %d %d\n", $ms, @loop_bgs[tid, 5]);
+	}
+	@loop_bgs[tid, 0] = 0;
+	@loop_bgs[tid, 1] = 0;
+	@loop_bgs[tid, 2] = 0;
+	@loop_bgs[tid, 3] = 0;
+	@loop_bgs[tid, 4] = 0;
+	@loop_bgs[tid, 5] = 0;
+}
+
+tracepoint:btrfs:find_free_extent_have_block_group {
+	if (args->hinted) {
+		print("HINT");
+		return;
+	}
+	if (!(args->flags & 1)) {
+		return;
+	}
+	@bgs[tid]++;
+	@loop_bgs[tid, args->loop]++;
+}
