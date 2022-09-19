@@ -10,37 +10,40 @@ then
 	_usage
 fi
 
-# run it on the baseline against yesterday
-# run it on the baseline to establish today
-# run it today against the baseline
-
 _prepare_one() {
 	local commit=$1
 	local vm=$2
 
+	echo "prepare $commit $vm"
 	git checkout $commit
 	make -j16
-	vm-cycle $vm
-	_vm_ready $vm
+	rcli vm cycle $vm
+	rcli vm ready $vm
 }
 
 _run_one() {
 	local vm=$1
 	shift
 
-	ssh $vm "cd fsperf; sudo ./fsperf $@"
+	ssh $vm "sudo bash -l -c \"fsperf -F -n $NR_RUNS $@\""
+}
+
+_compare() {
+	local vm=$1
+	shift
+
+	ssh $vm "sudo bash -l -c \"fsperf-compare -F $@\""
 }
 
 _vm_ready() {
 	local vm=$1
 	local ready=0
-	set +e
 	while [ $ready -eq 0 ]
 	do
 		ssh $vm 'pwd' > /dev/null 2>&1
 		[ $? -eq 0 ] && ready=1
 	done
-	set -e
+	echo "$vm ready"
 }
 
 RESULTS_DIR=~/.local/share/fsperf-results
@@ -49,6 +52,7 @@ linux_dir=$1
 baseline=$2
 experiment=$3
 vm=$4
+NR_RUNS=10
 
 BASELINE_DIR="$RESULTS_DIR/$baseline"
 EXPERIMENT_DIR="$RESULTS_DIR/$experiment"
@@ -56,21 +60,31 @@ mkdir -p $BASELINE_DIR
 mkdir -p $EXPERIMENT_DIR
 
 cd $linux_dir
-_prepare_one $baseline $vm
 
 TODAY=$(date +%F)
 NEW_BASELINE="baseline-$TODAY"
+EXPERIMENT="$experiment-$TODAY"
 
-LAST_BASELINE="$RESULTS_DIR/$baseline/last-run"
-if [ -f "$LAST_BASELINE" ]
+LAST_BASELINE=""
+LAST_BASELINE_FILE="$RESULTS_DIR/$baseline/last-run"
+if [ -f "$LAST_BASELINE_FILE" ]
 then
-	LAST_BASELINE="$(cat $LAST_BASELINE)"
-	_run_one $vm -p $LAST_BASELINE -t -n 10 > $RESULTS_DIR/$baseline/$TODAY
+	LAST_BASELINE="$(cat $LAST_BASELINE_FILE)"
 fi
 
-
-_run_one $vm -p $NEW_BASELINE -n 10
-echo $NEW_BASELINE > $LAST_BASELINE
+if [ "$LAST_BASELINE" != $NEW_BASELINE ]
+then
+	_prepare_one $baseline $vm
+	echo "run $NEW_BASELINE"
+	_run_one $vm -p $NEW_BASELINE
+	echo $NEW_BASELINE > $LAST_BASELINE_FILE
+	if [ -n "$LAST_BASELINE" ]
+	then
+		_compare $vm $LAST_BASELINE $NEW_BASELINE | tee $RESULTS_DIR/$baseline/$TODAY
+	fi
+fi
 
 _prepare_one $experiment $vm
-_run_one $vm -p $NEW_BASELINE -t -n 10 > $RESULTS_DIR/$experiment/$TODAY
+echo "run $experiment against $NEW_BASELINE"
+_run_one $vm -p $EXPERIMENT
+_compare $vm $NEW_BASELINE $EXPERIMENT | tee $RESULTS_DIR/$experiment/$TODAY

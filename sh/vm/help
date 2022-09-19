@@ -1,0 +1,3 @@
+shell scripts for managing qemu vms ala libvirt
+
+libvirt is too fancy and needs too many dependencies I don't want. So I rolled my own crappy version using shell and the fs.

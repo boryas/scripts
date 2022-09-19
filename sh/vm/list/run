@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+
+SCRIPT=$(readlink -f "$0")
+DIR=$(dirname "$SCRIPT")
+CMD_ROOT=$(dirname "$DIR")
+SH_ROOT=$(dirname "$CMD_ROOT")
+source "$SH_ROOT/boilerplate"
+
+_find_pid() {
+	ps aux | grep qemu | grep -v runsvdir | grep $vm | awk '{print $2}'
+}
+
+#TODO configurable vms dir
+for vm_file in /data/virt/*
+do
+	vm=$(basename $vm_file)
+	echo -e -n "$vm\t"
+	set +e
+	pid=$(_find_pid $vm)
+	if [ -z "$pid" ]; then
+		echo "DOWN"
+		continue
+	fi
+	ssh $vm 'pwd' > /dev/null 2>&1 && echo "UP" || echo "UNREACHABLE"
+	set -e
+done

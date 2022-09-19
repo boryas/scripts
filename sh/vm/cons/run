@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+SCRIPT=$(readlink -f "$0")
+DIR=$(dirname "$SCRIPT")
+CMD_ROOT=$(dirname "$DIR")
+SH_ROOT=$(dirname "$CMD_ROOT")
+source "$SH_ROOT/boilerplate"
+
+if [ $# -ne 1 ]
+then
+	_usage
+fi
+
+vm=$1
+cons_f="/data/virt/$vm/console"
+
+if [ -f $cons_f ]
+then
+	cons=$(cat /data/virt/$vm/console)
+	sudo minicom -D $cons
+fi

@@ -1,0 +1,11 @@
+vm <sub-cmd>
+
+sub-cmds:
+------------------
+list	list existing vms with running status
+up	start a vm
+down	stop a vm
+ready	block until a vm is ready
+cycle	powercycle a vm
+kill	kill a vm
+cons    access a vm's serial console

@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+
+SCRIPT=$(readlink -f "$0")
+DIR=$(dirname "$SCRIPT")
+CMD_ROOT=$(dirname "$DIR")
+SH_ROOT=$(dirname "$CMD_ROOT")
+source "$SH_ROOT/boilerplate"
+
+set -eua
+
+if [ $# -ne 1 ]
+then
+	_usage
+fi
+
+_find_pid() {
+	ps aux | grep qemu | grep -v runsvdir | grep $vm | awk '{print $2}'
+}
+
+vm=$1
+#TODO configurable timeout
+
+#TODO validate it's a vm lol
+ssh $vm 'sudo shutdown -P now' > /dev/null 2>&1
+
+pid=$(_find_pid)
+tries=0
+while [ -n "$pid" ]
+do
+	if [ $tries -gt 30 ]; then
+		echo "Timed out after $tries seconds. trying to kill pid: $pid"
+		rcli vm kill $vm
+	fi
+	sleep 1
+	pid=$(_find_pid)
+	tries=$(($tries + 1))
+done
+
+if [ -f /data/virt/$vm/console ]
+then
+	rm /data/virt/$vm/console
+fi
