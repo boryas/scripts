@@ -14,4 +14,4 @@ fi
 vm=$1
 
 #TODO configurable vms dir
-sudo -b /data/virt/$vm/run 2>&1 | awk '{print $5}' > /data/virt/$vm/console &
+(sudo -b /data/virt/$vm/run | awk '{print $5}' > /data/virt/$vm/console) &

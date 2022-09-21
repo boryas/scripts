@@ -19,6 +19,7 @@ _prepare_one() {
 	make -j16
 	rcli vm cycle $vm
 	rcli vm ready $vm
+	echo "$vm ready"
 }
 
 _run_one() {
