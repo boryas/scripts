@@ -9,3 +9,4 @@ ready	block until a vm is ready
 cycle	powercycle a vm
 kill	kill a vm
 cons    access a vm's serial console
+ssh     ssh into a vm

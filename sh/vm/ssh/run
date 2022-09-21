@@ -14,5 +14,5 @@ then
 fi
 vm=$1
 
-rcli vm down $vm || true
-rcli vm up $vm
+rcli vm ready $vm
+ssh $vm

@@ -16,3 +16,4 @@ install:
 	$(MAKE) -C cycle install
 	$(MAKE) -C kill install
 	$(MAKE) -C cons install
+	$(MAKE) -C ssh install
