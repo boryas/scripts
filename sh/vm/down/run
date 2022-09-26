@@ -21,13 +21,13 @@ vm=$1
 #TODO configurable timeout
 
 #TODO validate it's a vm lol
-ssh $vm 'sudo shutdown -P now' > /dev/null 2>&1
+ssh $vm 'sudo shutdown -P now' > /dev/null 2>&1 &
 
 pid=$(_find_pid)
 tries=0
 while [ -n "$pid" ]
 do
-	if [ $tries -gt 30 ]; then
+	if [ $tries -gt 15 ]; then
 		echo "Timed out after $tries seconds. trying to kill pid: $pid"
 		rcli vm kill $vm
 	fi
