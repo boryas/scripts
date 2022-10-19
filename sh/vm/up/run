@@ -13,5 +13,8 @@ fi
 
 vm=$1
 
+# phony background sudo task to trigger pw prompt
+# the qemu invocation gets piped and backgrounded, so it can't prompt
+sudo -b echo ""
 #TODO configurable vms dir
-(sudo -b /data/virt/$vm/run | awk '{print $5}' > /data/virt/$vm/console) &
+(sudo /data/virt/$vm/run | awk '{print $5}' > /data/virt/$vm/console) &
