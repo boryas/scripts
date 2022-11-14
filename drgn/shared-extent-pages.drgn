@@ -1,0 +1,130 @@
+import drgn
+from drgn import NULL, Object, cast, container_of, execscript, offsetof, reinterpret, sizeof
+from drgn.helpers.common import *
+from drgn.helpers.linux import *
+
+from _drgn import FaultError
+
+import sys
+
+TASKS = set()
+INODES = {}
+EXTENT_TO_INODES = {}
+PID = None
+DEBUG = False
+
+def dbg(msg):
+    global DEBUG
+    if DEBUG:
+        print(msg)
+
+def do_page(page):
+    inode = page.mapping.host
+    ino = int(inode.i_ino)
+    inop = int(inode)
+    sbp = int(inode.i_sb)
+    dbg(f"page {page.index} {ino} {inop}")
+    em = get_extent(inode, page)
+    if not em:
+        dbg("MISS. no em for page")
+        return
+    em_block_start = int(em.block_start)
+    em_start = int(em.start)
+    em_len = int(em.len)
+    key = (em_block_start + em_start, em_block_start + em_start + em_len)
+    if key not in EXTENT_TO_INODES:
+        EXTENT_TO_INODES[key] = set()
+    dbg(f"HIT! {key} {ino} {inop}")
+    EXTENT_TO_INODES[key].add((inop, PID))
+
+def do_file(f):
+    f = cast("struct file *", f[1])
+    inode = f.f_inode
+    if int(inode.i_sb.s_magic) != int("0x9123683E", 16):
+        dbg("skip. not btrfs")
+        return None
+    ino = int(inode.i_ino)
+    inop = int(inode)
+    dbg(f"do_file {f.f_path.dentry.d_name.name} {ino} {inop}")
+    mapping = inode.i_mapping
+    if inop in INODES:
+        dbg(f"skip file. already looked at {inop}")
+        return
+    INODES[inop] = str(f.f_path.dentry.d_name.name)
+    for off, page in radix_tree_for_each(mapping.i_pages.address_of_()):
+        page = cast("struct page *", page);
+        do_page(page)
+        
+def do_task(task):
+    global PID
+    pid = int(task.pid)
+    PID = pid
+    if pid in TASKS:
+        return
+    dbg(f"do_task {PID}")
+    TASKS.add(pid)
+    for f in for_each_file(task):
+        try:
+            do_file(f)
+        except FaultError:
+            continue
+        except Exception as e:
+            print(repr(e))
+            return
+
+def do_thread_group(task):
+    for t in list_for_each_entry("struct task_struct", task.thread_group.address_of_(), "thread_group"):
+        do_task(t)
+
+def cmp(off, em):
+    dbg(f"cmp key: {off}, em: [{em.start}, {em.start + em.len}]")
+    if off >= em.start and off < em.start + em.len:
+        return 0
+    if off < em.start:
+        return -1
+    if off >= em.start + em.len:
+        return 1
+
+def get_extent(inode, page):
+    dbg(f"lookup em for page {page.index} of inode {inode.i_ino} ({int(inode)}) {inode.i_sb.s_magic}")
+    # btrfs magic
+    inode = container_of(inode, "struct btrfs_inode", "vfs_inode")
+    em_tree = inode.extent_tree
+    rb_root = em_tree.map.rb_root
+    off = (page.index) << 12
+    try:
+        em = rb_find("struct extent_map", rb_root, "rb_node", off, cmp)
+        if em:
+            return em
+    except Exception as e:
+        print(f"em lookup failed: {e}")
+    return None
+
+#pid1 = int(sys.argv[1])
+#pid2 = int(sys.argv[2])
+pids = [int(arg) for arg in sys.argv[1:]]
+if pids:
+    for pid in pids:
+        task = find_task(prog, pid)
+        try:
+            do_task(task)
+        except FaultError:
+            continue
+else:
+    for task in for_each_task(prog):
+        try:
+            do_task(task)
+        except FaultError:
+            continue
+
+tmp = 0
+savings = 0
+for em, inodes in EXTENT_TO_INODES.items():
+    if DEBUG or len(inodes) > 1:
+        print(f"{em} used by [{[(inop, INODES[inop], pid) for (inop, pid) in inodes]}]")
+    savings += (em[1] - em[0]) * (len(inodes) - 1)
+    if (savings != tmp):
+        print(f"savings increased to {savings}")
+        tmp = savings
+
+print(f"Total savings upper bound: {savings}")
