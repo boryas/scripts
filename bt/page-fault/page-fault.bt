@@ -1,0 +1,15 @@
+kprobe:lru_cache_add {
+	if (@live[tid]) {
+		$page = (struct page *)arg0;
+		$ino = $page->mapping->host->i_ino;
+		@faults[comm, $ino] = count();
+	}
+}
+
+kprobe:handle_mm_fault {
+	@live[tid] = 1;
+}
+
+kretprobe:handle_mm_fault {
+	delete(@live[tid]);
+}

@@ -1,0 +1,28 @@
+kprobe:btrfs_lookup_bio_sums {
+        @live[tid] = 1;
+}
+
+kretprobe:btrfs_lookup_bio_sums {
+        delete(@live[tid]);
+}
+
+kretprobe:btrfs_lookup_csum {
+        if (@live[tid] == 1 && retval < 0) {
+                $fields = ("lookup-csum", comm, tid, retval);
+                print($fields);
+        }
+}
+
+kprobe:btrfs_search_slot {
+        if (@live[tid] == 1) {
+                @search_stack[tid] = kstack();
+        }
+}
+
+kretprobe:btrfs_search_slot {
+        if (@live[tid] == 1 && retval < 0) {
+                $fields = ("search-slot", comm, tid, retval, @search_stack[tid]);
+                print($fields);
+        }
+        delete(@search_stack[tid]);
+}

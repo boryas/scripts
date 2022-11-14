@@ -1,0 +1,14 @@
+kprobe:kernfs_put {
+        $kfs = (struct kernfs_node *)arg0;
+        printf("kernfs_put %lld %s %d: name: %s count: %d\n%s", nsecs, comm, tid, str($kfs->name), $kfs->count.counter, kstack);
+}
+kretprobe:kernfs_put {
+        printf("kernfs_put returned. %lld %s %d\n", nsecs, comm, tid);
+}
+
+kprobe:kernfs_find_ns {
+        printf("kernfs_find_ns %lld %s %d: name: %s\n", nsecs, comm, tid, str(arg1));
+}
+kretprobe:kernfs_find_ns {
+        printf("kernfs_find_ns returned. %lld %s %d\n", nsecs, comm, tid);
+}

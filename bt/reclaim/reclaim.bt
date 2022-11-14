@@ -1,0 +1,22 @@
+tracepoint:btrfs:btrfs_add_block_group {
+        @create_ns[args->offset] = nsecs;
+        @alloc_count[args->offset] = 0;
+}
+
+tracepoint:btrfs:btrfs_reserve_extent {
+        if (@create_ns[args->bg_objectid]) {
+                @alloc_count[args->bg_objectid]++;
+        }
+}
+
+tracepoint:btrfs:btrfs_reclaim_block_group {
+        $delay = 0;
+        if (@create_ns[args->bytenr]) {
+                $delay = nsecs - @create_ns[args->bytenr];
+                delete(@create_ns[args->bytenr]);
+        }
+        $allocs = @alloc_count[args->bytenr];
+        delete(@alloc_count[args->bytenr]);
+
+        print(($delay, $allocs, args->used));
+}

@@ -1,0 +1,17 @@
+kprobe:set_page_dirty {
+        if (@kvm[tid]) {
+                $page = (struct page *)arg0;
+                $mapping = $page->mapping;
+                if ($mapping != 0 && $mapping->host != 0) {
+                        $ino = $mapping->host->i_ino;
+                        @kvm_dirties[$ino, kstack] = count();
+                }
+        }
+}
+
+kprobe:kvm_set_pfn_dirty {
+        @kvm[tid] = 1;
+}
+kretprobe:kvm_set_pfn_dirty {
+        delete(@kvm[tid]);
+}

@@ -1,0 +1,23 @@
+kprobe:btrfs_add_free_space {
+        @live[tid] = 1;
+        @bg[tid] = arg0;
+        @off[tid] = arg1;
+        @sz[tid] = arg2;
+}
+
+kretprobe:btrfs_add_free_space {
+        delete(@live[tid]);
+        delete(@bg[tid]);
+        delete(@off[tid]);
+        delete(@sz[tid]);
+}
+
+kretprobe:try_merge_free_space {
+        if (@live[tid]) {
+                if (!retval) {
+                        $bg = ((struct btrfs_block_group *)@bg[tid])->start;
+                        printf("no merge! %llu %llu %llu\n", $bg, @off[tid], @sz[tid]);
+                        @hole[comm] = hist(@sz[tid]);
+                }
+        }
+}
