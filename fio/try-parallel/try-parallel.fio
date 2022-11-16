@@ -1,0 +1,13 @@
+[global]
+group_reporting=1
+directory=/mnt/lol
+
+[one]
+ioengine=sync
+rw=write
+blocksize_unaligned=1
+filesize=4K:16K
+nrfiles=100000
+numjobs=32
+create_on_open=1
+openfiles=512
