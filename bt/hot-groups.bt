@@ -1,0 +1,18 @@
+tracepoint:btrfs:btrfs_reserve_extent {
+	if (args->hinted) {
+		if (args->hot) {
+			@hot_hinted = count();
+		} else {
+			@hinted = count();
+		}
+	} else if (args->hot) {
+		@hot = count();
+	} else {
+		@loop[args->loop] = count();
+	}
+}
+
+tracepoint:btrfs:find_free_extent_hot_alloc_fail {
+	@hot_fails = count();
+	@hot_fail_cnt = hist(args->fail_cnt);
+}

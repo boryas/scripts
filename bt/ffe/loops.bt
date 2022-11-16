@@ -9,6 +9,7 @@ kprobe:find_free_extent {
 }
 
 kretprobe:find_free_extent {
+	printf("DONE FFE!!! %d\n", retval);
 	if (@loop[tid]) {
 		$ms = (nsecs / 1000000) - @start_ms;
 		if (@loop[tid] != -1) {
