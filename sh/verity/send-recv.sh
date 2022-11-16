@@ -50,7 +50,7 @@ chmod a+x $f || _fail "chmod failed"
 setcap cap_net_raw=ep $f || _fail "setcap failed"
 
 $BTRFS property set $subv ro true || _fail "property set failed"
-$BTRFS send $subv -f $stream || _fail "send failed"
+$BTRFS send --proto 0 -f $stream $subv || _fail "send failed"
 fsverity measure $f > /tmp/measure1 || _fail "measure failed"
 $BTRFS inspect-internal dump-tree $dev
 
