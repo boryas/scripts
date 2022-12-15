@@ -6,6 +6,15 @@ CMD_ROOT=$(dirname "$DIR")
 SH_ROOT=$(dirname "$CMD_ROOT")
 source "$SH_ROOT/boilerplate"
 
+_up_one() {
+	local vm=$1
+	# phony background sudo task to trigger pw prompt
+	# the qemu invocation gets piped and backgrounded, so it can't prompt
+	sudo -b true
+	#TODO configurable vms dir
+	(sudo /data/virt/$vm/run | awk '{print $5}' > /data/virt/$vm/console) &
+}
+
 if [ $# -ne 1 ]
 then
 	_usage
@@ -13,8 +22,10 @@ fi
 
 vm=$1
 
-# phony background sudo task to trigger pw prompt
-# the qemu invocation gets piped and backgrounded, so it can't prompt
-sudo -b echo ""
-#TODO configurable vms dir
-(sudo /data/virt/$vm/run | awk '{print $5}' > /data/virt/$vm/console) &
+if [ $vm == "all" ]; then
+	for vm in $(rcli vm list | grep DOWN | awk '{print $1}'); do
+		_up_one $vm
+	done
+else
+	_up_one $vm
+fi;

@@ -10,10 +10,16 @@ _find_pid() {
 	ps aux | grep qemu | grep -v runsvdir | grep $vm | awk '{print $2}'
 }
 
+_is_vm() {
+	local name=$1
+	echo $name | grep -qe '^v'
+}
+
 #TODO configurable vms dir
 for vm_file in /data/virt/*
 do
 	vm=$(basename $vm_file)
+	_is_vm $vm || continue
 	echo -e -n "$vm\t"
 	set +e
 	pid=$(_find_pid $vm)
