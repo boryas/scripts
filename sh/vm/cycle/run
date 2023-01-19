@@ -8,11 +8,22 @@ source "$SH_ROOT/boilerplate"
 
 set -eua
 
+_cycle_one() {
+	local vm=$1
+	rcli vm down $vm || true
+	rcli vm up $vm
+}
+
 if [ $# -ne 1 ]
 then
 	_usage
 fi
-vm=$1
 
-rcli vm down $vm || true
-rcli vm up $vm
+vm=$1
+if [ $vm == "all" ]; then
+	for vm in $(rcli vm list | awk '{print $1}'); do
+		_cycle_one $vm
+	done
+else
+	_cycle_one $vm
+fi

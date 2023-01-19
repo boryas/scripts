@@ -28,4 +28,4 @@ if [ $vm == "all" ]; then
 	done
 else
 	_up_one $vm
-fi;
+fi

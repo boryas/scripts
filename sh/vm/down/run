@@ -6,37 +6,48 @@ CMD_ROOT=$(dirname "$DIR")
 SH_ROOT=$(dirname "$CMD_ROOT")
 source "$SH_ROOT/boilerplate"
 
-set -eua
-
 if [ $# -ne 1 ]
 then
 	_usage
 fi
 
 _find_pid() {
+	local vm=$1
+	set +e
 	ps aux | grep qemu | grep -v runsvdir | grep $vm | awk '{print $2}'
+	set -e
+}
+
+_down_one() {
+	local vm=$1
+
+	ssh $vm 'sudo shutdown -P now' > /dev/null 2>&1 &
+	pid=$(_find_pid $vm)
+	tries=0
+	while [ -n "$pid" ]
+	do
+		#TODO configurable timeout
+		if [ $tries -gt 15 ]; then
+			echo "Timed out after $tries seconds. trying to kill pid: $pid"
+			rcli vm kill $vm
+		fi
+		sleep 1
+		pid=$(_find_pid $vm)
+		tries=$(($tries + 1))
+	done
+
+	if [ -f /data/virt/$vm/console ]
+	then
+		rm /data/virt/$vm/console
+	fi
 }
 
 vm=$1
-#TODO configurable timeout
 
-#TODO validate it's a vm lol
-ssh $vm 'sudo shutdown -P now' > /dev/null 2>&1 &
-
-pid=$(_find_pid)
-tries=0
-while [ -n "$pid" ]
-do
-	if [ $tries -gt 15 ]; then
-		echo "Timed out after $tries seconds. trying to kill pid: $pid"
-		rcli vm kill $vm
-	fi
-	sleep 1
-	pid=$(_find_pid)
-	tries=$(($tries + 1))
-done
-
-if [ -f /data/virt/$vm/console ]
-then
-	rm /data/virt/$vm/console
+if [ $vm == "all" ]; then
+	for vm in $(rcli vm list | grep -v DOWN | awk '{print $1}'); do
+		_down_one $vm
+	done
+else
+	_down_one $vm
 fi
