@@ -1,0 +1,16 @@
+kprobe:should_reclaim_block_group {
+	@bgs[tid] = arg0;
+}
+
+kretprobe:should_reclaim_block_group {
+	if (@bgs[tid]) {
+		$bg = (struct btrfs_block_group *)@bgs[tid];
+		if ($bg->flags & 2 || $bg->flags & 4) {
+			return;
+		}
+		$used = $bg->used + $bg->reserved;
+		$avail = $bg->length - $used;
+		printf("%llu %llu %llu: %u\n", $bg->start, $used, $avail, retval);
+		delete(@bgs[tid]);
+	}
+}

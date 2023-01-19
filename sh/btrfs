@@ -1,0 +1,58 @@
+if [ $USER == "root" ]
+then
+	user=$SUDO_USER
+else
+	user=$USER
+fi;
+BTRFS="/home/$user/btrfs-progs/btrfs"
+
+
+_basic_dev_mnt_usage() {
+	if [ $# -lt 2 ]
+	then
+		echo "usage: $SCRIPT <dev> <mnt>"
+		_usage
+	fi
+}
+
+_fresh_btrfs_mnt() {
+	local dev=$1
+	local mnt=$2
+	shift
+	shift
+
+	echo "fresh mount $dev $mnt $@" > /dev/kmsg
+	set +e
+	umount -q $dev
+	set -e
+	mkfs.btrfs -f $dev
+	mount $dev $mnt "$@"
+}
+
+_cycle_mnt() {
+	local dev=$1
+	local mnt=$2
+
+	echo "cycle mount $dev $mnt" > /dev/kmsg
+	umount $dev
+	mount $dev $mnt
+}
+
+_btrfs_uuid() {
+	local dev=$1
+
+	btrfs fi show $dev | grep uuid: | awk '{print $4}'
+}
+
+_btrfs_sysfs() {
+	local dev=$1
+
+	echo /sys/fs/btrfs/$(_btrfs_uuid $dev)
+}
+
+_btrfs_sysfs_space_info() {
+	local dev=$1
+	local type=$2
+
+	echo $(_btrfs_sysfs $dev)/allocation/$type
+}

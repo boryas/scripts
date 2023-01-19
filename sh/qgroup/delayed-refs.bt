@@ -1,0 +1,6 @@
+kprobe:btrfs_add_delayed_data_ref {
+	$ref = (struct btrfs_ref *)arg1;
+	$action = $ref->action;
+	$root = $ref->data_ref.owning_root;
+	@[kstack, $action, $root] = count();
+}

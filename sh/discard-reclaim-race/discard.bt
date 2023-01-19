@@ -1,0 +1,38 @@
+kprobe:btrfs_discard_queue_work {
+	$bg = (struct btrfs_block_group *)arg1;
+	if (!($bg->flags & 1)) {
+		return;
+	}
+	$msecs = nsecs / 1000000;
+	printf("%llu queue bg %llu %llu for discard\n", $msecs, $bg->start, $bg->flags);
+}
+
+kprobe:btrfs_trim_block_group_extents {
+	$bg = (struct btrfs_block_group *)arg0;
+	if (!($bg->flags & 1)) {
+		return;
+	}
+	$msecs = nsecs / 1000000;
+	printf("%llu trim bg %llu %llu extents\n", $msecs, $bg->start, $bg->flags);
+}
+
+kprobe:btrfs_mark_bg_to_reclaim {
+	$bg = (struct btrfs_block_group *)arg0;
+	if (!($bg->flags & 1)) {
+		return;
+	}
+	$msecs = nsecs / 1000000;
+	printf("%llu mark bg %llu %llu for reclaim\n", $msecs, $bg->start, $bg->flags);
+}
+
+kprobe:btrfs_relocate_chunk {
+	$bg_start = arg1;
+	$msecs = nsecs / 1000000;
+	printf("%llu relocate bg %llu\n", $msecs, $bg_start);
+}
+
+kprobe:btrfs_remove_block_group {
+	$bg_start = arg1;
+	$msecs = nsecs / 1000000;
+	printf("%llu remove bg %llu %s\n", $msecs, $bg_start, kstack);
+}

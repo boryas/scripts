@@ -5,8 +5,6 @@ DIR=$(dirname "$SCRIPT")
 SH_ROOT=$(dirname "$DIR")
 source "$SH_ROOT/boilerplate"
 
-BTRFS="/home/vmuser/btrfs-progs/btrfs"
-
 if [ $# -lt 2 ]
 then
 	echo "usage: share.sh dev mnt" >&2

@@ -2,7 +2,7 @@ set -euo pipefail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-NC='\033[0m'
+PLAIN='\033[0m'
 
 _usage() {
 	exit 22
@@ -10,12 +10,16 @@ _usage() {
 
 _fail() {
 	local msg="$1"
-	echo -e "${RED}FAIL:${NC} $msg"
+	echo -e "${RED}FAIL:${PLAIN} $msg"
 	_cleanup
 	exit 1
 }
 
 _ok() {
-	echo -e "${GREEN}OK${NC}"
+	echo -e "${GREEN}OK${PLAIN}"
 	exit 0
+}
+
+_kmsg() {
+	echo $@ | tee /dev/kmsg
 }
