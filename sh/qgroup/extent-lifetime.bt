@@ -1,0 +1,25 @@
+kprobe:btrfs_record_squota_delta {
+	$root = arg1;
+	$num_bytes = arg2;
+	$inc = arg3;
+	$off = arg4;
+
+	if ($root < 256) {
+		//printf("record delta against non-fs tree. %s\n", kstack);
+		return;
+	}
+
+	if ($inc) {
+		$delta = $num_bytes;
+	} else {
+		$delta = -$num_bytes;
+	}
+
+	@net[$root] += $delta;
+	@extent[$off] += $delta;
+	print(kstack);
+	printf("record data delta. root %llu num_bytes %llu inc %d off %llu root-net %lld extent-net %lld\n", $root, $num_bytes, $inc, $off, @net[$root], @extent[$off]);
+	if (@extent[$off] == 0) {
+		delete(@extent[$off]);
+	}
+}
