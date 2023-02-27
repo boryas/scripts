@@ -1,0 +1,7 @@
+btrfs-scale <scaling-param> [param-args]
+
+scaling-params:
+files
+extents
+snapshots
+reflinks

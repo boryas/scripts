@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+
+SCRIPT=$(readlink -f "$0")
+DIR=$(dirname "$SCRIPT")
+CMD_ROOT=$(dirname "$DIR")
+SH_ROOT=$(dirname "$CMD_ROOT")
+source "$SH_ROOT/boilerplate"
+
+if [ $# -ne 2 ]
+then
+	_usage
+fi
+
+dir=$1
+count=$2
+
+for i in $(seq $count); do
+	dd if=/dev/zero of=$dir/f bs=8k count=1 conv=notrunc oflag=append
+	sync
+done
