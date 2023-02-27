@@ -123,7 +123,7 @@ for em, inodes in EXTENT_TO_INODES.items():
     if DEBUG or len(inodes) > 1:
         print(f"{em} used by [{[(inop, INODES[inop], pid) for (inop, pid) in inodes]}]")
     savings += (em[1] - em[0]) * (len(inodes) - 1)
-    if (savings != tmp):
+    if (DEBUG and savings != tmp):
         print(f"savings increased to {savings}")
         tmp = savings
 
