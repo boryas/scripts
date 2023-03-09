@@ -2,6 +2,7 @@ set -euo pipefail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
+BLUE='\033[0;34m'
 PLAIN='\033[0m'
 
 _usage() {
@@ -21,5 +22,10 @@ _ok() {
 }
 
 _kmsg() {
-	echo $@ | tee /dev/kmsg
+	echo $@ > /dev/kmsg
+}
+
+_log() {
+	echo -e "${BLUE}$@${PLAIN}"
+	_kmsg $@
 }
