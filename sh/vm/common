@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+SCRIPT=$(readlink -f "$0")
+SH_ROOT=$(dirname "$CMD_ROOT")
+source "$SH_ROOT/boilerplate"
+
+source /home/$USER/.config/rcli/env
