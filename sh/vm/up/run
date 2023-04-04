@@ -3,8 +3,7 @@
 SCRIPT=$(readlink -f "$0")
 DIR=$(dirname "$SCRIPT")
 CMD_ROOT=$(dirname "$DIR")
-SH_ROOT=$(dirname "$CMD_ROOT")
-source "$SH_ROOT/boilerplate"
+source "$CMD_ROOT/common"
 
 _up_one() {
 	local vm=$1

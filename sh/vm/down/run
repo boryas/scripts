@@ -3,8 +3,7 @@
 SCRIPT=$(readlink -f "$0")
 DIR=$(dirname "$SCRIPT")
 CMD_ROOT=$(dirname "$DIR")
-SH_ROOT=$(dirname "$CMD_ROOT")
-source "$SH_ROOT/boilerplate"
+source "$CMD_ROOT/common"
 
 if [ $# -ne 1 ]
 then
@@ -36,9 +35,9 @@ _down_one() {
 		tries=$(($tries + 1))
 	done
 
-	if [ -f /data/virt/$vm/console ]
+	if [ -f $VM_DIR/$vm/console ]
 	then
-		rm /data/virt/$vm/console
+		rm $VM_DIR/$vm/console
 	fi
 }
 
