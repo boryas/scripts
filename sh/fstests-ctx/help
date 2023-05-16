@@ -1,0 +1,8 @@
+change fstests contexts
+
+fstests rely on a decent amount of system state to run properly. Specifically:
+userspace utils (e.g. btrfs-progs)
+how the test device is mkfs'd
+local.config
+
+So it is helpful to switch from one mode (e.g. misc-next) to another (e.g. a feature branch) seamlessly.

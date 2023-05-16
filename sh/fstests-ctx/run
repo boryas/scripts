@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+
+SCRIPT=$(readlink -f "$0")
+DIR=$(dirname "$SCRIPT")
+SH_ROOT=$(dirname "$DIR")
+source "$SH_ROOT/boilerplate"
+
+FSTEST_CONFIG=~/fstest-config
+FSTESTS=~/fstests
+BTRFS_PROGS=~/btrfs-progs
+
+if [ $# -ne 1 ]
+then
+	_usage
+fi
+
+ctx=$1
+fstests_config=$ctx.config
+fstests_commit="upstream"
+btrfs_progs_commit="master"
+test_dev=/dev/tst/tst
+mkfs_args=""
+
+if [[ $ctx == "squota" ]]; then
+    fstests_commit="squota-test"
+    btrfs_progs_commit="squota-progs"
+    mkfs_args="-O squota"
+fi
+
+if [[ $ctx == "quota" ]]; then
+    mkfs_args="-O quota"
+fi
+
+cd "$FSTESTS"
+git checkout $fstests_commit
+cp "$FSTEST_CONFIG/$fstests_config" local.config
+
+cd "$BTRFS_PROGS"
+git checkout $btrfs_progs_commit
+make
+
+sudo ./mkfs.btrfs -f $mkfs_args $test_dev
