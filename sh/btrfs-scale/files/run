@@ -15,6 +15,6 @@ dir=$1
 count=$2
 
 for i in $(seq $count); do
-	dd if=/dev/zero of=$dir/f.$i bs=8k count=1
+	dd if=/dev/zero of=$dir/f.$i bs=8k count=1 >/dev/null 2>&1
 done
 sync

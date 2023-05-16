@@ -41,7 +41,7 @@ _cycle_mnt() {
 _btrfs_uuid() {
 	local dev=$1
 
-	btrfs fi show $dev | grep uuid: | awk '{print $4}'
+	$BTRFS fi show $dev | grep uuid: | awk '{print $4}'
 }
 
 _btrfs_sysfs() {

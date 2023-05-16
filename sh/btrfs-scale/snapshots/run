@@ -17,5 +17,5 @@ count=$3
 
 
 for i in $(seq $count); do
-	btrfs subvolume snapshot $subv $dst_dir/snap.$i
+	btrfs subvolume snapshot $subv $dst_dir/snap.$i >/dev/null 2>&1
 done
