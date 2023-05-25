@@ -5,6 +5,7 @@ else
 	user=$USER
 fi;
 BTRFS="/home/$user/btrfs-progs/btrfs"
+MKFS="/home/$user/btrfs-progs/mkfs.btrfs"
 
 
 _basic_dev_mnt_usage() {
