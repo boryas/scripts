@@ -1,19 +1,30 @@
 #!/usr/bin/env bash
 
-umount /mnt/lol
-mkfs.btrfs -f -m single -d single --nodesize 4096 /dev/vg0/lv0
-mount /dev/vg0/lv0 /mnt/lol
+SCRIPT=$(readlink -f "$0")
+DIR=$(dirname "$SCRIPT")
+SH_ROOT=$(dirname "$DIR")
+source "$SH_ROOT/boilerplate"
+source "$SH_ROOT/btrfs"
+
+_basic_dev_mnt_usage $@
+
+dev=$1
+mnt=$2
+
+_umount $mnt
+$MKFS -f -m single -d single --nodesize 4096 $dev
+mount $dev $mnt
 
 NR_FILES=1000000
-F=/mnt/lol/foo
+F=$mnt/foo
 
 del_one() {
-  f=$(find /mnt/lol -type f | shuf -n 1)
+  f=$(find $mnt -type f | shuf -n 1)
   rm $f
 }
 
 non_empty() {
-  find /mnt/lol -type f | read
+  find $mnt -type f | read
 }
 
 setup() {
@@ -44,7 +55,7 @@ ino_resolve_loop() {
   while $(non_empty)
   do
     off=$(shuf -i 0-10000000000 -n 1)
-    btrfs inspect-internal logical-resolve $off /mnt/lol 2>&1 | grep -v 'No such file'
+    $BTRFS inspect-internal logical-resolve $off $mnt 2>&1 | grep -v 'No such file'
   done
   echo "done resolve inodes"
 }

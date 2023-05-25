@@ -39,6 +39,13 @@ _cycle_mnt() {
 	mount $dev $mnt
 }
 
+_umount() {
+	local mnt=$1
+	set +e
+	umount $mnt
+	set -e
+}
+
 _btrfs_uuid() {
 	local dev=$1
 
