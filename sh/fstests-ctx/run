@@ -33,10 +33,15 @@ fi
 
 cd "$FSTESTS"
 git checkout $fstests_commit
+git fetch me
+git reset --hard me/$fstests_commit
 cp "$FSTEST_CONFIG/$fstests_config" local.config
+make
 
 cd "$BTRFS_PROGS"
 git checkout $btrfs_progs_commit
+git fetch me
+git reset --hard me/$btrfs_progs_commit
 make
 
 sudo ./mkfs.btrfs -f $mkfs_args $test_dev
