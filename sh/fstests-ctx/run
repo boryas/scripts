@@ -35,13 +35,11 @@ cd "$FSTESTS"
 git switch $fstests_branch
 git pull
 cp "$FSTEST_CONFIG/$fstests_config" local.config
-make clean
 make
 
 cd "$BTRFS_PROGS"
 git switch $progs_branch
 git pull
-make clean
 make
 
 sudo ./mkfs.btrfs -f $mkfs_args $test_dev
