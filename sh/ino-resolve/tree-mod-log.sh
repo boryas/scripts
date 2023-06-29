@@ -28,10 +28,9 @@ non_empty() {
 }
 
 setup() {
-  #fallocate -l8k $F
+  echo "setup"
   for i in $(seq $NR_FILES)
   do
-    #cp --reflink=always $F $F.$i
     fallocate -l8k $F.$i
   done
   echo "done setup; sync"
@@ -49,10 +48,9 @@ del_loop() {
 }
 
 ino_resolve_loop() {
-  #off=$(sudo xfs_io -c fiemap $F | cut -d' ' -f3 | cut -d. -f1 | grep -v $F)
-  #off=$(($off * 512))
-  echo "resolve inodes ($off)"
-  while $(non_empty)
+  set +e
+  echo "resolve inodes"
+  while ! non_empty
   do
     off=$(shuf -i 0-10000000000 -n 1)
     $BTRFS inspect-internal logical-resolve $off $mnt 2>&1 | grep -v 'No such file'
@@ -62,7 +60,7 @@ ino_resolve_loop() {
 
 setup &
 setup_pid=$!
-sleep 5
+sleep 10
 ino_resolve_loop &
 ino_resolve_loop &
 ino_resolve_loop &
