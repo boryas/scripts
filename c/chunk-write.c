@@ -46,9 +46,11 @@ int main(int argc, char **argv) {
 	iovcnt = 1;
 	off = 0;
 	for (int i = 0; i < PREALLOC / CHUNK; ++i) {
+		printf("chunk %d: off: %u\n", i, off);
 		iov.iov_len = CHUNK;
 		memset(buf, i % 256, CHUNK);
 		while (iov.iov_len) {
+			printf("pwrite %lu: off: %u\n", iov.iov_len, off);
 			ret = pwritev(fd, &iov, iovcnt, off);
 			if (ret == -1) {
 				if (errno == -EINTR)
