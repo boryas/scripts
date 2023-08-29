@@ -40,6 +40,7 @@ make
 cd "$BTRFS_PROGS"
 git switch $progs_branch
 git pull
+make clean
 make
 
 sudo ./mkfs.btrfs -f $mkfs_args $test_dev
