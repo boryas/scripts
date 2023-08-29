@@ -43,9 +43,10 @@ int main(int argc, char **argv) {
 
 
 	iov.iov_base = buf;
+	iovcnt = 1;
+	off = 0;
 	for (int i = 0; i < PREALLOC / CHUNK; ++i) {
 		iov.iov_len = CHUNK;
-		off = i * CHUNK;
 		memset(buf, i % 256, CHUNK);
 		while (iov.iov_len) {
 			ret = pwritev(fd, &iov, iovcnt, off);
