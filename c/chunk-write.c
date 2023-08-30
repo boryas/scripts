@@ -6,12 +6,10 @@
 #include <sys/uio.h>
 #include <unistd.h>
 
-#define M 1<<20
-#define G 1<<30
+#define M (1<<20)
+#define G (1<<30)
 #define PREALLOC G
 #define CHUNK (100*M)
-
-static char *F = "/mnt/lol/f";
 
 int main(int argc, char **argv) {
 	int ret;
@@ -21,7 +19,12 @@ int main(int argc, char **argv) {
 	int iovcnt;
 	unsigned int off;
 
-	fd = open(F, O_WRONLY | O_CREAT);
+	if (argc != 2) {
+		fprintf(stderr, "usage: chunk-write <filename>\n");
+		exit(1);
+	}
+
+	fd = open(argv[1], O_WRONLY | O_CREAT);
 	if (fd == -1) {
 		fprintf(stderr, "open failed: %d\n", errno);
 		exit(errno);
@@ -46,11 +49,9 @@ int main(int argc, char **argv) {
 	iovcnt = 1;
 	off = 0;
 	for (int i = 0; i < PREALLOC / CHUNK; ++i) {
-		printf("chunk %d: off: %u\n", i, off);
 		iov.iov_len = CHUNK;
 		memset(buf, i % 256, CHUNK);
 		while (iov.iov_len) {
-			printf("pwrite %lu: off: %u\n", iov.iov_len, off);
 			ret = pwritev(fd, &iov, iovcnt, off);
 			if (ret == -1) {
 				if (errno == -EINTR)
