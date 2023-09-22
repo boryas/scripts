@@ -171,24 +171,6 @@ int main(int argc, char **argv)
 	/* 10MiB */
 	uint64_t limit = 10UL * (1UL << 20);
 
-	/*
-	if (argc != 2) {
-		fprintf(stderr, "usage: squota-demo <btrfs-fs>");
-		exit(-22);
-	}
-	 * inputs/preconditions:
-	 * - btrfs (arg1)
-	 * - squota enabled on btrfs
-	 * - snapshot source subvol in that btrfs at /src
-	 *
-	 * steps:
-	 * - create a wrapper qg
-	 * - set a limit on it
-	 * - snap the source, inheriting into that qg
-	 * - create a nested subvol inside the snap
-	 * - write in a mix to outer and inner till we hit the limit
-	 */
-
 	ret = btrfs_create_qgroup(btrfs, qgid);
 	if (ret)
 		exit(ret);
