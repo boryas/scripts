@@ -330,7 +330,6 @@ int qgroup_search(int btrfs_fd, struct btrfs_ioctl_search_args *args,
 	int ret;
 
 	args->key.nr_items = 4096;
-	//printf("search: oid %llu:%llu, type %llu:%llu, offset %llu:%llu\n", args->key.min_objectid, args->key.max_objectid, args->key.min_type, args->key.max_type, args->key.min_offset, args->key.max_offset);
 	ret = ioctl(btrfs_fd, BTRFS_IOC_TREE_SEARCH, args);
 	if (ret < 0) {
 		fprintf(stderr, "failed to lookup qgroup items\n");
@@ -367,13 +366,15 @@ int print_qgroup_item(const struct btrfs_ioctl_search_args *args,
 {
 	switch(k->type) {
 	case BTRFS_QGROUP_INFO_KEY:
-		fprintf(stdout, "qgroup info!\n");
+		fprintf(stdout, "qgroup info %u/%llu!\n", k->offset >> 48, (k->offset << 48) >> 48);
 		break;
 	case BTRFS_QGROUP_LIMIT_KEY:
-		fprintf(stdout, "qgroup limit!\n");
+		fprintf(stdout, "qgroup limit %u/%llu!\n", k->offset >> 48, (k->offset << 48) >> 48);
 		break;
 	case BTRFS_QGROUP_RELATION_KEY:
-		fprintf(stdout, "qgroup relation!\n");
+		fprintf(stdout, "qgroup limit %u/%llu : %u/%llu!\n",
+			k->objectid >> 48, (k->objectid << 48) >> 48,
+			k->offset >> 48, (k->offset << 48) >> 48);
 		break;
 	default:
 		break;
@@ -453,6 +454,36 @@ int get_qgroup_limit(const struct btrfs_ioctl_search_args *args,
 	qg_limit = (struct btrfs_qgroup_limit_item *)(args->buf + off);
 	qg->limit = qg_limit->max_excl;
 	return 0;
+}
+
+int btrfs_list_qgs(int btrfs_fd, int32_t level)
+{
+	uint16_t qgid_level;
+	uint64_t min_qgid;
+	uint64_t max_qgid;
+	struct btrfs_ioctl_search_args args = {
+		.key = {
+			.tree_id = BTRFS_QUOTA_TREE_OBJECTID,
+			.min_type = BTRFS_QGROUP_INFO_KEY,
+			.max_type = BTRFS_QGROUP_INFO_KEY,
+			.max_transid = -1ULL,
+			.nr_items = 4096,
+		},
+	};
+
+	if (level >= 0) {
+		qgid_level = level;
+		min_qgid = (uint64_t)qgid_level << 48;
+		max_qgid = min_qgid | -1ULL >> 48;
+	} else {
+		min_qgid = 0;
+		max_qgid = -1ULL;
+	}
+
+	args.key.min_offset = min_qgid;
+	args.key.max_offset = max_qgid;
+
+	return qgroup_search(btrfs_fd, &args, &print_qgroup_item, NULL);
 }
 
 int btrfs_get_qgroup(int btrfs_fd, struct qgroup *qg, int recurse_direction)
@@ -599,6 +630,29 @@ int main(int argc, char **argv)
 	}
 
 	dump_qgroup(qg);
+
+	ret = btrfs_list_qgs(btrfs_fd, 0);
+	if (ret) {
+		goto free_qg;
+	}
+	ret = btrfs_list_qgs(btrfs_fd, 1);
+	if (ret) {
+		goto free_qg;
+	}
+	ret = btrfs_list_qgs(btrfs_fd, 2);
+	if (ret) {
+		goto free_qg;
+	}
+	ret = btrfs_list_qgs(btrfs_fd, 3);
+	if (ret <= 0) {
+		if (ret == 0)
+			fprintf(stderr, "lookup 3/X qgs actually found something!?\n");
+		goto free_qg;
+	}
+	ret = btrfs_list_qgs(btrfs_fd, -1);
+	if (ret) {
+		goto free_qg;
+	}
 
 	ret = 0;
 free_qg:
