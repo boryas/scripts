@@ -22,8 +22,6 @@ test_dev=/dev/tst/tst
 mkfs_args=""
 
 if [[ $ctx == "squota" ]]; then
-    fstests_branch="squota-test"
-    progs_branch="squota-progs"
     mkfs_args="-O squota"
 fi
 
