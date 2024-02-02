@@ -133,7 +133,7 @@ collect_data() {
 	local alloc=$(btrfs fi usage --raw $mnt | grep Data,single | awk '{print $2}' | sed 's/Size:\(.*\),/\1/')
 	local used=$(btrfs fi usage --raw $mnt | grep Data,single | awk '{print $3}' | sed 's/Used:\(.*\)/\1/')
 	local unused=$(($alloc - $used))
-	local relocs=$(cat /sys/fs/btrfs/$(get_uuid)/allocation/data/relocation_count) 
+	local reclaims=$(cat /sys/fs/btrfs/$(get_uuid)/allocation/data/reclaim_count) 
 	local thresh=$(cat /sys/fs/btrfs/$(get_uuid)/allocation/data/bg_reclaim_threshold)
 
 	pct $alloc $size >> $dir/alloc_pct.dat
@@ -143,7 +143,7 @@ collect_data() {
 	echo $unused >> $dir/unused_bytes.dat
 	echo $used >> $dir/used_bytes.dat
 	echo $alloc >> $dir/alloc_bytes.dat
-	echo $relocs >> $dir/relocs.dat
+	echo $reclaims >> $dir/reclaims.dat
 	echo $thresh >> $dir/thresh.dat
 }
 
