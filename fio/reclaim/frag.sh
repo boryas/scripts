@@ -4,10 +4,20 @@ dev=/dev/tst/lol
 mnt=/mnt/lol
 
 run=$1
-SZ=$((100 << 30))
 NOISE=$((100 << 20))
 FILES=100
 LOOPS=100
+
+clean_data() {
+	if [ $# -lt 1 ]; then
+		echo "can't clean without data dir"
+		return
+	fi
+
+	local dir=$1
+	find $dir -name "*out" | xargs rm -f
+	find $dir -name "*dat" | xargs rm -f
+}
 
 config-free() {
 	local sysfs=/sys/fs/btrfs/$(get_uuid)
@@ -66,7 +76,8 @@ dump_config() {
 }
 
 setup() {
-	mkdir -p $run
+	local run=$1
+
 	umount $mnt
 	mkfs.btrfs -f $dev >/dev/null 2>&1
 	mount $dev $mnt
@@ -74,8 +85,13 @@ setup() {
 }
 
 rm_one() {
-	local file=$(find $mnt -type f -name '[AB]*' | shuf -n 1)
+	local file=$(find $mnt -type f | shuf -n 1)
 	[ -z $file ] || rm $file
+}
+
+rm_x() {
+	local x=$1
+	find $mnt -type f | shuf -n $x | xargs rm
 }
 
 rm_loop() {
@@ -111,73 +127,141 @@ pct() {
 }
 
 collect_data() {
-	size=$(btrfs fi usage --raw $mnt | grep size | awk '{print $3}')
-	unalloc=$(btrfs fi usage --raw $mnt | grep unallocated | awk '{print $3}')
-	alloc=$(btrfs fi usage --raw $mnt | grep Data,single | awk '{print $2}' | sed 's/Size:\(.*\),/\1/')
-	used=$(btrfs fi usage --raw $mnt | grep Data,single | awk '{print $3}' | sed 's/Used:\(.*\)/\1/')
-	unused=$(($alloc - $used))
-	relocs=$(cat /sys/fs/btrfs/$(get_uuid)/allocation/data/relocation_count) 
-	thresh=$(cat /sys/fs/btrfs/$(get_uuid)/allocation/data/bg_reclaim_threshold)
-	pct $alloc $size >> $run/alloc_pct.dat
-	pct $used $alloc >> $run/used_pct.dat
-	pct $unused $unalloc >> $run/unused_unalloc_ratio.dat
-	echo $unalloc >> $run/unalloc_bytes.dat
-	echo $unused >> $run/unused_bytes.dat
-	echo $used >> $run/used_bytes.dat
-	echo $alloc >> $run/alloc_bytes.dat
-	echo $relocs >> $run/relocs.dat
-	echo $thresh >> $run/thresh.dat
+	local dir=$1
+	local size=$(btrfs fi usage --raw $mnt | grep size | awk '{print $3}')
+	local unalloc=$(btrfs fi usage --raw $mnt | grep unallocated | awk '{print $3}')
+	local alloc=$(btrfs fi usage --raw $mnt | grep Data,single | awk '{print $2}' | sed 's/Size:\(.*\),/\1/')
+	local used=$(btrfs fi usage --raw $mnt | grep Data,single | awk '{print $3}' | sed 's/Used:\(.*\)/\1/')
+	local unused=$(($alloc - $used))
+	local relocs=$(cat /sys/fs/btrfs/$(get_uuid)/allocation/data/relocation_count) 
+	local thresh=$(cat /sys/fs/btrfs/$(get_uuid)/allocation/data/bg_reclaim_threshold)
+
+	pct $alloc $size >> $dir/alloc_pct.dat
+	pct $used $alloc >> $dir/used_pct.dat
+	pct $unused $unalloc >> $dir/unused_unalloc_ratio.dat
+	echo $unalloc >> $dir/unalloc_bytes.dat
+	echo $unused >> $dir/unused_bytes.dat
+	echo $used >> $dir/used_bytes.dat
+	echo $alloc >> $dir/alloc_bytes.dat
+	echo $relocs >> $dir/relocs.dat
+	echo $thresh >> $dir/thresh.dat
 }
 
 collect_loop() {
+	local dir=results/$workload/$run
+	mkdir -p $dir
+	clean_data $dir
+
 	while true
 	do
-		collect_data
+		collect_data $dir
 		sleep 5
 	done
+
+	btrfs filesystem usage $mnt > $dir/final_usage.out
 }
 
-one_pass() {
+do_fio() {
+	local name=$1
+	local size=$2
+	local files=$3
+
+	fio --name $name --directory $mnt --size=$size --nrfiles=$files --rw=write --ioengine=falloc >/dev/null 2>&1
+}
+
+frag_fio() {
 	local iter=$1
 	local size=$2
+	local rm_pct=$3
 
-	fio --name A.$iter --directory $mnt --size=$size --nrfiles=100 --rw=write --ioengine=falloc >/dev/null 2>&1
-	rm_loop 50
+	do_fio "frag.$iter" "$size" 100
 	sync
-	#trigger_cleaner
+	rm_x $rm_pct
+	sync
 }
 
-filler() {
-	local size=$1
-	local name=$2
-	fio --name $name --directory $mnt --size=$size --nrfiles=100 --rw=write --ioengine=falloc >/dev/null 2>&1
+bounce() {
+	if [ $# -lt 2 ]; then
+		echo "usage: bounce <level> <iters>"
+		return 22
+	fi
+	local level=$1
+	local iters=$2
+	local level_bytes=$(numfmt --from=iec $level)
+	local slop=$(($level_bytes / 10))
+	local levelGiB=$(($level_bytes >> 30))
+
+	level=$(($level_bytes - (1 << 30)))
+	do_fio "bounce.$levelGiB" "$level" 100
+	for i in $(seq $iters)
+	do
+		do_fio "slop.$i" $slop 10
+		sync
+		rm_x 10
+		sync
+		sleep 5
+	done
+
+	trigger_cleaner
+	wait_reclaim_done
+}
+
+last_gig() {
+	local SIZES=( $(get_frag_sizes | sort -n) )
+	local i=0
+	for sz in ${SIZES[@]}
+	do
+		frag_fio $i $sz 50
+		i=$(($i + 1))
+		sleep 1
+	done
+	trigger_cleaner
+	wait_reclaim_done
+}
+
+strict_frag() {
+	local level_pct=$1
+	local pct_rm=$((100-$level_pct))
+	local step=$((100 / $pct_rm))
+	do_fio "strict_frag" "$(fs_size)" 100
 	sync
+
+	for i in $(seq 0 $(($pct_rm - 1)))
+	do
+		f=$mnt/strict_frag.0.$(($i * $step))
+		rm $f
+	done
+	trigger_cleaner
+	wait_reclaim_done
 }
 
 do_run() {
 	local run=$1
-	setup
+	local workload=$2
+	shift
+	shift
+	echo "$run $workload $@"
+
+	setup $run
 	dump_config
 
 	collect_loop &
 	local collect_pid=$!
 
-	local i=0
-	for sz in ${SIZES[@]};
-	do
-		#echo "run $run pass $i sz $sz"
-		one_pass $i $sz
-		i=$(($i + 1))
-	done
+	$workload $@
 
-	trigger_cleaner
-	wait_reclaim_done
 	kill $collect_pid
-	btrfs filesystem usage $mnt > $run/final_usage.out
 }
 
-get_sizes() {
-	local per=$((2 * $SZ / $LOOPS))
+fs_size() {
+	findmnt -n -b -o SIZE $mnt
+}
+
+get_frag_sizes() {
+	# leave a few gigs for possibly over-relocating in
+	#local total=$(((2 * $(fs_size)) - (2 << 30)))
+	local total=$((2 * (100 << 30)))
+	local per=$(($total / $LOOPS))
 	for i in $(seq $LOOPS)
 	do
 		local noise=$(shuf -i 0-$NOISE -n 1)
@@ -186,12 +270,25 @@ get_sizes() {
 	done
 }
 
-SIZES=( $(get_sizes) )
+#RUNS=("free-30" "free-50" "free-70" "per-50" "per-70" "free-dyn" "per-dyn")
+RUNS=("free-30" "per-30" "per-dyn")
 
-RUNS=("free-30" "free-50" "free-70" "per-50" "per-70" "free-dyn" "per-dyn")
+if [ $# -lt 1 ]
+then
+	echo "usage: frag.sh <workload> [args]"
+	echo "workloads:"
+	echo "	bounce <level (GiB)>"
+	echo "	strict_frag <level (%)>"
+	echo "	last_gig"
+	exit 22
+fi
 
-find . -name "*dat" | xargs rm
+workload=$1
+shift
+
 for run in ${RUNS[@]}
 do
-	do_run $run
+	do_run $run $workload $@
 done
+
+chown -R $SUDO_USER:$SUDO_USER results

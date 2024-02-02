@@ -16,8 +16,12 @@ def normalize(stat, val):
         return as_gb(v)
     return v
 
-def get_data(run, stat):
-    with open(f"{run}/{stat}.dat", "r") as f:
+def data_dir(workload, run):
+    return f"results/{workload}/{run}"
+
+def get_data(workload, run, stat):
+    dir=data_dir(workload, run)
+    with open(f"{dir}/{stat}.dat", "r") as f:
         ls = f.readlines()
         return [normalize(stat, v) for v in ls]
 
@@ -26,18 +30,22 @@ def make_plot(stat, runs):
     ylabel = f"{stat}"
     if "bytes" in stat:
         ylabel += " (GiB)"
+    if "pct" in stat:
+        plt.ylim([0, 100])
     plt.ylabel(ylabel)
     for run, data in runs.items():
-        data = data[14:]
         time=[t * 5 for t in range(len(data))]
         plt.plot(time, data, label=run, marker=".")
     plt.legend(loc="upper left")
 
 def make_plots(data):
-    for stat, runs in data.items():
-        plt.figure()
-        make_plot(stat, runs)
-        plt.savefig(f"{stat}.png")
+    for workload, stats in data.items():
+        for stat, runs in stats.items():
+            if not runs:
+                continue
+            plt.figure()
+            make_plot(stat, runs)
+            plt.savefig(f"results/{workload}/{stat}.png")
 
 STATS = [
     "unalloc_bytes",
@@ -54,22 +62,30 @@ STATS = [
 RUNS = [
     #"free-0",
     "free-30",
-    "free-50",
-    "free-70",
-    #"per-30",
-    "per-50",
-    "per-70",
-    "free-dyn",
+    #"free-50",
+    #"free-70",
+    "per-30",
+    #"per-50",
+    #"per-70",
+    #"free-dyn",
     "per-dyn",
+]
+
+WORKLOADS = [
+    "bounce",
+    "strict_frag",
+    "last_gig",
 ]
 
 if __name__ == "__main__":
     data = {}
-    for stat in STATS:
-        data[stat] = {}
-        for run in RUNS:
-            try:
-                data[stat][run] = get_data(run, stat)
-            except FileNotFoundError:
-                continue
+    for workload in WORKLOADS:
+        data[workload] = {}
+        for stat in STATS:
+            data[workload][stat] = {}
+            for run in RUNS:
+                try:
+                    data[workload][stat][run] = get_data(workload, run, stat)
+                except FileNotFoundError:
+                    continue
     make_plots(data)
