@@ -185,25 +185,24 @@ bounce() {
 		echo "usage: bounce <level> <iters>"
 		return 22
 	fi
-	local level=$1
-	local iters=$2
-	local level_bytes=$(numfmt --from=iec $level)
-	local slop=$(($level_bytes / 10))
-	local levelGiB=$(($level_bytes >> 30))
 
-	level=$(($level_bytes - (1 << 30)))
-	do_fio "bounce.$levelGiB" "$level" 100
+	local level_pct=$1
+	local bounce_pct=$2
+	local iters=$3
+
+	strict_frag $(($level_pct - 5))
+
+	local fsize=$(($(fs_size) / 100))
+	local bounce=$(($fsize * $bounce_pct))
+
 	for i in $(seq $iters)
 	do
-		do_fio "slop.$i" $slop 10
+		do_fio "bounce.$i" $bounce $bounce_pct
 		sync
-		rm_x 10
+		rm_x $bounce_pct
 		sync
 		sleep 5
 	done
-
-	trigger_cleaner
-	wait_reclaim_done
 }
 
 last_gig() {
@@ -215,8 +214,6 @@ last_gig() {
 		i=$(($i + 1))
 		sleep 1
 	done
-	trigger_cleaner
-	wait_reclaim_done
 }
 
 strict_frag() {
@@ -231,8 +228,6 @@ strict_frag() {
 		f=$mnt/strict_frag.0.$(($i * $step))
 		rm $f
 	done
-	trigger_cleaner
-	wait_reclaim_done
 }
 
 do_run() {
@@ -249,6 +244,9 @@ do_run() {
 	local collect_pid=$!
 
 	$workload $@
+
+	trigger_cleaner
+	wait_reclaim_done
 
 	kill $collect_pid
 }
@@ -272,6 +270,7 @@ get_frag_sizes() {
 
 #RUNS=("free-30" "free-50" "free-70" "per-50" "per-70" "free-dyn" "per-dyn")
 RUNS=("free-30" "per-30" "per-dyn")
+#RUNS=("per-dyn")
 
 if [ $# -lt 1 ]
 then
