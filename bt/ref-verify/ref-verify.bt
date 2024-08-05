@@ -1,0 +1,20 @@
+tracepoint:btrfs:add_delayed_tree_ref {
+	$root = args.ref_root;
+	$bytenr = args.bytenr;
+	$parent = args.parent;
+	$level = args.level;
+	$action = args.action;
+
+	printf("TREE-REF root %llu bytenr %llu parent %llu level %llu action %llu\n", $root, $bytenr, $parent, $level, $action);
+
+	if ($action == 1) {
+		@referrer[$root, $parent] += 1;
+		@referent[$root, $bytenr] += 1;
+	} else if ($action == 2) {
+		@referrer[$root, $parent] -= 1;
+		@referent[$root, $bytenr] -= 1;
+	}
+	if (false) {
+		printf("XXX FAIL XXX\n");
+	}
+}
