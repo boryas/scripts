@@ -80,7 +80,7 @@ setup() {
 
 	umount $mnt
 	mkfs.btrfs -f $dev >/dev/null 2>&1
-	mount $dev $mnt
+	mount -o discard=async $dev $mnt
 	config-$run
 }
 
@@ -117,7 +117,8 @@ trigger_cleaner() {
 
 wait_reclaim_done() {
 	# TODO: loop reading unalloc?
-	sleep 30
+	echo "SLEEPY TIME"
+	sleep 3600
 }
 
 pct() {
@@ -133,7 +134,8 @@ collect_data() {
 	local alloc=$(btrfs fi usage --raw $mnt | grep Data,single | awk '{print $2}' | sed 's/Size:\(.*\),/\1/')
 	local used=$(btrfs fi usage --raw $mnt | grep Data,single | awk '{print $3}' | sed 's/Used:\(.*\)/\1/')
 	local unused=$(($alloc - $used))
-	local reclaims=$(cat /sys/fs/btrfs/$(get_uuid)/allocation/data/reclaim_count) 
+	#local reclaims=$(cat /sys/fs/btrfs/$(get_uuid)/allocation/data/reclaim_count) 
+	#local reclaim_bytes=$(cat /sys/fs/btrfs/$(get_uuid)/allocation/data/reclaim_bytes) 
 	local thresh=$(cat /sys/fs/btrfs/$(get_uuid)/allocation/data/bg_reclaim_threshold)
 
 	pct $alloc $size >> $dir/alloc_pct.dat
@@ -143,7 +145,8 @@ collect_data() {
 	echo $unused >> $dir/unused_bytes.dat
 	echo $used >> $dir/used_bytes.dat
 	echo $alloc >> $dir/alloc_bytes.dat
-	echo $reclaims >> $dir/reclaims.dat
+	#echo $reclaims >> $dir/reclaims.dat
+	#echo $reclaim_bytes >> $dir/reclaim_bytes.dat
 	echo $thresh >> $dir/thresh.dat
 }
 
@@ -208,12 +211,21 @@ bounce() {
 last_gig() {
 	local SIZES=( $(get_frag_sizes | sort -n) )
 	local i=0
+
+	# fill it up with fragmented usage
 	for sz in ${SIZES[@]}
 	do
 		frag_fio $i $sz 50
 		i=$(($i + 1))
 		sleep 1
 	done
+
+	# see if we spam reclaims
+	trigger_cleaner
+	wait_reclaim_done
+
+	# free up a little space and see how much we reclaim
+	rm_x 100
 }
 
 strict_frag() {
@@ -222,12 +234,9 @@ strict_frag() {
 	local step=$((100 / $pct_rm))
 	do_fio "strict_frag" "$(fs_size)" 100
 	sync
-
-	for i in $(seq 0 $(($pct_rm - 1)))
-	do
-		f=$mnt/strict_frag.0.$(($i * $step))
-		rm $f
-	done
+	local count=$(find $mnt -type f -name '*strict_frag*' | wc -l)
+	local count_rm=$((($count * $pct_rm) / 100))
+	find $mnt -type f -name '*strict_frag*' | shuf -n $count_rm | xargs rm
 }
 
 do_run() {
@@ -269,8 +278,8 @@ get_frag_sizes() {
 }
 
 #RUNS=("free-30" "free-50" "free-70" "per-50" "per-70" "free-dyn" "per-dyn")
-RUNS=("free-30" "per-30" "per-dyn")
-#RUNS=("per-dyn")
+#RUNS=("free-30" "per-30" "per-dyn")
+RUNS=("free-30")
 
 if [ $# -lt 1 ]
 then

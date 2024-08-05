@@ -53,6 +53,7 @@ STATS = [
     "used_bytes",
     "alloc_bytes",
     "reclaims",
+    "reclaim_bytes",
     "thresh",
     "alloc_pct",
     "used_pct",
