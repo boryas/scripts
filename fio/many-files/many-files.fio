@@ -1,0 +1,5 @@
+[many-files]
+nrfiles=400000
+readwrite=write
+filesize=4k
+openfiles=1000
