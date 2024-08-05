@@ -1,0 +1,26 @@
+import drgn
+from drgn import NULL, Object, cast, container_of, execscript, offsetof, reinterpret, sizeof
+from drgn.helpers.common import *
+from drgn.helpers.linux import *
+
+from _drgn import FaultError
+
+import sys
+
+if len(sys.argv) != 2:
+    print("usage: qg-rsv.drgn <f>")
+    exit(1)
+
+fname = sys.argv[1]
+
+path = path_lookup(prog, fname)
+dentry = path.dentry
+mnt = path.mnt
+fs_info = cast("struct btrfs_fs_info *", mnt.mnt_sb.s_fs_info)
+inode = dentry.d_inode
+btrfs_inode = container_of(inode, "struct btrfs_inode", "vfs_inode")
+
+print(btrfs_inode.io_tree)
+
+for qg in rbtree_inorder_for_each_entry("struct btrfs_qgroup", fs_info.qgroup_tree, "node"):
+    print(qg.qgroupid)
