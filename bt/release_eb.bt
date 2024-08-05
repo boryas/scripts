@@ -1,0 +1,77 @@
+
+kfunc:drop_caches_sysctl_handler {
+	@live[tid] = 1;
+}
+
+kretfunc:drop_caches_sysctl_handler {
+	delete(@live[tid]);
+}
+
+kfunc:invalidate_mapping_pages {
+	if (!@live[tid]) {
+		return;
+	}
+	$BTREE_INODE_MAPPING = 0xffffffff82487350;
+	$mapping = args.mapping;
+	$a_ops = $mapping->a_ops;
+	if ($a_ops == $BTREE_INODE_MAPPING) {
+		printf("invalidate mapping pages btrfs btree inode\n");
+		@btree_inode[tid] = 1;
+	} else {
+		return;
+	}
+	@invalidate_mapping_pages[$a_ops] = count();
+}
+
+kretfunc:invalidate_mapping_pages {
+	if (@btree_inode[tid]) {
+		@freed[retval] = count();
+		delete(@btree_inode[tid]);
+	}
+}
+
+kretfunc:find_lock_entries {
+	if (!@live[tid]) {
+		return;
+	}
+	if (!@btree_inode[tid]) {
+		return;
+	}
+	@find_lock_entries[retval] = count();
+}
+
+kfunc:mapping_evict_folio {
+	printf("Ever?!?!\n");
+	if (!@live[tid]) {
+		return;
+	}
+	if (!@btree_inode[tid]) {
+		return;
+	}
+	$mapping = args.mapping;
+	$folio = args.folio;
+
+	@mapping_evict_folio[$folio->mapping->a_ops] = count();
+}
+
+kfunc:filemap_release_folio {
+	if (!@live[tid]) {
+		return;
+	}
+	if (!@btree_inode[tid]) {
+		return;
+	}
+	$folio = args.folio;
+	@filemap_release_folio[$folio->mapping->a_ops] = count();
+}
+
+kfunc:btree_release_folio {
+	if (!@live[tid]) {
+		return;
+	}
+	if (!@btree_inode[tid]) {
+		return;
+	}
+	$folio = args.folio;
+	@btree_release_folio[$folio->mapping->a_ops] = count();
+}
