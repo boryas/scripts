@@ -9,7 +9,7 @@ from drgn.helpers.linux import *
 from drgn.helpers.common import *
 from collections import defaultdict
 
-fs_info = cast("struct btrfs_fs_info *", path_lookup("/").mnt.mnt_sb.s_fs_info)
+fs_info = cast("struct btrfs_fs_info *", path_lookup("/mnt/lol").mnt.mnt_sb.s_fs_info)
 btree_inode = fs_info.btree_inode
 mapping = btree_inode.i_mapping
 PG_locked = prog["PG_locked"].value_()

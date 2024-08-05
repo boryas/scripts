@@ -3,6 +3,7 @@
 SCRIPT=$(readlink -f "$0")
 DIR=$(dirname "$SCRIPT")
 SH_ROOT=$(dirname "$DIR")
+SCRIPTS_ROOT=$(dirname $SH_ROOT)
 
 source "$SH_ROOT/boilerplate"
 source "$SH_ROOT/btrfs"
@@ -39,6 +40,11 @@ sync
 $BTRFS filesystem sync $mnt
 $BTRFS filesystem usage $mnt
 
+$SCRIPTS_ROOT/drgn/bad-btrfs-cache.py
+
 grep -e '\<nr_active_file\>' /proc/vmstat
-_cycle_mnt $dev $mnt
+#_cycle_mnt $dev $mnt
+echo 3 | sudo tee /proc/sys/vm/drop_caches
 grep -e '\<nr_active_file\>' /proc/vmstat
+
+$SCRIPTS_ROOT/drgn/bad-btrfs-cache.py
