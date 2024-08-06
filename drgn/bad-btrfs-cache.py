@@ -9,7 +9,12 @@ from drgn.helpers.linux import *
 from drgn.helpers.common import *
 from collections import defaultdict
 
-fs_info = cast("struct btrfs_fs_info *", path_lookup("/mnt/lol").mnt.mnt_sb.s_fs_info)
+if len(sys.argv) < 2:
+    print("Please supply a btrfs root dir.")
+    exit(-22)
+
+root_dir = sys.argv[1]
+fs_info = cast("struct btrfs_fs_info *", path_lookup(root_dir).mnt.mnt_sb.s_fs_info)
 btree_inode = fs_info.btree_inode
 mapping = btree_inode.i_mapping
 PG_locked = prog["PG_locked"].value_()
