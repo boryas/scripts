@@ -37,7 +37,12 @@ def folio_has_private(folio):
 
     return int(bool(pflags & PG_PRIVATE))
 
-def release_eb(eb):
+def release_eb(folio):
+    pflags = folio.flags.value_()
+    if not pflags & (1 << PG_private):
+        bump_fail("eb-release-folio-private")
+        return False
+    eb = cast("struct extent_buffer *", folio.private)
     ebflags = eb.bflags
     ebrc = int(eb.refs.counter)
     EbRefCounts[ebrc] += 1
@@ -53,15 +58,15 @@ def release_eb(eb):
     if ebflags & (1 << eb_writeback):
         bump_fail("eb-writeback")
         return False
+    if not ebflags & (1 << eb_tree_ref):
+        bump_fail("eb-tree-ref")
+        return False
     return True
 
 def release_folio(folio):
-    pflags = folio.flags.value_()
-    if not pflags & (1 << PG_private):
-        bump_fail("no-private")
-        return False
-    eb = cast("struct extent_buffer *", folio.private)
-    return release_eb(eb)
+    if not folio_has_private(folio):
+        return True
+    return release_eb(folio)
 
 def mapping_evict_folio(mapping, folio):
     pflags = folio.flags.value_()
@@ -76,9 +81,6 @@ def mapping_evict_folio(mapping, folio):
         return False
     if folio._refcount.counter > 1 + folio_has_private(folio) + 1:
         bump_fail("folio-refcount")
-        return False
-    if not folio_has_private(folio):
-        bump_fail("folio-has-private")
         return False
     return release_folio(folio)
 
