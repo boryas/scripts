@@ -11,16 +11,18 @@ kfunc:invalidate_mapping_pages {
 	if (!@live[tid]) {
 		return;
 	}
-	$BTREE_INODE_MAPPING = 0xffffffff82487350;
 	$mapping = args.mapping;
-	$a_ops = $mapping->a_ops;
-	if ($a_ops == $BTREE_INODE_MAPPING) {
+	$inode = $mapping->host;
+	if ($inode == 0) {
+		return;
+	}
+	if ($inode->i_sb->s_dev == 44 && $inode->i_ino == 1) {
 		printf("invalidate mapping pages btrfs btree inode\n");
 		@btree_inode[tid] = 1;
 	} else {
 		return;
 	}
-	@invalidate_mapping_pages[$a_ops] = count();
+	@invalidate_mapping_pages[$mapping->a_ops] = count();
 }
 
 kretfunc:invalidate_mapping_pages {
@@ -41,7 +43,6 @@ kretfunc:find_lock_entries {
 }
 
 kfunc:mapping_evict_folio {
-	printf("Ever?!?!\n");
 	if (!@live[tid]) {
 		return;
 	}
@@ -66,6 +67,7 @@ kfunc:filemap_release_folio {
 }
 
 kfunc:btree_release_folio {
+	@btree_release_folio_stacks[kstack] = count();
 	if (!@live[tid]) {
 		return;
 	}
@@ -75,3 +77,20 @@ kfunc:btree_release_folio {
 	$folio = args.folio;
 	@btree_release_folio[$folio->mapping->a_ops] = count();
 }
+
+kfunc:remove_mapping {
+	$mapping = args.mapping;
+	$folio = args.folio;
+	$inode = $mapping->host;
+	if (@btree_inode[tid]) {
+		@btree_inode_invalidate_remove_mapping_stacks[kstack] = count();
+	} else if ($inode->i_sb->s_dev == 44 && $inode->i_ino == 1) {
+		@btree_inode_remove_mapping_stacks[kstack] = count();
+	}
+}
+
+/*
+kfunc:btrfs_release_extent_buffer_pages {
+	@rel_eb_pages_stacks[kstack] = count();
+}
+*/

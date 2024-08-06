@@ -16,15 +16,29 @@ NR_FILES=10000
 SZ=2G
 F=$mnt/foo
 
-umount $dev
-$MKFS -f -m single -d single $dev
+for i in $(seq 100)
+do
+	findmnt $dev >/dev/null || break
+	echo "umounting $dev..."
+	umount $dev
+done
+$MKFS -f -m single -d single $dev >/dev/null 2>&1
 mount $dev $mnt
 
-fio --name=foo --directory=$mnt --nrfiles=$NR_FILES --blocksize=2k --filesize=2k --rw=write --ioengine=psync --fallocate=none --create_on_open=1 --openfiles=32 --zero_buffers=1 --alloc-size=2000000
+_dump() {
+	echo "################## DUMP $1 ##################"
+	#$BTRFS filesystem usage $mnt
+	$SCRIPTS_ROOT/drgn/bad-btrfs-cache.py
+	grep -e '\<nr_active_file\>' /proc/vmstat
+	grep -e '\<nr_inactive_file\>' /proc/vmstat
+}
 
+_dump "Fresh Mount"
+
+fio --name=foo --directory=$mnt --nrfiles=$NR_FILES --blocksize=2k --filesize=2k --rw=write --ioengine=psync --fallocate=none --create_on_open=1 --openfiles=32 --zero_buffers=1 --alloc-size=2000000 >/dev/null 2>&1
 sync
-$BTRFS filesystem sync $mnt
-$BTRFS filesystem usage $mnt
+
+_dump "Post Fio & Sync"
 
 for i in $(seq 0 $((NR_FILES / 200 - 1)))
 do
@@ -36,15 +50,8 @@ do
 	done
 done
 
-sync
-$BTRFS filesystem sync $mnt
-$BTRFS filesystem usage $mnt
+_dump "Post Rm"
 
-$SCRIPTS_ROOT/drgn/bad-btrfs-cache.py
+echo 1 | sudo tee /proc/sys/vm/drop_caches
 
-grep -e '\<nr_active_file\>' /proc/vmstat
-#_cycle_mnt $dev $mnt
-echo 3 | sudo tee /proc/sys/vm/drop_caches
-grep -e '\<nr_active_file\>' /proc/vmstat
-
-$SCRIPTS_ROOT/drgn/bad-btrfs-cache.py
+_dump "Post Drop Caches"

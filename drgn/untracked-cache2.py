@@ -17,7 +17,7 @@ def mapping_to_name(mapping):
         return mapping.a_ops
     return p
 
-memcg_ssid = prog["memory_cgrp_id"].value_()
+#memcg_ssid = prog["memory_cgrp_id"].value_()
 PG_head = prog["PG_head"].value_()
 PG_slab = prog["PG_slab"].value_()
 PG_swapbacked = prog["PG_swapbacked"].value_()

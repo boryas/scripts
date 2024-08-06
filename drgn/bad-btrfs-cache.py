@@ -34,6 +34,7 @@ def bump_fail(fail):
 
 def folio_has_private(folio):
     pflags = folio.flags.value_()
+
     return int(bool(pflags & PG_PRIVATE))
 
 def release_eb(eb):
@@ -51,9 +52,6 @@ def release_eb(eb):
         return False
     if ebflags & (1 << eb_writeback):
         bump_fail("eb-writeback")
-        return False
-    if ebflags & (1 << eb_tree_ref):
-        bump_fail("eb-tree-ref")
         return False
     return True
 
@@ -79,6 +77,9 @@ def mapping_evict_folio(mapping, folio):
     if folio._refcount.counter > 1 + folio_has_private(folio) + 1:
         bump_fail("folio-refcount")
         return False
+    if not folio_has_private(folio):
+        bump_fail("folio-has-private")
+        return False
     return release_folio(folio)
 
 flag_hist = defaultdict(int)
@@ -99,28 +100,29 @@ for index, entry in xa_for_each(mapping.i_pages.address_of_()):
             sys.stdout.flush()
         update_flag_hist(folio)
         
-        #if mapping_evict_folio(mapping, folio):
-            #Ok += PAGE_SIZE
+        if mapping_evict_folio(mapping, folio):
+            Ok += PAGE_SIZE
     except drgn.FaultError:
         bump_fail("drgn-fault-error")
         continue
 
-Total_GiB = Total >> 30
-print()
-print(f"Total: {Total} Total GiB: {Total_GiB}")
-print(f"Fails: {Fails}")
-json.dump(flag_hist_full, sys.stdout, indent=4)
+#print()
+#json.dump(flag_hist_full, sys.stdout, indent=4)
 print()
 json.dump(flag_hist, sys.stdout, indent=4)
 print()
-exit(0)
 
-Ok_GiB = Ok >> 30
-Fails_GiB = {reason: bs >> 30 for reason, bs in Fails.items()}
-print(f"Total: {Total} Total GiB: {Total_GiB}")
-print(f"Ok: {Ok} Ok GiB: {Ok_GiB}")
-print(f"Fails: {Fails}")
-print(f"Fails GiB: {Fails_GiB}")
+Total_MiB = Total >> 20
+Total_Pages = Total / PAGE_SIZE
+Ok_MiB = Ok >> 20
+Ok_Pages = Ok / PAGE_SIZE
+Fails_MiB = {reason: bs >> 20 for reason, bs in Fails.items()}
+Fails_Pages = {reason: bs / PAGE_SIZE for reason, bs in Fails.items()}
+print(f"Total: {Total} Total MiB: {Total_MiB} Total Pages: {Total_Pages}")
+print(f"Ok: {Ok} Ok MiB: {Ok_MiB} Ok Pages: {Ok_Pages}")
+#print(f"Fails: {Fails}")
+#print(f"Fails MiB: {Fails_MiB}")
+print(f"Fails Pages: {Fails_Pages}")
 print(f"Eb Ref Counts: {EbRefCounts}")
 if Ok + sum([bs for reason, bs in Fails.items()]) != Total:
     print("Mismatched amounts!")
