@@ -78,7 +78,7 @@ EB_FLAGS = [
 ]
 class ExtentBuffer:
     def __init__(self, folio):
-        self.eb = cast("struct extent_buffer *", folio.private)
+        self.eb = cast("struct extent_buffer *", folio.folio.private)
         self.flags = self.eb.bflags
         self.rc = int(self.eb.refs.counter)
         EbRefCounts[self.rc] += 1

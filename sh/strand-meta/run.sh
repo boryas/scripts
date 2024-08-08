@@ -63,8 +63,8 @@ _rm() {
 		done
 	done
 }
-#_rm
-#_dump "Post Rm"
+_rm
+_dump "Post Rm"
 
 echo 1 | sudo tee /proc/sys/vm/drop_caches
 _dump "Post Drop Caches"
