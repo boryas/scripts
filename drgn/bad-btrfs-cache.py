@@ -14,8 +14,10 @@ if len(sys.argv) < 2:
     exit(-22)
 
 root_dir = sys.argv[1]
-fs_info = cast("struct btrfs_fs_info *", path_lookup(root_dir).mnt.mnt_sb.s_fs_info)
+sb = path_lookup(root_dir).mnt.mnt_sb
+fs_info = cast("struct btrfs_fs_info *", sb.s_fs_info)
 btree_inode = fs_info.btree_inode
+print(f"dev {sb.s_dev} ino {btree_inode.i_ino}")
 mapping = btree_inode.i_mapping
 PG_locked = prog["PG_locked"].value_()
 PG_dirty = prog["PG_dirty"].value_()
@@ -32,6 +34,7 @@ Total = 0
 Fails = defaultdict(int)
 Ok = 0
 EbRefCounts = defaultdict(int)
+FolioRefCounts = defaultdict(int)
 Ebs = set()
 
 def bump_fail(fail):
@@ -39,7 +42,6 @@ def bump_fail(fail):
 
 def folio_has_private(folio):
     pflags = folio.flags.value_()
-
     return int(bool(pflags & PG_PRIVATE))
 
 def release_eb(folio):
@@ -74,9 +76,12 @@ def release_folio(folio):
     return release_eb(folio)
 
 def mapping_evict_folio(mapping, folio):
+    # +1 for the refcount of find_lock_entries
+    frc = int(folio._refcount.counter) + 1
+    FolioRefCounts[frc] += 1
     pflags = folio.flags.value_()
-    if pflags & (1 << PG_locked):
-        bump_fail("folio-locked")
+    if int(mapping.address_of_()) == 0:
+        bump_fail("null-mapping")
         return False
     if pflags & (1 << PG_dirty):
         bump_fail("folio-dirty")
@@ -84,10 +89,29 @@ def mapping_evict_folio(mapping, folio):
     if pflags & (1 << PG_writeback):
         bump_fail("folio-writeback")
         return False
-    if folio._refcount.counter > 1 + folio_has_private(folio) + 1:
+    if frc > 1 + folio_has_private(folio) + 1:
         bump_fail("folio-refcount")
+        # get the eb rc when folio rc is bad 
+        if not pflags & (1 << PG_private):
+            return False
+        eb = cast("struct extent_buffer *", folio.private)
+        ebrc = int(eb.refs.counter)
+        EbRefCounts[ebrc] += 1
         return False
     return release_folio(folio)
+
+def mapping_try_invalidate(mapping, folio):
+    pflags = folio.flags.value_()
+    if pflags & (1 << PG_locked):
+        bump_fail("folio-locked")
+        return False
+    if pflags & (1 << PG_writeback):
+        bump_fail("folio-writeback")
+        return False
+    if folio.mapping != mapping:
+        bump_fail("folio-mapping-mismatch")
+        return False
+    return mapping_evict_folio(mapping, folio)
 
 flag_hist = defaultdict(int)
 flag_hist_full = defaultdict(int)
@@ -107,7 +131,7 @@ for index, entry in xa_for_each(mapping.i_pages.address_of_()):
             sys.stdout.flush()
         update_flag_hist(folio)
         
-        if mapping_evict_folio(mapping, folio):
+        if mapping_try_invalidate(mapping, folio):
             Ok += PAGE_SIZE
     except drgn.FaultError:
         bump_fail("drgn-fault-error")
@@ -131,5 +155,6 @@ print(f"Ok: {Ok} Ok MiB: {Ok_MiB} Ok Pages: {Ok_Pages}")
 #print(f"Fails MiB: {Fails_MiB}")
 print(f"Fails Pages: {Fails_Pages}")
 print(f"Eb Ref Counts: {EbRefCounts}")
+print(f"Folio Ref Counts: {FolioRefCounts}")
 if Ok + sum([bs for reason, bs in Fails.items()]) != Total:
     print("Mismatched amounts!")
