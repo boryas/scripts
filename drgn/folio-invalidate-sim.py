@@ -41,18 +41,58 @@ def bump_fail(fail):
     Fails[fail] += PAGE_SIZE
 
 def folio_has_private(folio):
-    pflags = folio.flags.value_()
-    return int(bool(pflags & PG_PRIVATE))
+    return int(bool(folio.flags & PG_PRIVATE))
 
-def release_eb(folio):
-    pflags = folio.flags.value_()
-    if not pflags & (1 << PG_private):
-        bump_fail("eb-release-folio-private")
-        return False
-    eb = cast("struct extent_buffer *", folio.private)
-    ebflags = eb.bflags
-    ebrc = int(eb.refs.counter)
-    EbRefCounts[ebrc] += 1
+Folio_Flag_Hist = defaultdict(int)
+Folio_Flag_Hist_Full = defaultdict(int)
+class Folio:
+    def __init__(self, folio):
+        self.folio = folio
+        self.flags = folio.flags.value_()
+        self.rc = int(folio._refcount.counter)
+        FolioRefCounts[self.rc] += 1
+        self.update_flag_hist()
+
+    def update_flag_hist(self):
+        flags_str = decode_page_flags(self.folio)
+        Folio_Flag_Hist_Full[flags_str] += 1
+        for flag_str in flags_str.split("|"):
+            Folio_Flag_Hist[flag_str] += 1
+
+Eb_Flag_Hist = defaultdict(int)
+Eb_Flag_Hist_Full = defaultdict(int)
+EB_FLAGS = [
+    ("EXTENT_BUFFER_UPTODATE", 0),
+    ("EXTENT_BUFFER_DIRTY", 1),
+    ("EXTENT_BUFFER_CORRUPT", 2),
+    ("EXTENT_BUFFER_READAHEAD", 3),
+    ("EXTENT_BUFFER_TREE_REF", 4),
+    ("EXTENT_BUFFER_STALE", 5),
+    ("EXTENT_BUFFER_WRITEBACK", 6),
+    ("EXTENT_BUFFER_READ_ERR", 7),
+    ("EXTENT_BUFFER_UNMAPPED", 8),
+    ("EXTENT_BUFFER_IN_TREE", 9),
+    ("EXTENT_BUFFER_WRITE_ERR", 10),
+    ("EXTENT_BUFFER_ZONED_ZEROOUT", 11),
+    ("EXTENT_BUFFER_READING", 12),
+]
+class ExtentBuffer:
+    def __init__(self, folio):
+        self.eb = cast("struct extent_buffer *", folio.private)
+        self.flags = self.eb.bflags
+        self.rc = int(self.eb.refs.counter)
+        EbRefCounts[self.rc] += 1
+        self.update_flag_hist()
+
+    def update_flag_hist(self):
+        flags_str = decode_flags(self.flags, EB_FLAGS)
+        Eb_Flag_Hist_Full[flags_str] += 1
+        for flag_str in flags_str.split("|"):
+            Eb_Flag_Hist[flag_str] += 1
+
+def release_eb(eb):
+    ebflags = eb.flags
+    ebrc = eb.rc
     if ebrc == 0:
         bump_fail("eb-zero-refcount")
         return False
@@ -70,16 +110,16 @@ def release_eb(folio):
         return False
     return True
 
-def release_folio(folio):
-    if not folio_has_private(folio):
+def release_folio(eb):
+    if not eb:
         return True
-    return release_eb(folio)
+    return release_eb(eb)
 
 def mapping_evict_folio(mapping, folio):
+    eb = None
     # +1 for the refcount of find_lock_entries
-    frc = int(folio._refcount.counter) + 1
-    FolioRefCounts[frc] += 1
-    pflags = folio.flags.value_()
+    frc = folio.rc + 1
+    pflags = folio.flags
     if int(mapping.address_of_()) == 0:
         bump_fail("null-mapping")
         return False
@@ -89,38 +129,25 @@ def mapping_evict_folio(mapping, folio):
     if pflags & (1 << PG_writeback):
         bump_fail("folio-writeback")
         return False
+    if folio_has_private(folio):
+        eb = ExtentBuffer(folio)
     if frc > 1 + folio_has_private(folio) + 1:
         bump_fail("folio-refcount")
-        # get the eb rc when folio rc is bad 
-        if not pflags & (1 << PG_private):
-            return False
-        eb = cast("struct extent_buffer *", folio.private)
-        ebrc = int(eb.refs.counter)
-        EbRefCounts[ebrc] += 1
         return False
-    return release_folio(folio)
+    return release_folio(eb)
 
 def mapping_try_invalidate(mapping, folio):
-    pflags = folio.flags.value_()
+    pflags = folio.flags
     if pflags & (1 << PG_locked):
         bump_fail("folio-locked")
         return False
     if pflags & (1 << PG_writeback):
         bump_fail("folio-writeback")
         return False
-    if folio.mapping != mapping:
+    if folio.folio.mapping != mapping:
         bump_fail("folio-mapping-mismatch")
         return False
     return mapping_evict_folio(mapping, folio)
-
-flag_hist = defaultdict(int)
-flag_hist_full = defaultdict(int)
-
-def update_flag_hist(folio):
-    flags = decode_page_flags(folio)
-    flag_hist_full[flags] += 1
-    for flag in flags.split("|"):
-        flag_hist[flag] += 1
 
 for index, entry in xa_for_each(mapping.i_pages.address_of_()):
     folio = cast("struct folio *", entry)
@@ -129,7 +156,7 @@ for index, entry in xa_for_each(mapping.i_pages.address_of_()):
         if (Total >> 20) % 10 == 0:
             sys.stdout.write(f"\rScanned {Total >> 20}MiB")
             sys.stdout.flush()
-        update_flag_hist(folio)
+        folio = Folio(folio)
         
         if mapping_try_invalidate(mapping, folio):
             Ok += PAGE_SIZE
@@ -137,10 +164,11 @@ for index, entry in xa_for_each(mapping.i_pages.address_of_()):
         bump_fail("drgn-fault-error")
         continue
 
-#print()
-#json.dump(flag_hist_full, sys.stdout, indent=4)
 print()
-json.dump(flag_hist, sys.stdout, indent=4)
+json.dump(Folio_Flag_Hist_Full, sys.stdout, indent=4)
+json.dump(Folio_Flag_Hist, sys.stdout, indent=4)
+json.dump(Eb_Flag_Hist_Full, sys.stdout, indent=4)
+json.dump(Eb_Flag_Hist, sys.stdout, indent=4)
 print()
 
 Total_MiB = Total >> 20
