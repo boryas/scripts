@@ -27,7 +27,7 @@ _fresh_btrfs_mnt() {
 	umount -q $dev
 	set -e
 	mkfs.btrfs -f $dev
-	mount $dev $mnt "$@"
+	mount -o noatime $dev $mnt "$@"
 }
 
 _cycle_mnt() {

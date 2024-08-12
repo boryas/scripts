@@ -32,7 +32,7 @@ _setup() {
 		umount $dev
 	done
 	$MKFS -f -m single -d single $dev >/dev/null 2>&1
-	mount $dev $mnt
+	mount -o noatime $dev $mnt
 }
 _setup
 _dump "Fresh Mount"
@@ -43,6 +43,9 @@ _fio() {
 }
 
 _fio
+sync
+sync
+btrfs fil sync $mnt
 _dump "Post Fio"
 
 _read() {
@@ -51,8 +54,8 @@ _read() {
 		cat $mnt/foo.0.$i >/dev/null
 	done
 }
-_read
-_dump "Post Read"
+#_read
+#_dump "Post Read"
 
 _rm() {
 	for i in $(seq 0 $((NR_FILES / 200 - 1)))
@@ -63,8 +66,11 @@ _rm() {
 		done
 	done
 }
-_rm
-_dump "Post Rm"
+#_rm
+#_dump "Post Rm"
 
 echo 1 | sudo tee /proc/sys/vm/drop_caches
 _dump "Post Drop Caches"
+
+stress -m 59 -t 10 --vm-keep
+_dump "Post Stress"
