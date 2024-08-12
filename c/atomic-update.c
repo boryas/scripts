@@ -22,11 +22,10 @@ ssize_t do_write(int fd, const char *buf, ssize_t len) {
 	return ret;
 }
 
-int atomic_update_file(const char *filename, const char *new_content) {
+int atomic_update_file(const char *filename, const char *buf, ssize_t len) {
 	char tmp_filename[] = "tmpfileXXXXXX";
 	int fd_tmp, fd_parent;
 	int ret;
-	int len = strlen(new_content);
 
 	char *parent_filename = strdup(filename);
 	if (!parent_filename) {
@@ -49,7 +48,7 @@ int atomic_update_file(const char *filename, const char *new_content) {
 		goto out_close_tmp;
 	}
 
-	ret = do_write(fd_tmp, new_content, len);
+	ret = do_write(fd_tmp, buf, len);
 	if (ret < 0)
 		goto out_unlink_tmp;
 
@@ -86,5 +85,17 @@ out:
 	return ret;
 }
 
+#define SZ 40960
+char buf[SZ];
+
 int main(int argc, char **argv) {
+	char *fname;
+
+	if (argc < 2) {
+		fprintf(stderr, "usage: atomic-update <file>");
+		return -22;
+	}
+	fname = argv[1];
+	memset(buf, 0, SZ);
+	return atomic_update_file(fname, buf, SZ);
 }
