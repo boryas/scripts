@@ -1,3 +1,5 @@
+source "$SH_ROOT/fs"
+
 if [ $USER == "root" ]
 then
 	user=$SUDO_USER
@@ -7,14 +9,6 @@ fi;
 BTRFS="/home/$user/btrfs-progs/btrfs"
 MKFS="/home/$user/btrfs-progs/mkfs.btrfs"
 
-
-_basic_dev_mnt_usage() {
-	if [ $# -lt 2 ]
-	then
-		echo "usage: $SCRIPT <dev> <mnt>"
-		_usage
-	fi
-}
 
 _fresh_btrfs_mnt() {
 	local dev=$1
@@ -28,22 +22,6 @@ _fresh_btrfs_mnt() {
 	set -e
 	mkfs.btrfs -f $dev
 	mount -o noatime $dev $mnt "$@"
-}
-
-_cycle_mnt() {
-	local dev=$1
-	local mnt=$2
-
-	echo "cycle mount $dev $mnt" > /dev/kmsg
-	umount $dev
-	mount $dev $mnt
-}
-
-_umount() {
-	local mnt=$1
-	set +e
-	umount $mnt
-	set -e
 }
 
 _btrfs_uuid() {

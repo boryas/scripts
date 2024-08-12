@@ -6,16 +6,27 @@ SH_ROOT=$(dirname "$DIR")
 SCRIPTS_ROOT=$(dirname $SH_ROOT)
 
 source "$SH_ROOT/boilerplate"
+source "$SH_ROOT/fs"
 
 _basic_dev_mnt_usage $@
 
 dev=$1
 mnt=$2
-mkfs.ext4 -N 16 $dev
+mkfs.ext4 -F -N 16 $dev
 mount -o noatime $dev $mnt
 
+i=1
+NR_LOOPS=1000000
 while (true); do
-    $SCRIPTS_ROOT/c/atomic-update $mnt/foo || break
+
+	printf '\r%d' $i
+	if [ $i -eq $NR_LOOPS ]; then
+		break;
+	fi
+	$SCRIPTS_ROOT/c/atomic-update $mnt/foo || break
+	e2fsck $dev
+	i=$((i + 1))
 done
+printf '\n'
 
 umount $dev
