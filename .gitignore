@@ -10,3 +10,5 @@ c/*
 !c/*.h
 !c/Makefile
 !c/README.md
+
+rust/**/target
