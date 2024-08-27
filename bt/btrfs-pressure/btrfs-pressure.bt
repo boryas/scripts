@@ -6,11 +6,10 @@ kretfunc:btrfs_start_transaction {
 	if (!@btrfs_start_transaction[tid]) {
 		return;
 	}
-	$delay_ns = nsecs - @btrfs_start_transaction[tid];
+	$now_ns = nsecs;
+	$delay_ns = $now_ns - @btrfs_start_transaction[tid];
 	$delay_ms = $delay_ns / 1000000;
-	$cg_name = str(curtask->cgroups->dfl_cgrp->kn->name);
-	@btrfs_start_transaction_ms_hist[$cg_name] = hist($delay_ms);
-	@pressure_ns[$cg_name] += $delay_ns;
+	printf("%llu %llu %llu, %s, %s, %s\n", $now_ns, $delay_ns, $delay_ms, comm, cgroup_path(cgroup), kstack);
 	delete(@btrfs_start_transaction[tid]);
 }
 
@@ -22,11 +21,10 @@ kretfunc:btrfs_commit_transaction {
 	if (!@btrfs_commit_transaction[tid]) {
 		return;
 	}
-	$delay_ns = nsecs - @btrfs_commit_transaction[tid];
+	$now_ns = nsecs;
+	$delay_ns = $now_ns - @btrfs_commit_transaction[tid];
 	$delay_ms = $delay_ns / 1000000;
-	$cg_name = str(curtask->cgroups->dfl_cgrp->kn->name);
-	@btrfs_commit_transaction_ms_hist[$cg_name] = hist($delay_ms);
-	@pressure_ns[$cg_name] += $delay_ns;
+	printf("%llu %llu %llu, %s, %s, %s\n", $now_ns, $delay_ns, $delay_ms, comm, cgroup_path(cgroup), kstack);
 	delete(@btrfs_commit_transaction[tid]);
 }
 
@@ -38,11 +36,10 @@ kretfunc:btrfs_reserve_data_bytes {
 	if (!@btrfs_reserve_data_bytes[tid]) {
 		return;
 	}
-	$delay_ns = nsecs - @btrfs_reserve_data_bytes[tid];
+	$now_ns = nsecs;
+	$delay_ns = $now_ns - @btrfs_reserve_data_bytes[tid];
 	$delay_ms = $delay_ns / 1000000;
-	$cg_name = str(curtask->cgroups->dfl_cgrp->kn->name);
-	@btrfs_reserve_data_bytes_ms_hist[$cg_name] = hist($delay_ms);
-	@pressure_ns[$cg_name] += $delay_ns;
+	printf("%llu %llu %llu, %s, %s, %s\n", $now_ns, $delay_ns, $delay_ms, comm, cgroup_path(cgroup), kstack);
 	delete(@btrfs_reserve_data_bytes[tid]);
 }
 
@@ -54,11 +51,10 @@ kretfunc:btrfs_reserve_metadata_bytes {
 	if (!@btrfs_reserve_metadata_bytes[tid]) {
 		return;
 	}
-	$delay_ns = nsecs - @btrfs_reserve_metadata_bytes[tid];
+	$now_ns = nsecs;
+	$delay_ns = $now_ns - @btrfs_reserve_metadata_bytes[tid];
 	$delay_ms = $delay_ns / 1000000;
-	$cg_name = str(curtask->cgroups->dfl_cgrp->kn->name);
-	@btrfs_reserve_metadata_bytes_ms_hist[$cg_name] = hist($delay_ms);
-	@pressure_ns[$cg_name] += $delay_ns;
+	printf("%llu %llu %llu, %s, %s, %s\n", $now_ns, $delay_ns, $delay_ms, comm, cgroup_path(cgroup), kstack);
 	delete(@btrfs_reserve_metadata_bytes[tid]);
 }
 
@@ -70,11 +66,10 @@ kretfunc:btrfs_start_ordered_extent {
 	if (!@btrfs_start_ordered_extent[tid]) {
 		return;
 	}
-	$delay_ns = nsecs - @btrfs_start_ordered_extent[tid];
+	$now_ns = nsecs;
+	$delay_ns = $now_ns - @btrfs_start_ordered_extent[tid];
 	$delay_ms = $delay_ns / 1000000;
-	$cg_name = str(curtask->cgroups->dfl_cgrp->kn->name);
-	@btrfs_start_ordered_extent_ms_hist[$cg_name] = hist($delay_ms);
-	@pressure_ns[$cg_name] += $delay_ns;
+	printf("%llu %llu %llu, %s, %s, %s\n", $now_ns, $delay_ns, $delay_ms, comm, cgroup_path(cgroup), kstack);
 	delete(@btrfs_start_ordered_extent[tid]);
 }
 

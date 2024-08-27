@@ -13,11 +13,10 @@ kretfunc:$fname {
 	if (!@$fname[tid]) {
 		return;
 	}
-	\$delay_ns = nsecs - @$fname[tid];
+	\$now_ns = nsecs;
+	\$delay_ns = \$now_ns - @$fname[tid];
 	\$delay_ms = \$delay_ns / 1000000;
-	\$cg_name = str(curtask->cgroups->dfl_cgrp->kn->name);
-	@$hist_name[\$cg_name] = hist(\$delay_ms);
-	@pressure_ns[\$cg_name] += \$delay_ns;
+	printf("%llu %llu %llu, %s, %s, %s\n", \$now_ns, \$delay_ns, \$delay_ms, comm, cgroup_path(cgroup), kstack);
 	delete(@$fname[tid]);
 }
 
