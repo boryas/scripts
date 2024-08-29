@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#
+
 SCRIPT=$(readlink -f "$0")
 DIR=$(dirname "$SCRIPT")
 SH_ROOT=$(dirname "$DIR")
@@ -26,44 +26,51 @@ _setup() {
 	done
 	$MKFS -f -m single -d single $dev >/dev/null 2>&1
 	mount -o noatime $dev $mnt
-    $BTRFS subvol create $sv
+	$BTRFS subvol create $sv
 }
 _setup
 
 # fsstress does snapshot stuff, don't need to do it ourselves
 _fsstress() {
-    $FSSTRESS -d $sv -n 1000 -w -p 8
+	while (true)
+	do
+		$FSSTRESS -d $sv -n 10000 -w -p 8 -l 0
+	done
 }
 
 # also do a bunch of balances while stressing
 _balance() {
-    while (true)
-    do
-        $BTRFS balance start -dusage=80 $mnt
-    done
+	while (true)
+	do
+		$BTRFS balance start -dusage=80 $mnt >/dev/null 2>&1
+	done
 }
 
 _tree_mod_log() {
-    local sz=$(lsblk -nb -o SIZE /dev/tst/lol)
-    while (true)
-    do
-        local off=$(shuf -i 0-$sz -n 1)
-        $BTRFS inspect-internal logical-resolve $off >/dev/null 2>&1
-    done
-
+	local sz=$(lsblk -nb -o SIZE /dev/tst/lol)
+	echo $sz
+	while (true)
+	do
+		local off=$(shuf -i 0-$sz -n 1)
+		$BTRFS inspect-internal logical-resolve $off $mnt >/dev/null 2>&1
+	done
 }
 
 _fsstress &
 fsstress_pid=$!
+echo "launched fsstress loop $fsstress_pid"
 
 _balance &
 balance_pid=$!
+echo "launched balance loop $balance_pid"
 
 _tree_mod_log &
 tree_mod_log_pid=$!
+echo "launched tree_mod_log loop $tree_mod_log_pid"
 
 time=$3
 [ -z "${time+x}" ] && time=60
+echo "SLEEP $time"
 sleep $time
 
 kill $fsstress_pid
