@@ -31,9 +31,8 @@ _setup() {
 _setup
 
 # fsstress does snapshot stuff, don't need to do it ourselves
-_stress() {
+_fsstress() {
     $FSSTRESS -d $sv -n 1000 -w -p 8
-
 }
 
 # also do a bunch of balances while stressing
@@ -64,7 +63,7 @@ _tree_mod_log &
 tree_mod_log_pid=$!
 
 time=$3
-[ -z "${$time+x}" ] && time=60
+[ -z "${time+x}" ] && time=60
 sleep $time
 
 kill $fsstress_pid
