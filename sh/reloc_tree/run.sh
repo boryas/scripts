@@ -29,7 +29,6 @@ _setup() {
     $BTRFS subvol create $sv
 }
 _setup
-_dump "Fresh Mount"
 
 # fsstress does snapshot stuff, don't need to do it ourselves
 _stress() {
