@@ -1,14 +1,9 @@
 source "$SH_ROOT/fs"
 
-if [ $USER == "root" ]
-then
-	user=$SUDO_USER
-else
-	user=$USER
-fi;
-BTRFS="/home/$user/btrfs-progs/btrfs"
-MKFS="/home/$user/btrfs-progs/mkfs.btrfs"
-
+MKFS=mkfs.btrfs
+BTRFS=btrfs
+FSTESTS=/fstests
+FSSTRESS=$FSTESTS/ltp/fsstress
 
 _fresh_btrfs_mnt() {
 	local dev=$1
