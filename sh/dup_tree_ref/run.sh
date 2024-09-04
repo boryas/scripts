@@ -13,15 +13,15 @@ dev=$1
 mnt=$2
 mkdir -p $mnt
 sv=$mnt/sv
-snap=$mnt/snap
 NR_FILES=100000
 F=$mnt/foo
 
 _cleanup() {
-	kill $fsstress_pid
-	kill $balance_pid
-	kill $snap_pid
-	kill $reflink_pid
+	for pid in $pids
+	do
+		echo "kill spawned pid $pid"
+		kill $pid
+	done
 	pkill fsstress
 	wait
 	sleep 1
@@ -37,7 +37,7 @@ _setup() {
 		umount $dev
 	done
 	$MKFS -f -m single -d single $dev >/dev/null 2>&1
-	mount -o noatime $dev $mnt
+	mount -o noatime,ref_verify $dev $mnt
 	$BTRFS subvol create $sv
 }
 _setup
@@ -49,6 +49,8 @@ _fsstress() {
 }
 
 _snap() {
+	local snap="$mnt/snap.$1"
+
 	while (true)
 	do
 		$BTRFS subv snap $sv $snap >/dev/null 2>&1
@@ -68,10 +70,11 @@ _balance() {
 }
 
 _reflink() {
+	local tgt="$mnt/REFLINK_TGT.$1"
+
 	while (true)
 	do
 		local src=$(find $mnt -type f 2>/dev/null | shuf -n1)
-		local tgt=$mnt/REFLINK_TGT
 
 		[ -f $src ] && [ -f $tgt ] || continue
 		cp --reflink=always $src $tgt
@@ -81,31 +84,32 @@ _reflink() {
 	done
 }
 
-_tree_mod_log() {
-	local sz=$(lsblk -nb -o SIZE $dev)
-	echo $sz
-	while (true)
-	do
-		local off=$(shuf -i 0-$sz -n 1)
-		$BTRFS inspect-internal logical-resolve $off $mnt >/dev/null 2>&1
-	done
-}
+echo "BO RUN REPRO" > /dev/kmsg
+pids=()
 
 _fsstress &
-fsstress_pid=$!
-echo "launched fsstress loop $fsstress_pid"
+pids+=( $! )
+echo "launched fsstress loop $!"
 
 _balance &
-balance_pid=$!
-echo "launched balance loop $balance_pid"
+pids+=( $! )
+echo "launched balance loop $!"
 
-_snap &
-snap_pid=$!
-echo "launched snap loop $snap_pid"
+NR_SNAP_THREADS=8
+for i in $(seq $NR_SNAP_THREADS)
+do
+	_snap $i &
+	pids+=( $! )
+	echo "launched snap loop $!"
+done
 
-_reflink &
-reflink_pid=$!
-echo "launched reflink loop $reflink_pid"
+NR_REFLINK_THREADS=128
+for i in $(seq $NR_REFLINK_THREADS)
+do
+	_reflink $i &
+	pids+=( $! )
+	echo "launched reflink loop $!"
+done
 
 time=$3
 [ -z "${time+x}" ] && time=60
