@@ -1,0 +1,75 @@
+kfunc:btrfs_start_transaction {
+	@btrfs_start_transaction[tid] = nsecs;
+}
+
+kretfunc:btrfs_start_transaction {
+	if (!@btrfs_start_transaction[tid]) {
+		return;
+	}
+	$now_ns = nsecs;
+	$delay_ns = $now_ns - @btrfs_start_transaction[tid];
+	$tup = ($now_ns, "btrfs_start_transaction", $delay_ns, "_sl_comm", comm, cgroup_path(cgroup), "_sl_ustack", ustack(raw), "_sl_kstack", kstack(raw));
+	print($tup);
+	delete(@btrfs_start_transaction[tid]);
+}
+
+kfunc:btrfs_commit_transaction {
+	@btrfs_commit_transaction[tid] = nsecs;
+}
+
+kretfunc:btrfs_commit_transaction {
+	if (!@btrfs_commit_transaction[tid]) {
+		return;
+	}
+	$now_ns = nsecs;
+	$delay_ns = $now_ns - @btrfs_commit_transaction[tid];
+	$tup = ($now_ns, "btrfs_commit_transaction", $delay_ns, "_sl_comm", comm, cgroup_path(cgroup), "_sl_ustack", ustack(raw), "_sl_kstack", kstack(raw));
+	print($tup);
+	delete(@btrfs_commit_transaction[tid]);
+}
+
+kfunc:btrfs_reserve_data_bytes {
+	@btrfs_reserve_data_bytes[tid] = nsecs;
+}
+
+kretfunc:btrfs_reserve_data_bytes {
+	if (!@btrfs_reserve_data_bytes[tid]) {
+		return;
+	}
+	$now_ns = nsecs;
+	$delay_ns = $now_ns - @btrfs_reserve_data_bytes[tid];
+	$tup = ($now_ns, "btrfs_reserve_data_bytes", $delay_ns, "_sl_comm", comm, cgroup_path(cgroup), "_sl_ustack", ustack(raw), "_sl_kstack", kstack(raw));
+	print($tup);
+	delete(@btrfs_reserve_data_bytes[tid]);
+}
+
+kfunc:btrfs_reserve_metadata_bytes {
+	@btrfs_reserve_metadata_bytes[tid] = nsecs;
+}
+
+kretfunc:btrfs_reserve_metadata_bytes {
+	if (!@btrfs_reserve_metadata_bytes[tid]) {
+		return;
+	}
+	$now_ns = nsecs;
+	$delay_ns = $now_ns - @btrfs_reserve_metadata_bytes[tid];
+	$tup = ($now_ns, "btrfs_reserve_metadata_bytes", $delay_ns, "_sl_comm", comm, cgroup_path(cgroup), "_sl_ustack", ustack(raw), "_sl_kstack", kstack(raw));
+	print($tup);
+	delete(@btrfs_reserve_metadata_bytes[tid]);
+}
+
+kfunc:btrfs_start_ordered_extent {
+	@btrfs_start_ordered_extent[tid] = nsecs;
+}
+
+kretfunc:btrfs_start_ordered_extent {
+	if (!@btrfs_start_ordered_extent[tid]) {
+		return;
+	}
+	$now_ns = nsecs;
+	$delay_ns = $now_ns - @btrfs_start_ordered_extent[tid];
+	$tup = ($now_ns, "btrfs_start_ordered_extent", $delay_ns, "_sl_comm", comm, cgroup_path(cgroup), "_sl_ustack", ustack(raw), "_sl_kstack", kstack(raw));
+	print($tup);
+	delete(@btrfs_start_ordered_extent[tid]);
+}
+

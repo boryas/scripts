@@ -8,10 +8,16 @@ ADD_DELAYED_EXTENT = 3;
 tracepoint:btrfs:add_delayed_tree_ref {
 	$bytenr = args.bytenr;
 	$action = (uint64)args.action;
-	$root = args.ref_root; // ???
+	if (args.parent > 0) {
+		$root = parent;
+	} else {
+		$root = args.ref_root;
+	}
 	printf("add delayed tree ref %llu %llu %d\n", $bytenr, $root, $action);
 	if ($action == BTRFS_ADD_DELAYED_EXTENT && @refs[$bytenr, $root]) {
-		printf("Bad duplicate tree ref! %llu %llu %s\n", $bytenr, $root, kstack);
+		printf("Bad duplicate tree ref! ADD ADD_DELAYED_EXTENT %llu %llu %s\n", $bytenr, $root, kstack);
+	} else if ($action == BTRFS_ADD_DELAYED_REF && @refs[$bytenr, $root]) {
+		printf("Bad duplicate tree ref! ADD ADD_DELAYED_REF %llu %llu %s\n", $bytenr, $root, kstack);
 	}
 
 }
@@ -19,11 +25,22 @@ tracepoint:btrfs:add_delayed_tree_ref {
 tracepoint:btrfs:run_delayed_tree_ref {
 	$bytenr = args.bytenr;
 	$action = (uint64)args.action;
-	$root = args.ref_root; // ???
+	if (args.parent > 0) {
+		$root = parent;
+	} else {
+		$root = args.ref_root;
+	}
+
 	printf("run delayed tree ref %llu %llu %d\n", $bytenr, $root, $action);
 	if ($action == BTRFS_ADD_DELAYED_REF) {
+		if (@refs[$bytenr, $root]) {
+			printf("Bad duplicate tree ref! RUN ADD_DELAYED_REF %llu %llu\n", $bytenr, $root);
+		}
 		@refs[$bytenr, $root] = 1;
 	} else if ($action == BTRFS_DROP_DELAYED_REF) {
+		if (!@refs[$bytenr, $root]) {
+			printf("Bad missing tree ref! RUN DROP_DELAYED_REF %llu %llu\n", $bytenr, $root);
+		}
 		delete(@refs[$bytenr, $root]);
 	}
 }
