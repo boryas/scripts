@@ -8,7 +8,6 @@ SCRIPTS_ROOT=$(dirname $SH_ROOT)
 source "$SH_ROOT/boilerplate"
 source "$SH_ROOT/btrfs"
 
-#_basic_dev_mnt_usage $@
 dev=$1
 mnt=$2
 mkdir -p $mnt
@@ -17,7 +16,7 @@ NR_FILES=100000
 F=$mnt/foo
 
 _cleanup() {
-	for pid in $pids
+	for pid in ${pids[@]}
 	do
 		echo "kill spawned pid $pid"
 		kill $pid
@@ -37,7 +36,7 @@ _setup() {
 		umount $dev
 	done
 	$MKFS -f -m single -d single $dev >/dev/null 2>&1
-	mount -o noatime,ref_verify $dev $mnt
+	mount -o noatime $dev $mnt
 	$BTRFS subvol create $sv
 }
 _setup
