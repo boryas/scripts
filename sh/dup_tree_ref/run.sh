@@ -13,7 +13,8 @@ mnt=$2
 mkdir -p $mnt
 sv=$mnt/sv
 NR_FILES=100000
-F=$mnt/foo
+NR_SNAP_THREADS=3
+NR_REFLINK_THREADS=8
 
 _cleanup() {
 	for pid in ${pids[@]}
@@ -22,6 +23,7 @@ _cleanup() {
 		kill $pid
 	done
 	pkill fsstress
+	pkill btrfs
 	wait
 	sleep 1
 	umount $mnt
@@ -41,7 +43,6 @@ _setup() {
 }
 _setup
 
-# fsstress does snapshot stuff, don't need to do it ourselves
 _fsstress() {
 	$FSSTRESS -d $sv -n 10000 -w -p 8 -l 0
 	echo "fsstress exited with code $?"
@@ -52,34 +53,40 @@ _snap() {
 
 	while (true)
 	do
-		$BTRFS subv snap $sv $snap >/dev/null 2>&1
-		$BTRFS filesystem sync $mnt
-		sync
-		sleep 1
-		$BTRFS subv del $snap >/dev/null 2>&1
+		$BTRFS subv snap $sv $snap >/dev/null
+		sleep 5
+		$BTRFS subv del $snap >/dev/null
 	done
 }
 
-# also do a bunch of balances while stressing
 _balance() {
 	while (true)
 	do
-		$BTRFS balance start -dusage=80 $mnt >/dev/null 2>&1
+		$BTRFS -q balance start -dusage=100 $mnt || break
 	done
+	echo "balance loop exited"
 }
 
 _reflink() {
-	local tgt="$mnt/REFLINK_TGT"
+	local src_snap_id=$((1 + ($1 % $NR_SNAP_THREADS)))
+	local tgt="$mnt/REFLINK_TGT.$src_snap_id"
 
 	while (true)
 	do
-		local src=$(find $mnt -type f 2>/dev/null | shuf -n1)
+		local src=$(find $mnt/snap.$src_snap_id -type f 2>/dev/null | shuf -n1)
 
-		[ -f $src ] && [ -f $tgt ] || continue
-		cp --reflink=always $src $tgt
-		sleep 1
+		[ -z "$src" ] && continue
+		cp --reflink=always $src $tgt 2>/dev/null || continue
+		sleep 3
+		rm $tgt 2>/dev/null
+	done
+}
+
+_sync() {
+	while (true)
+	do
 		sync
-		rm $tgt
+		sleep 1
 	done
 }
 
@@ -91,26 +98,26 @@ pids+=( $! )
 echo "launched fsstress loop $!"
 
 _balance &
-pids+=( $! )
-echo "launched balance loop $!"
+balance_pid=$!
+pids+=( $balance_pid )
+echo "launched balance loop $balance_pid"
 
-NR_SNAP_THREADS=8
 for i in $(seq $NR_SNAP_THREADS)
 do
 	_snap $i &
 	pids+=( $! )
-	echo "launched snap loop $!"
 done
+echo "launched $NR_SNAP_THREADS snapshot loops"
 
-NR_REFLINK_THREADS=128
 for i in $(seq $NR_REFLINK_THREADS)
 do
 	_reflink $i &
 	pids+=( $! )
-	echo "launched reflink loop $!"
 done
+echo "launched $NR_REFLINK_THREADS reflink loops"
 
-time=$3
-[ -z "${time+x}" ] && time=60
-echo "SLEEP $time"
-sleep $time
+_sync &
+pids+=( $! )
+echo "launched sync loop $!"
+
+wait $balance_pid
