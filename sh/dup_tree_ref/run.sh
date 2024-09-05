@@ -69,7 +69,7 @@ _balance() {
 }
 
 _reflink() {
-	local tgt="$mnt/REFLINK_TGT.$1"
+	local tgt="$mnt/REFLINK_TGT"
 
 	while (true)
 	do
