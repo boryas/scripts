@@ -13,7 +13,7 @@ mnt=$2
 mkdir -p $mnt
 sv=$mnt/sv
 NR_FILES=100000
-NR_SNAP_THREADS=3
+NR_SNAP_THREADS=2
 NR_REFLINK_THREADS=8
 
 _cleanup() {
