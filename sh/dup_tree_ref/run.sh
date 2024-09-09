@@ -31,6 +31,7 @@ _cleanup() {
 trap _cleanup exit 0 1 15
 
 _setup() {
+	dmesg -n8
 	for i in $(seq 100)
 	do
 		findmnt $dev >/dev/null || break
@@ -38,7 +39,7 @@ _setup() {
 		umount $dev
 	done
 	$MKFS -f -m single -d single $dev >/dev/null 2>&1
-	mount -o noatime $dev $mnt
+	mount -o ref_verify,noatime $dev $mnt
 	$BTRFS subvol create $sv
 }
 _setup
