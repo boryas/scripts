@@ -27,3 +27,11 @@ _log() {
 	echo -e "${BLUE}$@${PLAIN}"
 	_kmsg $@
 }
+
+_sleep() {
+	local time=$1
+
+	[ -z "${time+x}" ] && time=60
+	echo "SLEEP $time"
+	sleep $time
+}
