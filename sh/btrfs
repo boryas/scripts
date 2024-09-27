@@ -11,12 +11,9 @@ _fresh_btrfs_mnt() {
 	shift
 	shift
 
-	echo "fresh mount $dev $mnt $@" > /dev/kmsg
-	set +e
-	umount -q $dev
-	set -e
-	mkfs.btrfs -f $dev
-	mount -o noatime $dev $mnt "$@"
+	_log "fresh mount $dev $mnt $@"
+	$MKFS -f -m single -d single $dev >/dev/null || _fail "Failed to mkfs $dev"
+	mount -o noatime $dev $mnt "$@" || _fail "Failed to mount $dev $mnt"
 }
 
 _btrfs_uuid() {

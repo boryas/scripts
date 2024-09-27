@@ -1,7 +1,9 @@
+source "$SH_ROOT/boilerplate"
+
 _basic_dev_mnt_usage() {
 	if [ $# -lt 2 ]
 	then
-		echo "usage: $SCRIPT <dev> <mnt>"
+		_err "usage: $SCRIPT <dev> <mnt>"
 		_usage
 	fi
 }
@@ -10,7 +12,7 @@ _cycle_mnt() {
 	local dev=$1
 	local mnt=$2
 
-	echo "cycle mount $dev $mnt" > /dev/kmsg
+	_log "cycle mount $dev $mnt" > /dev/kmsg
 	umount $dev
 	mount $dev $mnt
 }
@@ -22,4 +24,13 @@ _umount() {
 	set -e
 }
 
+_umount_loop() {
+	local dev=$1
 
+	for i in $(seq 100)
+	do
+		findmnt $dev >/dev/null || break
+		_log "umounting $dev..."
+		umount $dev
+	done
+}
