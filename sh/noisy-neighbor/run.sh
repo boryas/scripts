@@ -43,6 +43,8 @@ _my_cleanup() {
 
 trap _my_cleanup exit 0 1 15
 
+_setup
+
 ./big-read $mnt/biggo &
 pid=$!
 echo $pid > $BAD_CG/cgroup.procs
