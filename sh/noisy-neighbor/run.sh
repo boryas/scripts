@@ -15,7 +15,7 @@ mnt=$2
 shift
 shift
 
-CG_ROOT=/sys/fs/cgroup/
+CG_ROOT=/sys/fs/cgroup
 BAD_CG=$CG_ROOT/bad-nbr
 GOOD_CG=$CG_ROOT/good-nbr
 _setup() {
@@ -26,6 +26,7 @@ _setup() {
 	dd if=/dev/zero of=$mnt/biggo bs=1G count=5
 	sync
 
+	echo "+memory +cpuset" > $CG_ROOT/cgroup.subtree_control
 	mkdir -p $BAD_CG
 	# 1 GB memory max
 	echo $((64 << 20)) > $BAD_CG/memory.max
@@ -43,5 +44,8 @@ _my_cleanup() {
 trap _my_cleanup exit 0 1 15
 
 ./big-read $mnt/biggo &
-PIDS+=( $! )
+pid=$!
+echo $pid > $BAD_CG/cgroup.procs
+PIDS+=( $pid )
 
+_sleep $1
