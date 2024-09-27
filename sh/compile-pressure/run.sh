@@ -27,7 +27,6 @@ _setup() {
 	mount -o noatime $dev $mnt
 	cd $mnt
 	git clone https://github.com/torvalds/linux.git
-	make defconfig
 }
 
 _cleanup() {
@@ -36,6 +35,7 @@ _cleanup() {
 		echo "kill spawned pid $pid"
 		kill $pid
 	done
+	pkill fsstress
 	wait
 	umount $mnt
 	btrfs check $dev
@@ -43,6 +43,8 @@ _cleanup() {
 trap _cleanup exit 0 1 15
 
 _compile_loop() {
+	cd $mnt/linux
+	make defconfig
 	while (true)
 	do
 		make clean
@@ -54,6 +56,8 @@ _fsstress() {
 	$FSSTRESS -d $mnt -n 10000 -w -p 8 -l 0
 	echo "fsstress exited with code $?"
 }
+
+_setup
 
 pids=()
 _compile_loop &
