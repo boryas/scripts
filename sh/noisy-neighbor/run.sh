@@ -27,10 +27,12 @@ _setup() {
 	sync
 
 	echo "+memory +cpuset" > $CG_ROOT/cgroup.subtree_control
+	mkdir -p $GOOD_CG
 	mkdir -p $BAD_CG
 	# 1 GB memory max
 	echo $((64 << 20)) > $BAD_CG/memory.max
-	mkdir -p $GOOD_CG
+	# just one cpu
+	echo 0 > $BAD_CG/cpuset.cpus
 
 	# build the big-read command, in case it's not built
 	make
@@ -45,9 +47,31 @@ trap _my_cleanup exit 0 1 15
 
 _setup
 
-./big-read $mnt/biggo &
+_victim() {
+	i=0;
+	while (true)
+	do
+		local tmp=$mnt/tmp.$((i % (1024 * 1024)))
+
+		dd if=/dev/zero of=$tmp bs=4k count=2 >/dev/null 2>&1
+		sync
+		i=$((i+1))
+	done
+}
+
+# 8 heavy reclaim reader tasks on one cpu
+for i in $(seq 8)
+do
+	./big-read $mnt/biggo &
+	pid=$!
+	echo $pid > $BAD_CG/cgroup.procs
+	PIDS+=( $pid )
+done
+
+# one victim doing lots of del_csum and sync
+_victim &
 pid=$!
-echo $pid > $BAD_CG/cgroup.procs
+echo $pid > $GOOD_CG/cgroup.procs
 PIDS+=( $pid )
 
 _sleep $1
