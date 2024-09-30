@@ -51,7 +51,7 @@ _victim() {
 	i=0;
 	while (true)
 	do
-		local tmp=$mnt/tmp.$((i % (1024 * 1024)))
+		local tmp=$mnt/tmp.$i
 
 		dd if=/dev/zero of=$tmp bs=4k count=2 >/dev/null 2>&1
 		sync
@@ -62,7 +62,7 @@ _victim() {
 # 8 heavy reclaim reader tasks on one cpu
 for i in $(seq 8)
 do
-	./big-read $mnt/biggo &
+	$DIR/big-read $mnt/biggo &
 	pid=$!
 	echo $pid > $BAD_CG/cgroup.procs
 	PIDS+=( $pid )
