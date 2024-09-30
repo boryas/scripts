@@ -15,9 +15,20 @@ mnt=$2
 shift
 shift
 
+
 CG_ROOT=/sys/fs/cgroup
 BAD_CG=$CG_ROOT/bad-nbr
 GOOD_CG=$CG_ROOT/good-nbr
+
+_stats() {
+	echo "================"
+	date
+	_elapsed
+	free -h
+	cat $(_btrfs_sysfs $dev)/commit_stats
+	cat $BAD_CG/memory.pressure
+}
+
 _setup() {
 	_umount_loop $dev
 	_fresh_btrfs_mnt $dev $mnt
@@ -32,8 +43,10 @@ _setup() {
 	# 1 GB memory max
 	echo $((64 << 20)) > $BAD_CG/memory.max
 	# just one cpu
-	echo 0 > $BAD_CG/cpuset.cpus
+	echo 0,1,2,3 > $BAD_CG/cpuset.cpus
 
+	cd $DIR
+	pwd
 	# build the big-read command, in case it's not built
 	make
 }
@@ -43,7 +56,14 @@ _my_cleanup() {
 	umount $mnt
 }
 
-trap _my_cleanup exit 0 1 15
+
+_bad_exit() {
+	_err "Unexpected Exit! $?"
+	_stats
+}
+
+trap _my_cleanup EXIT
+trap _bad_exit INT TERM
 
 _setup
 
@@ -54,13 +74,21 @@ _victim() {
 		local tmp=$mnt/tmp.$i
 
 		dd if=/dev/zero of=$tmp bs=4k count=2 >/dev/null 2>&1
-		sync
 		i=$((i+1))
 	done
 }
 
-# 8 heavy reclaim reader tasks on one cpu
-for i in $(seq 8)
+_sync() {
+	while (true)
+	do
+		sleep 10
+		sync
+		_stats
+	done
+}
+
+# heavy reclaim reader tasks on one cpu
+for i in $(seq 64)
 do
 	$DIR/big-read $mnt/biggo &
 	pid=$!
@@ -68,10 +96,20 @@ do
 	PIDS+=( $pid )
 done
 
-# one victim doing lots of del_csum and sync
-_victim &
+# one victim doing lots of del_csum
+for i in $(seq 8)
+do
+	_victim &
+	pid=$!
+	echo $pid > $GOOD_CG/cgroup.procs
+	PIDS+=( $pid )
+done
+
+_sync &
 pid=$!
 echo $pid > $GOOD_CG/cgroup.procs
 PIDS+=( $pid )
 
 _sleep $1
+_elapsed
+_ok

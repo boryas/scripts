@@ -2,6 +2,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 PLAIN='\033[0m'
+START_SEC=$(date +%s)
 
 _usage() {
 	exit 22
@@ -37,6 +38,10 @@ _sleep() {
 	[ -z "${time+x}" ] && time=60
 	echo "SLEEP $time"
 	sleep $time
+}
+
+_elapsed() {
+	echo "elapsed: $(($(date +%s) - $START_SEC))"
 }
 
 _cleanup() {
