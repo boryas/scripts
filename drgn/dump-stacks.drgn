@@ -1,0 +1,21 @@
+from drgn import stack_trace
+from drgn.helpers.linux.pid import for_each_task
+
+import sys
+
+if len(sys.argv) < 2:
+    print("Usage: sys.argv[0] <filename> [pattern]")
+    exit(-22)
+
+fname = sys.argv[1]
+if len(sys.argv) < 3:
+    needle = ''
+else:
+    needle = sys.argv[2]
+
+with open(fname, 'w') as f:
+    for task in for_each_task(prog):
+        st = stack_trace(task.pid)
+        if needle in str(st):
+            f.write("=================================\n")
+            f.write(f"{task.comm}, {task.pid}, {task.__state}, {st}\n")
