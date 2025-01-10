@@ -1,0 +1,68 @@
+#!/usr/bin/env drgn
+import drgn
+#from drgn import FaultError, NULL, Object, cast, container_of, execscript, offsetof, reinterpret, sizeof, stack_trace
+from drgn import container_of
+from drgn.helpers.linux import *
+import sys
+
+def my_prepend_path(dentry, mnt, root):
+    dpath = b""
+    while True:
+        dentry_addr = int(dentry)
+        root_dentry = root.dentry
+        root_dentry_addr = int(root_dentry)
+        mnt_addr = int(mnt)
+        mnt_mnt_addr = int(mnt.mnt.address_of_())
+        root_mnt_addr = int(root.mnt)
+        parent_dentry = dentry.d_parent
+        parent_dentry_addr = int(parent_dentry)
+        mnt_root_dentry = mnt.mnt.mnt_root.read_()
+        mnt_root_dentry_addr = int(mnt_root_dentry)
+        print(f"my_prepend_path loop dentry {dentry_addr:02x} root dentry {root_dentry_addr:02x} mnt {mnt_addr:02x} mnt_mnt {mnt_mnt_addr:02x} root mnt {root_mnt_addr:02x} parent dentry {parent_dentry_addr:02x} mnt root dentry {mnt_root_dentry_addr:02x}")
+        if (dentry == root_dentry) and (mnt.mnt.address_of_() == root.mnt):
+            print(f"dentry == root dentry {dentry_addr:02x} and mnt.mnt == root.mnt {mnt_mnt_addr:02x}")
+            break
+        print("enter loop body!")
+        if dentry == mnt_root_dentry:
+            print(f"dentry == mnt root dentry {dentry_addr:02x}")
+            m = mnt.mnt_parent.read_()
+            m_addr = int(m)
+            print(f"mnt {mnt_addr:02x} mnt_parent {m_addr:02x}")
+            if m != mnt:
+                print(f"m != mnt {m_addr:02x} {mnt_addr:02x}")
+                #print(f"traverse to mountpoint {mnt.mnt_mountpoint} in {m.mnt_mountpoint}")
+                dentry = mnt.mnt_mountpoint.read_()
+                mnt = m.read_()
+                continue
+            mnt_ns = mnt.mnt_ns.read_()
+            print(f"hit root bottom. {mnt_ns}")
+            # TODO conditions on mnt_ns
+            return dpath
+        if dentry == parent_dentry:
+            print("dentry == parent")
+            return dpath
+        print(f"prepend! {dentry.d_name.name.string_()}")
+        dpath = b"/" + dentry.d_name.name.string_() + dpath
+        dentry = parent_dentry.read_()
+    return dpath
+
+def my_d_path(task, path):
+    root = task.fs.root
+    print(f"my_d_path {task.pid}, {path}")
+    print(f"root {root}")
+    dentry = path.dentry
+    mnt = path.mnt
+    real_mnt = container_of(mnt, "struct mount", "mnt")
+    print(f"my_d_path: {my_prepend_path(dentry, real_mnt, root)}")
+
+if len(sys.argv) < 3:
+    print("usage: fd-dpath <pid> <fd>")
+
+pid = int(sys.argv[1])
+fd = int(sys.argv[2])
+
+task = find_task(pid)
+file = fget(task, fd)
+path = file.f_path
+print(f"drgn d_path: {d_path(path)}")
+my_d_path(task, path)
