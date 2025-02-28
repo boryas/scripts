@@ -12,34 +12,46 @@ then
 	_usage
 fi
 
-vm=$1
-#TODO configurable timeout
+_kill_one() {
+	local vm=$1
+	#TODO configurable timeout
 
-_find_pid() {
-	ps aux | grep qemu | grep -v runsvdir | grep $vm | awk '{print $2}'
+	_find_pid() {
+		ps aux | grep qemu | grep -v runsvdir | grep $vm | awk '{print $2}'
+	}
+
+	pid=$(_find_pid)
+	if [ -z "$pid" ]
+	then
+		echo "$vm not running"
+		exit 1
+	fi
+	sudo kill "$pid"
+
+	tries=0
+	while [ -n "$pid" ]
+	do
+		if [ $tries -gt 30 ]; then
+			echo "Timed out after $tries seconds. pid: $pid"
+			sudo kill -9 $pid
+		fi
+		sleep 1
+		pid=$(_find_pid)
+		tries=$(($tries + 1))
+	done
+
+	if [ -f /data/virt/$vm/console ]
+	then
+		rm /data/virt/$vm/console
+	fi
 }
 
-pid=$(_find_pid)
-if [ -z "$pid" ]
-then
-	echo "$vm not running"
-	exit 1
-fi
-sudo kill "$pid"
+vm=$1
 
-tries=0
-while [ -n "$pid" ]
-do
-	if [ $tries -gt 30 ]; then
-		echo "Timed out after $tries seconds. pid: $pid"
-		sudo kill -9 $pid
-	fi
-	sleep 1
-	pid=$(_find_pid)
-	tries=$(($tries + 1))
-done
-
-if [ -f /data/virt/$vm/console ]
-then
-	rm /data/virt/$vm/console
+if [ $vm == "all" ]; then
+	for vm in $(rcli vm list | grep -v DOWN | awk '{print $1}'); do
+		_kill_one $vm
+	done
+else
+	_kill_one $vm
 fi

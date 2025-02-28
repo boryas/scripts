@@ -23,6 +23,11 @@ int main(int argc, char **argv) {
 	int fd = open("/dev/loop0", O_RDONLY);
 	printf("%d %d\n", getpid(), fd);
 	do_sleep(10);
+	do_unshare();
+	do_sleep(10);
+	return 0;
+
+	/* fork mode */
 	pid_t pid = fork();
 	if (pid < 0)
 		return errno;
