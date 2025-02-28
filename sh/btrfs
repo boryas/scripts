@@ -13,7 +13,7 @@ _fresh_btrfs_mnt() {
 
 	_log "fresh mount $dev $mnt $@"
 	$MKFS -f -m single -d single $dev >/dev/null || _fail "Failed to mkfs $dev"
-	mount -o noatime $dev $mnt "$@" || _fail "Failed to mount $dev $mnt"
+	mount -o noatime,compress-force=zstd:3 $dev $mnt "$@" || _fail "Failed to mount $dev $mnt"
 }
 
 _btrfs_uuid() {

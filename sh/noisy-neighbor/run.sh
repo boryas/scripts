@@ -19,6 +19,9 @@ shift
 CG_ROOT=/sys/fs/cgroup
 BAD_CG=$CG_ROOT/bad-nbr
 GOOD_CG=$CG_ROOT/good-nbr
+NR_BIGGOS=1
+NR_VICTIMS=32
+NR_VILLAINS=1024
 
 _stats() {
 	echo "================"
@@ -29,21 +32,36 @@ _stats() {
 	cat $BAD_CG/memory.pressure
 }
 
+_setup_cgs() {
+	echo "+memory +cpuset" > $CG_ROOT/cgroup.subtree_control
+	mkdir -p $GOOD_CG
+	mkdir -p $BAD_CG
+	#echo $((64 << 20)) > $BAD_CG/memory.max
+	echo max > $BAD_CG/memory.max
+	echo $((1 << 30)) > $BAD_CG/memory.high
+
+	# just one cpu
+	echo 0 > $GOOD_CG/cpuset.cpus
+	echo 0,1,2,3 > $BAD_CG/cpuset.cpus
+}
+
+_write_biggos() {
+	# big enough files that reading/caching them triggers reclaim
+	for i in $(seq $NR_BIGGOS)
+	do
+		dd if=/dev/zero of=$mnt/biggo.$i bs=1M count=10240
+	done
+	sync
+	# drop caches after initial write for good measure
+	echo 3 > /proc/sys/vm/drop_caches
+}
+
 _setup() {
 	_umount_loop $dev
 	_fresh_btrfs_mnt $dev $mnt
 
-	# big enough file that reading/caching it triggers reclaim
-	dd if=/dev/zero of=$mnt/biggo bs=1G count=5
-	sync
-
-	echo "+memory +cpuset" > $CG_ROOT/cgroup.subtree_control
-	mkdir -p $GOOD_CG
-	mkdir -p $BAD_CG
-	# 1 GB memory max
-	echo $((64 << 20)) > $BAD_CG/memory.max
-	# just one cpu
-	echo 0,1,2,3 > $BAD_CG/cpuset.cpus
+	_setup_cgs
+	_write_biggos
 
 	cd $DIR
 	pwd
@@ -51,8 +69,24 @@ _setup() {
 	make
 }
 
+_kill_cg() {
+	local cg=$1
+	_log "kill cgroup $cg"
+	echo 1 > $cg/cgroup.kill
+}
+
 _my_cleanup() {
+	echo "CLEANUP!"
+	date
+	_kill_cg $BAD_CG
+	date
+	_kill_cg $GOOD_CG
+	sleep 1
 	_cleanup
+	rmdir $BAD_CG
+	rmdir $GOOD_CG
+	sync
+	_stats
 	umount $mnt
 }
 
@@ -67,7 +101,23 @@ trap _bad_exit INT TERM
 
 _setup
 
+# Use a lot of page cache reading the big file
+_villain() {
+	local i=$(shuf -i 1-$NR_BIGGOS -n 1)
+	local t=$(shuf -i 1-5 -n 1)
+	echo $BASHPID > $BAD_CG/cgroup.procs
+	#$DIR/big-read $mnt/biggo.$i &
+	while (true)
+	do
+		local skip=$(($(shuf -i 0-9 -n 1) * 1024))
+		dd if=$mnt/biggo.$i of=/dev/null bs=1M skip=$skip count=1024 >/dev/null 2>&1
+		sleep "0.$t"
+	done
+}
+
+# Hit del_csum a lot by touching lots of small new files
 _victim() {
+	echo $BASHPID > $GOOD_CG/cgroup.procs
 	i=0;
 	while (true)
 	do
@@ -78,7 +128,9 @@ _victim() {
 	done
 }
 
+# sync in a loop
 _sync() {
+	echo $BASHPID > $GOOD_CG/cgroup.procs
 	while (true)
 	do
 		sleep 10
@@ -87,28 +139,19 @@ _sync() {
 	done
 }
 
-# heavy reclaim reader tasks on one cpu
-for i in $(seq 64)
+for i in $(seq $NR_VILLAINS)
 do
-	$DIR/big-read $mnt/biggo &
-	pid=$!
-	echo $pid > $BAD_CG/cgroup.procs
-	PIDS+=( $pid )
+	_villain &
 done
 
-# one victim doing lots of del_csum
-for i in $(seq 8)
+for i in $(seq $NR_VICTIMS)
 do
 	_victim &
-	pid=$!
-	echo $pid > $GOOD_CG/cgroup.procs
-	PIDS+=( $pid )
 done
 
 _sync &
-pid=$!
-echo $pid > $GOOD_CG/cgroup.procs
-PIDS+=( $pid )
+
+#PIDS+=( $pid )
 
 _sleep $1
 _elapsed

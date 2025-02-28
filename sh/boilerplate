@@ -44,6 +44,10 @@ _elapsed() {
 	echo "elapsed: $(($(date +%s) - $START_SEC))"
 }
 
+_pid() {
+	exec sh -c 'echo "$PPID"'
+}
+
 _cleanup() {
 	for pid in ${PIDS[@]}
 	do

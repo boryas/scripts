@@ -5,6 +5,23 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+int read_loop(char *buf, size_t sz) {
+	int parity = 0;
+	int i = 0;
+	while (1) {
+		off_t roff = rand() % sz;
+		parity |= (buf[roff] % 2);
+		/*
+		for (off_t off = 0; off < sz; ++off) {
+			parity |= (buf[off] % 2);
+		}
+		i++;
+		printf("read the whole file %d times\n", i);
+		*/
+	}
+	return parity;
+}
+
 int main(int argc, char *argv[]) {
 	int fd;
 	struct stat st;
@@ -33,12 +50,7 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 
-	int parity = 0;
-	while (1) {
-		off_t roff = rand() % sz;
-		parity |= (buf[roff] % 2);
-	}
-	printf("%d\n", parity);
+	printf("%d\n", read_loop(buf, sz));
 
 	munmap(buf, sz);
 	close(fd);
