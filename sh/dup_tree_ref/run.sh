@@ -17,6 +17,8 @@ NR_SNAP_THREADS=2
 NR_REFLINK_THREADS=8
 
 _cleanup() {
+	local now=$(date +%s)
+	echo "ELAPSED: $((now - START))"
 	for pid in ${pids[@]}
 	do
 		echo "kill spawned pid $pid"
@@ -39,13 +41,15 @@ _setup() {
 		umount $dev
 	done
 	$MKFS -f -m single -d single $dev >/dev/null 2>&1
-	mount -o ref_verify,noatime $dev $mnt
+	#mount -o ref_verify,relatime $dev $mnt
+	mount -o compress-force=zstd:3,relatime,discard=async $dev $mnt
 	$BTRFS subvol create $sv
 }
 _setup
 
 _fsstress() {
-	$FSSTRESS -d $sv -n 10000 -w -p 8 -l 0
+	$FSSTRESS -d $sv -n 10000 -w -p 8 -l 0 -s 1730180877
+	#$FSSTRESS -d $sv -n 1000 -w -p 8 -l 0
 	echo "fsstress exited with code $?"
 }
 
@@ -64,7 +68,9 @@ _balance() {
 	while (true)
 	do
 		$BTRFS -q balance start -dusage=100 $mnt || break
+		[ -f STOP ] && break
 	done
+	[ -f STOP ] && rm STOP
 	echo "balance loop exited"
 }
 
@@ -91,6 +97,7 @@ _sync() {
 	done
 }
 
+START=$(date +%s)
 echo "BO RUN REPRO" > /dev/kmsg
 pids=()
 
