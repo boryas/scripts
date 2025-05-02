@@ -21,7 +21,7 @@ BAD_CG=$CG_ROOT/bad-nbr
 GOOD_CG=$CG_ROOT/good-nbr
 NR_BIGGOS=1
 NR_VICTIMS=32
-NR_VILLAINS=1024
+NR_VILLAINS=2567
 
 _stats() {
 	echo "================"
@@ -77,9 +77,7 @@ _kill_cg() {
 
 _my_cleanup() {
 	echo "CLEANUP!"
-	date
 	_kill_cg $BAD_CG
-	date
 	_kill_cg $GOOD_CG
 	sleep 1
 	_cleanup

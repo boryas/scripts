@@ -9,6 +9,12 @@ source "$SH_ROOT/boilerplate"
 source "$SH_ROOT/btrfs"
 
 _basic_dev_mnt_usage $@
+CG_ROOT=/sys/fs/cgroup
+BAD_CG=$CG_ROOT/bad-nbr
+echo "+memory +cpuset" > $CG_ROOT/cgroup.subtree_control
+mkdir -p $BAD_CG
+echo 0,1 > $BAD_CG/cpuset.cpus
+echo $$ > $BAD_CG/cgroup.procs
 
 dev=$1
 mnt=$2
@@ -72,5 +78,5 @@ _rm() {
 echo 1 | sudo tee /proc/sys/vm/drop_caches
 _dump "Post Drop Caches"
 
-stress -m 59 -t 10 --vm-keep
-_dump "Post Stress"
+#stress -m 59 -t 10 --vm-keep
+#_dump "Post Stress"

@@ -1,0 +1,21 @@
+kprobe:drop_pagecache_sb {
+	@live[tid] = 1;
+}
+
+kretprobe:drop_pagecache_sb {
+	delete(@live[tid]);
+}
+
+kprobe:find_lock_entries {
+	if (@live[tid]) {
+		//@fle[kstack] = count();
+		printf("fle! %s\n", kstack);
+	}
+}
+
+kprobe:xas_find {
+	if (@live[tid]) {
+		//@xasf[kstack] = count();
+		printf("xasf! %s\n", kstack);
+	}
+}

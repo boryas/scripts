@@ -1,0 +1,3 @@
+kretprobe:btrfs_relocate_block_group {
+	printf("relocation failed! %s %d\n", kstack, retval);
+}

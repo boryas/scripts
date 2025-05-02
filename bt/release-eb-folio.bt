@@ -1,0 +1,57 @@
+fexit:btrfs_release_extent_buffer_folios {
+	$f0 = args.eb->folios[0];
+	$f1 = args.eb->folios[1];
+	$f2 = args.eb->folios[2];
+	$f3 = args.eb->folios[3];
+	//@page_rcs[$f0->page._refcount.counter] = count();
+	//@page_rcs[$f1->page._refcount.counter] = count();
+	//@page_rcs[$f2->page._refcount.counter] = count();
+	//@page_rcs[$f3->page._refcount.counter] = count();
+	$start = args.eb->start;
+	/*
+	if (@alloc_eb_puts[$start] == 0) {
+		printf("Oops! Freeing eb %llu that never got an alloc put!\n", $start);
+		//printf("free ctx: %s\n", stack);
+		if (@alloc_eb_test[$start]) {
+			printf("alloc ctx: %s\n", @alloc_eb_stack[$start]);
+			delete(@alloc_eb_test, $start);
+			delete(@alloc_eb_stack, $start);
+		}
+		if (@clone_test[$start]) {
+			printf("it was a clone! %s\n", @clone_stack[$start]);
+			delete(@clone_test, $start);
+			delete(@clone_stack, $start);
+		}
+	} else {
+		if (@alloc_eb_test[$start]) {
+			delete(@alloc_eb_test, $start);
+			delete(@alloc_eb_stack, $start);
+		}
+		if (@clone_test[$start]) {
+			delete(@clone_test, $start);
+			delete(@clone_stack, $start);
+		}
+		delete(@alloc_eb_puts, $start);
+	}
+	*/
+}
+
+fexit:btrfs_clone_extent_buffer {
+	printf("CLONE! %s\n", kstack);
+	@clones[kstack] = count();
+	@clone_test[retval->start] = 1;
+	@clone_stack[retval->start] = kstack;
+}
+
+fentry:__alloc_extent_buffer {
+	/*
+	@alloc_eb_test[args.start] = 1;
+	@alloc_eb_stack[args.start] = kstack;
+	*/
+}
+
+tracepoint:btrfs:btrfs_alloc_eb_folio_put {
+	//@alloc_eb_rcs[args.folio_rc] = count();
+	//@alloc_stacks[args.eb_start, kstack] = count();
+	//@alloc_eb_puts[args.eb_start] = 1;
+}
