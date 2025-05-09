@@ -4,6 +4,12 @@ BLUE='\033[0;34m'
 PLAIN='\033[0m'
 START_SEC=$(date +%s)
 
+_usage_msg() {
+	local msg="$1"
+	echo -e "${RED}usage:${PLAIN} $msg"
+	_usage
+}
+
 _usage() {
 	exit 22
 }

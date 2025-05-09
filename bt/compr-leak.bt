@@ -1,0 +1,19 @@
+/*
+fexit:btrfs_alloc_compr_folio {
+	@leaked[retval] = 1;
+	@leaked_stk[retval] = kstack;
+}
+*/
+
+fentry:btrfs_free_compr_folio {
+	if (@leaked[args.folio]) {
+		delete(@leaked, args.folio);
+		//delete(@leaked_stk, args.folio);
+		@frees[kstack] = count();
+	}
+}
+
+fentry:we_leaked {
+	printf("leak! %p\n", args.folio);
+	@leaked[args.folio] = 1;
+}
