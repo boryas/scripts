@@ -3,7 +3,7 @@
 SCRIPT=$(readlink -f "$0")
 DIR=$(dirname "$SCRIPT")
 SH_ROOT=$(dirname "$DIR")
-source "$SH_ROOT/boilerplate"
+source "$SH_ROOT/boilerplate.sh"
 
 if [ $# -lt 2 ]
 then

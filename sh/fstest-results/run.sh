@@ -9,7 +9,7 @@ DIR=$(dirname "$SCRIPT")
 SH_ROOT=$(dirname "$DIR")
 SCRIPTS_ROOT=$(dirname $SH_ROOT)
 
-source "$SH_ROOT/boilerplate"
+source "$SH_ROOT/boilerplate.sh"
 
 if [ $# -ne 1 ]; then
 	_usage_msg "patch-name"

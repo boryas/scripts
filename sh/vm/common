@@ -2,6 +2,6 @@
 
 SCRIPT=$(readlink -f "$0")
 SH_ROOT=$(dirname "$CMD_ROOT")
-source "$SH_ROOT/boilerplate"
+source "$SH_ROOT/boilerplate.sh"
 
 source /home/$USER/.config/rcli/env

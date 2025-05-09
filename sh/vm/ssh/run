@@ -4,7 +4,7 @@ SCRIPT=$(readlink -f "$0")
 DIR=$(dirname "$SCRIPT")
 CMD_ROOT=$(dirname "$DIR")
 SH_ROOT=$(dirname "$CMD_ROOT")
-source "$SH_ROOT/boilerplate"
+source "$SH_ROOT/boilerplate.sh"
 
 set -eua
 

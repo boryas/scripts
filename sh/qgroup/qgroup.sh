@@ -1,7 +1,7 @@
 SCRIPT=$(readlink -f "$0")
 DIR=$(dirname "$SCRIPT")
 SH_ROOT=$(dirname "$DIR")
-[ -z "$BTRFS" ] && source "$SH_ROOT/btrfs"
+[ -z "$BTRFS" ] && source "$SH_ROOT/btrfs.sh"
 
 _qgroup_show() {
 	local mnt=$1

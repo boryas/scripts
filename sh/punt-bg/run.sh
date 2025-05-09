@@ -5,7 +5,7 @@ DIR=$(dirname "$SCRIPT")
 SH_ROOT=$(dirname "$DIR")
 SCRIPTS_ROOT=$(dirname $SH_ROOT)
 
-source "$SH_ROOT/btrfs"
+source "$SH_ROOT/btrfs.sh"
 
 _basic_dev_mnt_usage $@
 dev=$1

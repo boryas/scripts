@@ -5,8 +5,8 @@ DIR=$(dirname "$SCRIPT")
 SH_ROOT=$(dirname "$DIR")
 SCRIPTS_ROOT=$(dirname $SH_ROOT)
 
-source "$SH_ROOT/boilerplate"
-source "$SH_ROOT/btrfs"
+source "$SH_ROOT/boilerplate.sh"
+source "$SH_ROOT/btrfs.sh"
 
 FSSTRESS=/home/vmuser/fstests/ltp/fsstress
 

@@ -1,4 +1,4 @@
-source "$SH_ROOT/boilerplate"
+source "$SH_ROOT/boilerplate.sh"
 
 _basic_dev_mnt_usage() {
 	if [ $# -lt 2 ]
