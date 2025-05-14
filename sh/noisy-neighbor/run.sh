@@ -15,13 +15,12 @@ mnt=$2
 shift
 shift
 
-
 CG_ROOT=/sys/fs/cgroup
 BAD_CG=$CG_ROOT/bad-nbr
 GOOD_CG=$CG_ROOT/good-nbr
 NR_BIGGOS=1
 NR_VICTIMS=32
-NR_VILLAINS=2567
+NR_VILLAINS=512
 
 _stats() {
 	echo "================"
@@ -50,6 +49,7 @@ _write_biggos() {
 	for i in $(seq $NR_BIGGOS)
 	do
 		dd if=/dev/zero of=$mnt/biggo.$i bs=1M count=10240
+		#dd if=/dev/zero of=$mnt/biggo.$i bs=1M count=1
 	done
 	sync
 	# drop caches after initial write for good measure
@@ -57,22 +57,20 @@ _write_biggos() {
 }
 
 _setup() {
-	_umount_loop $dev
-	_fresh_btrfs_mnt $dev $mnt
-
+	[ -f .done ] && rm .done
+	#_umount_loop $dev
+	#_fresh_btrfs_mnt $dev $mnt
+	_btrfs_mnt $dev $mnt
 	_setup_cgs
-	_write_biggos
-
-	cd $DIR
-	pwd
-	# build the big-read command, in case it's not built
-	make
+	#_write_biggos
 }
 
 _kill_cg() {
 	local cg=$1
 	_log "kill cgroup $cg"
+	wc -l $cg/cgroup.procs
 	echo 1 > $cg/cgroup.kill
+	wc -l $cg/cgroup.procs
 }
 
 _my_cleanup() {
@@ -83,7 +81,7 @@ _my_cleanup() {
 	_cleanup
 	rmdir $BAD_CG
 	rmdir $GOOD_CG
-	sync
+	_one_sync
 	_stats
 	umount $mnt
 }
@@ -92,6 +90,7 @@ _my_cleanup() {
 _bad_exit() {
 	_err "Unexpected Exit! $?"
 	_stats
+	exit $?
 }
 
 trap _my_cleanup EXIT
@@ -104,7 +103,6 @@ _villain() {
 	local i=$(shuf -i 1-$NR_BIGGOS -n 1)
 	local t=$(shuf -i 1-5 -n 1)
 	echo $BASHPID > $BAD_CG/cgroup.procs
-	#$DIR/big-read $mnt/biggo.$i &
 	while (true)
 	do
 		local skip=$(($(shuf -i 0-9 -n 1) * 1024))
@@ -126,31 +124,47 @@ _victim() {
 	done
 }
 
-# sync in a loop
-_sync() {
-	echo $BASHPID > $GOOD_CG/cgroup.procs
-	while (true)
-	do
-		sleep 10
-		sync
-		_stats
-	done
+_one_sync() {
+	echo "sync..."
+	before=$(date +%s)
+	sync
+	after=$(date +%s)
+	echo "sync done in $((after - before))s"
+	_stats
 }
 
+# sync in a loop
+_sync() {
+	echo "start sync loop"
+	echo $BASHPID > $GOOD_CG/cgroup.procs
+	while true
+	do
+		[ -f .done ] && break
+		_one_sync
+		sleep 10
+	done
+	echo "end sync loop; run final sync."
+	_one_sync
+	echo "sync loop fully done."
+}
+
+echo "start $NR_VILLAINS villains"
 for i in $(seq $NR_VILLAINS)
 do
 	_villain &
 done
 
+echo "start $NR_VICTIMS victims"
 for i in $(seq $NR_VICTIMS)
 do
 	_victim &
 done
 
 _sync &
-
-#PIDS+=( $pid )
+SYNC_PID=$!
 
 _sleep $1
 _elapsed
+touch .done
+wait $SYNC_PID
 _ok

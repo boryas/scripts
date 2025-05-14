@@ -39,11 +39,15 @@ _log() {
 }
 
 _sleep() {
-	local time=$1
-
-	[ -z "${time+x}" ] && time=60
-	echo "SLEEP $time"
-	sleep $time
+	local time=${1-60}
+	local now=$(date +%s)
+	local end=$((now + time))
+	while [ $now -lt $end ];
+	do
+		echo "SLEEP: $((end - now))s left. Sleep 10."
+		sleep 10
+		now=$(date +%s)
+	done
 }
 
 _elapsed() {

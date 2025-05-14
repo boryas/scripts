@@ -1,4 +1,4 @@
-source "$SH_ROOT/fs"
+source "$SH_ROOT/fs.sh"
 
 MKFS=mkfs.btrfs
 BTRFS=btrfs
@@ -13,6 +13,14 @@ _fresh_btrfs_mnt() {
 
 	_log "fresh mount $dev $mnt $@"
 	$MKFS -f -m single -d single $dev >/dev/null || _fail "Failed to mkfs $dev"
+	_btrsf_mnt $dev $mnt
+}
+
+_btrfs_mnt() {
+	local dev=$1
+	local mnt=$2
+	shift
+	shift
 	mount -o noatime,compress-force=zstd:3 $dev $mnt "$@" || _fail "Failed to mount $dev $mnt"
 }
 
