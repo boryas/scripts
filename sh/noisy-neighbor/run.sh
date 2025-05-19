@@ -44,6 +44,25 @@ _setup_cgs() {
 	echo 0,1,2,3 > $BAD_CG/cpuset.cpus
 }
 
+_biggo_vol() {
+	echo $mnt/biggo_vol.$1
+}
+
+_biggo_file() {
+	echo $(_biggo_vol $1)/biggo
+}
+
+_subvoled_biggos() {
+	total_sz=$((10 << 30))
+	per_sz=$((total_sz / $NR_VILLAINS))
+	dd_count=$((per_sz >> 20))
+	for i in $(seq $NR_VILLAINS)
+	do
+		btrfs subvol create $(_biggo_vol $i)
+		dd if=/dev/zero of=$(_biggo_file $i) bs=1M count=$dd_count
+	done
+}
+
 _write_biggos() {
 	# big enough files that reading/caching them triggers reclaim
 	for i in $(seq $NR_BIGGOS)
@@ -58,11 +77,15 @@ _write_biggos() {
 
 _setup() {
 	[ -f .done ] && rm .done
-	#_umount_loop $dev
-	#_fresh_btrfs_mnt $dev $mnt
-	_btrfs_mnt $dev $mnt
+	if [ -f .re-mkfs ]; then
+		_umount_loop $dev
+		_fresh_btrfs_mnt $dev $mnt
+	else
+		_btrfs_mnt $dev $mnt
+	fi
+	[ -f .re-mkfs ] && _subvoled_biggos
+	rm .re-mkfs
 	_setup_cgs
-	#_write_biggos
 }
 
 _kill_cg() {
@@ -81,7 +104,7 @@ _my_cleanup() {
 	_cleanup
 	rmdir $BAD_CG
 	rmdir $GOOD_CG
-	_one_sync
+	#_one_sync
 	_stats
 	umount $mnt
 }
@@ -100,13 +123,15 @@ _setup
 
 # Use a lot of page cache reading the big file
 _villain() {
-	local i=$(shuf -i 1-$NR_BIGGOS -n 1)
+	#local i=$(shuf -i 1-$NR_BIGGOS -n 1)
+	local i=$1
 	local t=$(shuf -i 1-5 -n 1)
 	echo $BASHPID > $BAD_CG/cgroup.procs
 	while (true)
 	do
 		local skip=$(($(shuf -i 0-9 -n 1) * 1024))
-		dd if=$mnt/biggo.$i of=/dev/null bs=1M skip=$skip count=1024 >/dev/null 2>&1
+		#dd if=$mnt/biggo.$i of=/dev/null bs=1M skip=$skip count=1024 >/dev/null 2>&1
+		dd if=$(_biggo_file $i) of=/dev/null bs=1M skip=$skip count=1024 >/dev/null 2>&1
 		sleep "0.$t"
 	done
 }
@@ -136,22 +161,27 @@ _one_sync() {
 # sync in a loop
 _sync() {
 	echo "start sync loop"
+	syncs=0
 	echo $BASHPID > $GOOD_CG/cgroup.procs
 	while true
 	do
 		[ -f .done ] && break
 		_one_sync
+		syncs=$((syncs + 1))
+		[ -f .done ] && break
 		sleep 10
 	done
-	echo "end sync loop; run final sync."
-	_one_sync
-	echo "sync loop fully done."
+	if [ $syncs -eq 0 ]; then
+		echo "do at least one sync!"
+		_one_sync
+	fi
+	echo "sync loop done."
 }
 
 echo "start $NR_VILLAINS villains"
 for i in $(seq $NR_VILLAINS)
 do
-	_villain &
+	_villain $i &
 done
 
 echo "start $NR_VICTIMS victims"
