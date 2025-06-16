@@ -56,11 +56,13 @@ _subvoled_biggos() {
 	total_sz=$((10 << 30))
 	per_sz=$((total_sz / $NR_VILLAINS))
 	dd_count=$((per_sz >> 20))
+	echo "create $NR_VILLAINS subvols with a file of size $per_sz bytes for a total of $total_sz bytes."
 	for i in $(seq $NR_VILLAINS)
 	do
-		btrfs subvol create $(_biggo_vol $i)
-		dd if=/dev/zero of=$(_biggo_file $i) bs=1M count=$dd_count
+		btrfs subvol create $(_biggo_vol $i) &>/dev/null
+		dd if=/dev/zero of=$(_biggo_file $i) bs=1M count=$dd_count &>/dev/null
 	done
+	echo "done creating subvols."
 }
 
 _write_biggos() {
@@ -84,7 +86,7 @@ _setup() {
 		_btrfs_mnt $dev $mnt
 	fi
 	[ -f .re-mkfs ] && _subvoled_biggos
-	rm .re-mkfs
+	rm .re-mkfs &>/dev/null
 	_setup_cgs
 }
 
@@ -104,7 +106,6 @@ _my_cleanup() {
 	_cleanup
 	rmdir $BAD_CG
 	rmdir $GOOD_CG
-	#_one_sync
 	_stats
 	umount $mnt
 }
@@ -130,7 +131,6 @@ _villain() {
 	while (true)
 	do
 		local skip=$(($(shuf -i 0-9 -n 1) * 1024))
-		#dd if=$mnt/biggo.$i of=/dev/null bs=1M skip=$skip count=1024 >/dev/null 2>&1
 		dd if=$(_biggo_file $i) of=/dev/null bs=1M skip=$skip count=1024 >/dev/null 2>&1
 		sleep "0.$t"
 	done
@@ -192,6 +192,7 @@ done
 
 _sync &
 SYNC_PID=$!
+echo "sync pid: $SYNC_PID"
 
 _sleep $1
 _elapsed

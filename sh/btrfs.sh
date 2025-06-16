@@ -21,7 +21,7 @@ _btrfs_mnt() {
 	local mnt=$2
 	shift
 	shift
-	mount -o noatime,compress-force=zstd:3 $dev $mnt "$@" || _fail "Failed to mount $dev $mnt"
+	mount -o noatime $dev $mnt "$@" || _fail "Failed to mount $dev $mnt"
 }
 
 _btrfs_uuid() {

@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+SCRIPT=$(readlink -f "$0")
+DIR=$(dirname "$SCRIPT")
+CMD_ROOT=$(dirname "$DIR")
+SH_ROOT=$(dirname $CMD_ROOT)
+
+source "$SH_ROOT/boilerplate.sh"
+
+if [ $# -ne 1 ]; then
+	echo $#
+	_usage
+fi
+
+patch_name=$1
+shift
+
+cd ~/repos/linux
+git co $patch_name
+make olddefconfig
+make -j$(nproc)
+hash=$(git log -1 --pretty=format:"%h")
+
+out_dir=~/fstests-results/$patch_name
+mkdir -p $out_dir
+
+cd ~/repos/para-fstests
+rcli vm down all
+rcli vm up all
+vms=($(rcli vm list | awk '{print $1}'))
+all_vms=${vms[*]}
+echo "running fstests on: $all_vms"
+for vm in $vms; do
+	rcli vm ready $vm;
+done
+
+FST_DIR=/mnt/repos/fstests EXCLUDE_FILE=EXCLUDE ./para-fstests.sh -t "-g auto" $all_vms | tee $out_dir/$hash

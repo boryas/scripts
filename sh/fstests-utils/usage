@@ -1,0 +1,6 @@
+fstests-utils <sub-cmd>
+
+sub-cmds:
+------------------
+results     show results for fstests runs
+test        run the test suite on a branch

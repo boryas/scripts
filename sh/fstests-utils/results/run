@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+SCRIPT=$(readlink -f "$0")
+DIR=$(dirname "$SCRIPT")
+CMD_ROOT=$(dirname "$DIR")
+SH_ROOT=$(dirname $CMD_ROOT)
+
+source "$SH_ROOT/boilerplate.sh"
+
+PATCH_DIR=~/fstests-results
+ALL=0
+
+_latest_patch() {
+	local patch_name=$1
+	local d="$PATCH_DIR/$patch_name"
+
+	f=$(ls -t "$d" | head -1)
+	echo "$d/$f"
+}
+
+while getopts "a" opt; do
+	case $opt in
+		a)
+			ALL=1
+			;;
+		\?)
+			_usage
+			;;
+	esac
+done
+
+shift $((OPTIND-1))
+
+if [ $# -ne 1 ]; then
+	_usage
+fi
+
+patch_name=$1
+
+latest_for_next=$(_latest_patch "for-next")
+latest=$(_latest_patch "$patch_name")
+
+if [ $ALL -eq 1 ]; then
+	cat $latest
+else
+	diff <(grep Failures $latest_for_next | sort) <(grep Failures $latest | sort) | grep '>' | cut -d: -f2 | sed 's/^ //'
+fi

@@ -1,0 +1,5 @@
+Utilities for accessing test results.
+
+By default, it accepts a test name and prints the errors introduced by its latest test run compared to the latest for-next test run.
+
+If the environment variable ALL is set to 1, then it simply prints the full results of the latest run.
