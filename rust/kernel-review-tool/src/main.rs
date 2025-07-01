@@ -20,7 +20,7 @@ struct Config {
 impl Config {
     fn to_lei_query(&self) -> String {
         let mut query = format!("s:PATCH");
-        
+
         // Add mailing list filter
         if !self.mailing_list.is_empty() {
             query.push_str(&format!(" AND l:{}", self.mailing_list));
@@ -30,17 +30,17 @@ impl Config {
         if self.days_back > 0 {
             query.push_str(&format!(" AND rt:{}.day.ago..", self.days_back));
         }
-        
+
         // Add any additional filters
         if let Some(ref filters) = self.additional_filters {
             if !filters.is_empty() {
                 query.push_str(&format!(" AND {}", filters));
             }
         }
-        
+
         query
     }
-    
+
     fn load_from_file(path: &PathBuf) -> Result<Config> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {}", path.display()))?;
@@ -48,7 +48,7 @@ impl Config {
             .with_context(|| format!("Failed to parse TOML config: {}", path.display()))?;
         Ok(config)
     }
-    
+
     fn from_cli_args(days: Option<u32>, mailing_list: Option<&str>) -> Option<Config> {
         if days.is_some() || mailing_list.is_some() {
             Some(Config {
@@ -155,7 +155,10 @@ impl EmailType {
         }
     }
 
-    fn get_all_emails<'a>(&'a self, all_emails: &'a HashMap<String, EmailType>) -> Vec<&'a EmailType> {
+    fn get_all_emails<'a>(
+        &'a self,
+        all_emails: &'a HashMap<String, EmailType>,
+    ) -> Vec<&'a EmailType> {
         let mut result = vec![self];
         let reply_ids = match self {
             EmailType::CoverLetter { replies, .. } => replies,
@@ -171,9 +174,12 @@ impl EmailType {
         result
     }
 
-    fn collect_reviewed_by_recursive(&self, all_emails: &HashMap<String, EmailType>) -> Vec<String> {
+    fn collect_reviewed_by_recursive(
+        &self,
+        all_emails: &HashMap<String, EmailType>,
+    ) -> Vec<String> {
         let mut all_reviews = self.reviewed_by().clone();
-        
+
         let reply_ids = match self {
             EmailType::CoverLetter { replies, .. } => replies,
             EmailType::Patch { replies, .. } => replies,
@@ -197,8 +203,6 @@ impl EmailType {
         all_reviews
     }
 
-
-
     fn is_series_reviewed(&self, all_emails: &HashMap<String, EmailType>) -> bool {
         match self {
             EmailType::CoverLetter { replies, .. } => {
@@ -214,16 +218,13 @@ impl EmailType {
                 }
 
                 // All patches must have reviews (either directly or from cover letter)
-                let all_reviewed = patches
-                    .iter()
-                    .all(|patch| patch.has_review());
-                    
+                let all_reviewed = patches.iter().all(|patch| patch.has_review());
+
                 all_reviewed
             }
             _ => false,
         }
     }
-
 }
 
 #[derive(Debug)]
@@ -247,8 +248,13 @@ impl ReviewTracker {
         self.all_emails.insert(message_id.clone(), email.clone());
 
         match &email {
-            EmailType::CoverLetter { title, version, .. } | 
-            EmailType::Patch { title, version, series_info: None, .. } => {
+            EmailType::CoverLetter { title, version, .. }
+            | EmailType::Patch {
+                title,
+                version,
+                series_info: None,
+                ..
+            } => {
                 // Both cover letters and standalone patches are series roots
                 // Check for existing series with same title and handle versions
                 let mut to_remove = Vec::new();
@@ -278,7 +284,10 @@ impl ReviewTracker {
 
                 self.series.insert(message_id, email);
             }
-            EmailType::Patch { series_info: Some(_), .. } => {
+            EmailType::Patch {
+                series_info: Some(_),
+                ..
+            } => {
                 // Series patches will be threaded as replies to their cover letter
                 // No need to store them separately
             }
@@ -308,7 +317,7 @@ impl ReviewTracker {
                 self.attach_reply_direct(reply_id, &parent_id);
             }
         }
-        
+
         // Update series with the threaded versions from all_emails
         let series_keys: Vec<_> = self.series.keys().cloned().collect();
         for key in series_keys {
@@ -327,7 +336,6 @@ impl ReviewTracker {
         // If parent not found, the reply becomes orphaned (could log this)
     }
 
-
     fn collect_reviews(&mut self) {
         // Apply review rules after all threading is complete
         let series_keys: Vec<_> = self.series.keys().cloned().collect();
@@ -339,7 +347,11 @@ impl ReviewTracker {
         }
     }
 
-    fn apply_series_review_rules_to_tracker(tracker: &mut ReviewTracker, series_key: &str, mut series_root: EmailType) {
+    fn apply_series_review_rules_to_tracker(
+        tracker: &mut ReviewTracker,
+        series_key: &str,
+        mut series_root: EmailType,
+    ) {
         match &series_root {
             EmailType::CoverLetter { .. } => {
                 // For cover letter series, get cover letter reviews first
@@ -369,13 +381,20 @@ impl ReviewTracker {
                         // Create a temporary clone to avoid borrowing issues
                         if let Some(patch) = tracker.all_emails.get(&reply_id).cloned() {
                             if matches!(patch, EmailType::Patch { .. }) {
-                                let reviews = patch.collect_reviewed_by_recursive(&tracker.all_emails);
-                                
+                                let reviews =
+                                    patch.collect_reviewed_by_recursive(&tracker.all_emails);
+
                                 // Update the actual patch in all_emails
                                 if let Some(email) = tracker.all_emails.get_mut(&reply_id) {
-                                    if let EmailType::Patch { has_review, reviewed_by, .. } = email {
+                                    if let EmailType::Patch {
+                                        has_review,
+                                        reviewed_by,
+                                        ..
+                                    } = email
+                                    {
                                         // Only add reviews that aren't already present (avoid duplicates from cover letter)
-                                        let new_reviews: Vec<_> = reviews.into_iter()
+                                        let new_reviews: Vec<_> = reviews
+                                            .into_iter()
                                             .filter(|review| !reviewed_by.contains(review))
                                             .collect();
                                         reviewed_by.extend(new_reviews);
@@ -395,19 +414,23 @@ impl ReviewTracker {
                 // Shouldn't happen for series roots
             }
         }
-        
+
         // Update the series root
         tracker.series.insert(series_key.to_string(), series_root);
     }
 
-
     fn apply_patch_review_rules(patch: &mut EmailType, all_emails: &HashMap<String, EmailType>) {
         let reviews = patch.collect_reviewed_by_recursive(all_emails);
         match patch {
-            EmailType::Patch { has_review, reviewed_by, .. } => {
+            EmailType::Patch {
+                has_review,
+                reviewed_by,
+                ..
+            } => {
                 // Don't add reviews that are already in the patch's reviewed_by list
                 // The reviews returned by collect_reviewed_by_recursive include the patch's own reviews
-                let new_reviews: Vec<_> = reviews.into_iter()
+                let new_reviews: Vec<_> = reviews
+                    .into_iter()
                     .filter(|review| !reviewed_by.contains(review))
                     .collect();
                 reviewed_by.extend(new_reviews);
@@ -707,8 +730,10 @@ fn main() -> Result<()> {
     let debug_all_dir = matches.get_one::<String>("debug-all").map(PathBuf::from);
     let config_file = matches.get_one::<String>("config").map(PathBuf::from);
     let days = matches.get_one::<u32>("days").copied();
-    let mailing_list = matches.get_one::<String>("mailing-list").map(|s| s.as_str());
-    
+    let mailing_list = matches
+        .get_one::<String>("mailing-list")
+        .map(|s| s.as_str());
+
     // Determine query: priority is config file > CLI args > default query
     let query = if let Some(config_path) = config_file {
         let config = Config::load_from_file(&config_path)?;
@@ -755,17 +780,21 @@ fn main() -> Result<()> {
     if verbose {
         println!("Found {} emails", all_emails.len());
     }
-    
+
     // Output all emails to debug directory if requested
     if let Some(debug_dir) = &debug_all_dir {
         if debug_dir.exists() {
             std::fs::remove_dir_all(debug_dir)?;
         }
-        
+
         let all_email_refs: Vec<&EmailType> = all_emails.iter().collect();
         write_maildir(&all_email_refs, debug_dir)?;
-        
-        println!("Debug: Wrote {} emails to debug directory: {}", all_emails.len(), debug_dir.display());
+
+        println!(
+            "Debug: Wrote {} emails to debug directory: {}",
+            all_emails.len(),
+            debug_dir.display()
+        );
     }
 
     // Track patches and reviews
@@ -790,19 +819,18 @@ fn main() -> Result<()> {
             .values()
             .map(|s| s.get_all_emails(&tracker.all_emails).len())
             .sum::<usize>();
-        let (cover_letter_series, standalone_patches) = tracker.series.values()
-            .fold((0, 0), |(covers, patches), series| {
-                match series {
+        let (cover_letter_series, standalone_patches) =
+            tracker
+                .series
+                .values()
+                .fold((0, 0), |(covers, patches), series| match series {
                     EmailType::CoverLetter { .. } => (covers + 1, patches),
                     EmailType::Patch { .. } => (covers, patches + 1),
                     _ => (covers, patches),
-                }
-            });
+                });
         println!(
             "Found {} emails total ({} cover letter series, {} standalone patches)",
-            total_patches,
-            cover_letter_series,
-            standalone_patches
+            total_patches, cover_letter_series, standalone_patches
         );
         println!(
             "Found {} unreviewed items (patches + related replies)",
@@ -860,7 +888,10 @@ mod tests {
             in_reply_to,
             author: author.to_string(),
             date: Utc::now(),
-            raw_email: format!("Subject: {}\nMessage-ID: {}\nFrom: {}\n\n{}", subject, message_id, author, body),
+            raw_email: format!(
+                "Subject: {}\nMessage-ID: {}\nFrom: {}\n\n{}",
+                subject, message_id, author, body
+            ),
         };
 
         let reviewed_by = extract_reviewed_by(body);
@@ -916,14 +947,14 @@ mod tests {
 
     fn create_tracker_with_emails(emails: Vec<EmailType>) -> ReviewTracker {
         let mut tracker = ReviewTracker::new();
-        
+
         for email in emails {
             tracker.add_email(email);
         }
-        
+
         tracker.thread_replies();
         tracker.collect_reviews();
-        
+
         tracker
     }
 
@@ -939,9 +970,16 @@ mod tests {
 
         let tracker = create_tracker_with_emails(vec![patch]);
         let unreviewed = tracker.get_unreviewed_emails();
-        
-        assert_eq!(unreviewed.len(), 1, "Single patch without review should be unreviewed");
-        assert_eq!(unreviewed[0].header().subject, "[PATCH] Fix memory leak in driver");
+
+        assert_eq!(
+            unreviewed.len(),
+            1,
+            "Single patch without review should be unreviewed"
+        );
+        assert_eq!(
+            unreviewed[0].header().subject,
+            "[PATCH] Fix memory leak in driver"
+        );
     }
 
     #[test]
@@ -964,8 +1002,12 @@ mod tests {
 
         let tracker = create_tracker_with_emails(vec![patch, review]);
         let unreviewed = tracker.get_unreviewed_emails();
-        
-        assert_eq!(unreviewed.len(), 0, "Single patch with review should not be unreviewed");
+
+        assert_eq!(
+            unreviewed.len(),
+            0,
+            "Single patch with review should not be unreviewed"
+        );
     }
 
     #[test]
@@ -988,8 +1030,12 @@ mod tests {
 
         let tracker = create_tracker_with_emails(vec![patch, comment]);
         let unreviewed = tracker.get_unreviewed_emails();
-        
-        assert_eq!(unreviewed.len(), 2, "Single patch with non-review reply should include patch and reply");
+
+        assert_eq!(
+            unreviewed.len(),
+            2,
+            "Single patch with non-review reply should include patch and reply"
+        );
     }
 
     #[test]
@@ -1028,17 +1074,27 @@ mod tests {
 
         let tracker = create_tracker_with_emails(vec![cover, patch1, patch2, cover_review]);
         let unreviewed = tracker.get_unreviewed_emails();
-        
-        assert_eq!(unreviewed.len(), 0, "Series with cover letter review should not be unreviewed");
-        
+
+        assert_eq!(
+            unreviewed.len(),
+            0,
+            "Series with cover letter review should not be unreviewed"
+        );
+
         // Verify that patches inherit the cover letter review
         let series_root = tracker.series.values().next().unwrap();
         if let EmailType::CoverLetter { replies, .. } = series_root {
             for reply_id in replies {
                 if let Some(patch) = tracker.all_emails.get(reply_id) {
                     if matches!(patch, EmailType::Patch { .. }) {
-                        assert!(patch.has_review(), "Patch should inherit cover letter review");
-                        assert!(!patch.reviewed_by().is_empty(), "Patch should have reviewer from cover letter");
+                        assert!(
+                            patch.has_review(),
+                            "Patch should inherit cover letter review"
+                        );
+                        assert!(
+                            !patch.reviewed_by().is_empty(),
+                            "Patch should have reviewer from cover letter"
+                        );
                     }
                 }
             }
@@ -1085,7 +1141,7 @@ mod tests {
 
         // Should include the entire series because not all patches are reviewed
         //assert!(unreviewed.len() > 0, "Series with partially reviewed patches should be unreviewed");
-        
+
         // Verify patch1 has review but patch2 doesn't
         if let Some(patch1) = tracker.all_emails.get("<patch1@test.com>") {
             assert!(patch1.has_review(), "Patch1 should have review");
@@ -1125,15 +1181,26 @@ mod tests {
 
         let tracker = create_tracker_with_emails(vec![patch_v1, review_v1, patch_v2]);
         let unreviewed = tracker.get_unreviewed_emails();
-        
+
         // Should only have v2 patch (v1 should be replaced)
-        assert_eq!(tracker.series.len(), 1, "Should only have one version in tracker");
-        assert_eq!(unreviewed.len(), 1, "v2 patch without review should be unreviewed");
-        
+        assert_eq!(
+            tracker.series.len(),
+            1,
+            "Should only have one version in tracker"
+        );
+        assert_eq!(
+            unreviewed.len(),
+            1,
+            "v2 patch without review should be unreviewed"
+        );
+
         // Verify it's the v2 patch
         let series_patch = tracker.series.values().next().unwrap();
         assert_eq!(series_patch.version().unwrap(), 2, "Should be v2 patch");
-        assert!(!series_patch.has_review(), "v2 patch should not have review");
+        assert!(
+            !series_patch.has_review(),
+            "v2 patch should not have review"
+        );
     }
 
     #[test]
@@ -1148,13 +1215,24 @@ mod tests {
 
         let tracker = create_tracker_with_emails(vec![patch]);
         let unreviewed = tracker.get_unreviewed_emails();
-        
-        assert_eq!(unreviewed.len(), 0, "Patch with existing Reviewed-by should not be unreviewed");
-        
+
+        assert_eq!(
+            unreviewed.len(),
+            0,
+            "Patch with existing Reviewed-by should not be unreviewed"
+        );
+
         let series_patch = tracker.series.values().next().unwrap();
         assert!(series_patch.has_review(), "Patch should have review");
-        assert_eq!(series_patch.reviewed_by().len(), 1, "Should have one reviewer");
-        assert_eq!(series_patch.reviewed_by()[0], "Previous Reviewer <prev@test.com>");
+        assert_eq!(
+            series_patch.reviewed_by().len(),
+            1,
+            "Should have one reviewer"
+        );
+        assert_eq!(
+            series_patch.reviewed_by()[0],
+            "Previous Reviewer <prev@test.com>"
+        );
     }
 
     #[test]
@@ -1200,11 +1278,16 @@ mod tests {
             "Specific feedback.\n\nReviewed-by: Reviewer <reviewer@test.com>",
         );
 
-        let tracker = create_tracker_with_emails(vec![cover, patch1, patch2, cover_review, patch1_review]);
+        let tracker =
+            create_tracker_with_emails(vec![cover, patch1, patch2, cover_review, patch1_review]);
         let unreviewed = tracker.get_unreviewed_emails();
-        
-        assert_eq!(unreviewed.len(), 0, "Fully reviewed series should not be unreviewed");
-        
+
+        assert_eq!(
+            unreviewed.len(),
+            0,
+            "Fully reviewed series should not be unreviewed"
+        );
+
         // Verify patches have both cover letter and individual reviews
         if let Some(patch1) = tracker.all_emails.get("<patch1@test.com>") {
             let reviews = patch1.collect_reviewed_by_recursive(&tracker.all_emails);
@@ -1235,10 +1318,14 @@ mod tests {
 
         let tracker = create_tracker_with_emails(vec![patch_v1, patch_v2]);
         let unreviewed = tracker.get_unreviewed_emails();
-        
-        assert_eq!(unreviewed.len(), 0, "v2 patch with review should not be unreviewed");
+
+        assert_eq!(
+            unreviewed.len(),
+            0,
+            "v2 patch with review should not be unreviewed"
+        );
         assert_eq!(tracker.series.len(), 1, "Should only have one version");
-        
+
         let series_patch = tracker.series.values().next().unwrap();
         assert_eq!(series_patch.version().unwrap(), 2, "Should be v2 patch");
         assert!(series_patch.has_review(), "v2 patch should have review");
