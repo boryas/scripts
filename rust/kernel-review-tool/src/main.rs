@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
-use std::process::{Command};
+use std::process::Command;
 use tempfile;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,7 +47,6 @@ enum EmailType {
     },
 }
 
-
 impl EmailType {
     fn has_review(&self) -> bool {
         match self {
@@ -56,7 +55,7 @@ impl EmailType {
             EmailType::Reply { has_review, .. } => *has_review,
         }
     }
-    
+
     fn reviewed_by(&self) -> &Vec<String> {
         match self {
             EmailType::CoverLetter { reviewed_by, .. } => reviewed_by,
@@ -64,7 +63,7 @@ impl EmailType {
             EmailType::Reply { reviewed_by, .. } => reviewed_by,
         }
     }
-    
+
     fn header(&self) -> &EmailHeader {
         match self {
             EmailType::CoverLetter { header, .. } => header,
@@ -72,7 +71,7 @@ impl EmailType {
             EmailType::Reply { header, .. } => header,
         }
     }
-    
+
     fn title(&self) -> Option<&str> {
         match self {
             EmailType::CoverLetter { title, .. } => Some(title),
@@ -80,7 +79,7 @@ impl EmailType {
             EmailType::Reply { .. } => None,
         }
     }
-    
+
     fn version(&self) -> Option<u32> {
         match self {
             EmailType::CoverLetter { version, .. } => Some(*version),
@@ -88,17 +87,29 @@ impl EmailType {
             EmailType::Reply { .. } => None,
         }
     }
-    
+
     fn add_reply(&mut self, reply: EmailType) {
-        println!("Attach reply to message! {} {} {} {}", self.header().subject, self.header().message_id, reply.header().subject, reply.header().message_id);
+        println!(
+            "Attach reply to message! {} {} {} {}",
+            self.header().subject,
+            self.header().message_id,
+            reply.header().subject,
+            reply.header().message_id
+        );
         let reply_id = reply.header().message_id.clone();
         match self {
-            EmailType::CoverLetter { replies, .. } => { replies.insert(reply_id, reply); },
-            EmailType::Patch { replies, .. } => { replies.insert(reply_id, reply); },
-            EmailType::Reply { replies, .. } => { replies.insert(reply_id, reply); },
+            EmailType::CoverLetter { replies, .. } => {
+                replies.insert(reply_id, reply);
+            }
+            EmailType::Patch { replies, .. } => {
+                replies.insert(reply_id, reply);
+            }
+            EmailType::Reply { replies, .. } => {
+                replies.insert(reply_id, reply);
+            }
         }
     }
-    
+
     fn get_all_emails(&self) -> Vec<&EmailType> {
         let mut result = vec![self];
         let replies = match self {
@@ -106,13 +117,13 @@ impl EmailType {
             EmailType::Patch { replies, .. } => replies,
             EmailType::Reply { replies, .. } => replies,
         };
-        
+
         for reply in replies.values() {
             result.extend(reply.get_all_emails());
         }
         result
     }
-    
+
     fn collect_reviewed_by_recursive(&self) -> Vec<String> {
         let mut all_reviews = self.reviewed_by().clone();
         let replies = match self {
@@ -120,107 +131,143 @@ impl EmailType {
             EmailType::Patch { replies, .. } => replies,
             EmailType::Reply { replies, .. } => replies,
         };
-        
+
         for reply in replies.values() {
             all_reviews.extend(reply.collect_reviewed_by_recursive());
         }
         all_reviews
     }
-    
+
     fn display_thread(&self, indent: usize) -> String {
         let mut result = String::new();
         let indent_str = "  ".repeat(indent);
-        
+
         // Display this email
         let email_type = match self {
             EmailType::CoverLetter { .. } => "COVER",
             EmailType::Patch { .. } => "PATCH",
             EmailType::Reply { .. } => "REPLY",
         };
-        
-        result.push_str(&format!("{}[{}] {}\n", indent_str, email_type, self.header().subject));
-        result.push_str(&format!("{}    Author: {}\n", indent_str, self.header().author));
-        result.push_str(&format!("{}    Message-ID: {}\n", indent_str, self.header().message_id));
-        result.push_str(&format!("{}    Date: {}\n", indent_str, self.header().date.format("%Y-%m-%d %H:%M")));
-        
+
+        result.push_str(&format!(
+            "{}[{}] {}\n",
+            indent_str,
+            email_type,
+            self.header().subject
+        ));
+        result.push_str(&format!(
+            "{}    Author: {}\n",
+            indent_str,
+            self.header().author
+        ));
+        result.push_str(&format!(
+            "{}    Message-ID: {}\n",
+            indent_str,
+            self.header().message_id
+        ));
+        result.push_str(&format!(
+            "{}    Date: {}\n",
+            indent_str,
+            self.header().date.format("%Y-%m-%d %H:%M")
+        ));
+
         if !self.reviewed_by().is_empty() {
-            result.push_str(&format!("{}    Reviewed-by: {}\n", indent_str, self.reviewed_by().join(", ")));
+            result.push_str(&format!(
+                "{}    Reviewed-by: {}\n",
+                indent_str,
+                self.reviewed_by().join(", ")
+            ));
         }
-        
+
         // Display replies
         let replies = match self {
             EmailType::CoverLetter { replies, .. } => replies,
             EmailType::Patch { replies, .. } => replies,
             EmailType::Reply { replies, .. } => replies,
         };
-        
+
         if !replies.is_empty() {
             for reply in replies.values() {
                 result.push_str(&reply.display_thread(indent + 1));
             }
         }
-        
+
         result
     }
-    
+
     fn display_series(&self) -> String {
         match self {
             EmailType::CoverLetter { title, version, .. } => {
                 let mut result = String::new();
-                
+
                 result.push_str(&format!("=== SERIES: {} v{} ===\n", title, version));
-                result.push_str(&format!("Status: {}\n", if self.is_series_reviewed() { "REVIEWED" } else { "NEEDS REVIEW" }));
-                
+                result.push_str(&format!(
+                    "Status: {}\n",
+                    if self.is_series_reviewed() {
+                        "REVIEWED"
+                    } else {
+                        "NEEDS REVIEW"
+                    }
+                ));
+
                 // Display cover letter
                 result.push_str("COVER LETTER:\n");
                 result.push_str(&self.display_thread(0));
                 result.push_str("\n");
-                
+
                 result.push_str("=== END SERIES ===\n\n");
                 result
             }
-            _ => "Not a cover letter - cannot display as series\n".to_string()
+            _ => "Not a cover letter - cannot display as series\n".to_string(),
         }
     }
-    
+
     fn is_series_reviewed(&self) -> bool {
         match self {
             EmailType::CoverLetter { replies, .. } => {
                 // Check if all patches in the series (direct replies that are patches) have reviews
-                let patches: Vec<_> = replies.values()
+                let patches: Vec<_> = replies
+                    .values()
                     .filter(|email| matches!(email, EmailType::Patch { .. }))
                     .collect();
-                
+
                 if patches.is_empty() {
                     return false;
                 }
-                
+
                 // All patches must have reviews (either directly or from cover letter)
-                patches.iter().all(|patch| !patch.collect_reviewed_by_recursive().is_empty())
+                patches
+                    .iter()
+                    .all(|patch| !patch.collect_reviewed_by_recursive().is_empty())
             }
-            _ => false
+            _ => false,
         }
     }
-    
+
     fn get_series_patches(&self) -> Vec<&EmailType> {
         match self {
             EmailType::CoverLetter { replies, .. } => {
-                let mut patches: Vec<_> = replies.values()
+                let mut patches: Vec<_> = replies
+                    .values()
                     .filter(|email| matches!(email, EmailType::Patch { .. }))
                     .collect();
-                
+
                 // Sort patches by their patch number
                 patches.sort_by_key(|patch| {
-                    if let EmailType::Patch { series_info: Some((patch_num, _)), .. } = patch {
+                    if let EmailType::Patch {
+                        series_info: Some((patch_num, _)),
+                        ..
+                    } = patch
+                    {
                         *patch_num
                     } else {
                         0
                     }
                 });
-                
+
                 patches
             }
-            _ => Vec::new()
+            _ => Vec::new(),
         }
     }
 }
@@ -229,7 +276,7 @@ impl EmailType {
 struct ReviewTracker {
     cover_letters: HashMap<String, EmailType>, // message_id -> cover letter
     standalone_patches: HashMap<String, EmailType>, // message_id -> patch
-    all_emails: HashMap<String, EmailType>, // message_id -> email (for reply threading)
+    all_emails: HashMap<String, EmailType>,    // message_id -> email (for reply threading)
 }
 
 impl ReviewTracker {
@@ -243,10 +290,10 @@ impl ReviewTracker {
 
     fn add_email(&mut self, email: EmailType) {
         let message_id = email.header().message_id.clone();
-        
+
         // Store all emails for reply threading
         self.all_emails.insert(message_id.clone(), email.clone());
-        
+
         match &email {
             EmailType::CoverLetter { title, version, .. } => {
                 // Check for existing cover letters with same title and handle versions
@@ -266,17 +313,23 @@ impl ReviewTracker {
                         }
                     }
                 }
-                
+
                 for id in to_remove {
                     self.cover_letters.remove(&id);
                 }
-                
+
                 self.cover_letters.insert(message_id, email);
             }
-            EmailType::Patch { title, version, series_info: None, header, .. } => {
+            EmailType::Patch {
+                title,
+                version,
+                series_info: None,
+                header,
+                ..
+            } => {
                 // Standalone patch - handle version updates
                 let message_id = header.message_id.clone();
-                
+
                 // Check for existing standalone patches with same title
                 let mut to_remove = Vec::new();
                 for (existing_id, existing_patch) in &self.standalone_patches {
@@ -298,14 +351,17 @@ impl ReviewTracker {
                         }
                     }
                 }
-                
+
                 for id in to_remove {
                     self.standalone_patches.remove(&id);
                 }
-                
+
                 self.standalone_patches.insert(message_id, email);
             }
-            EmailType::Patch { series_info: Some(_), .. } => {
+            EmailType::Patch {
+                series_info: Some(_),
+                ..
+            } => {
                 // Series patches will be threaded as replies to their cover letter
                 // No need to store them separately
             }
@@ -314,10 +370,11 @@ impl ReviewTracker {
             }
         }
     }
-    
+
     fn thread_replies(&mut self) {
         // Build a list of all emails that have in_reply_to
-        let replies_to_thread: Vec<(String, String)> = self.all_emails
+        let replies_to_thread: Vec<(String, String)> = self
+            .all_emails
             .values()
             .filter_map(|email| {
                 if let Some(in_reply_to) = &email.header().in_reply_to {
@@ -327,7 +384,7 @@ impl ReviewTracker {
                 }
             })
             .collect();
-        
+
         // Thread each reply to its parent
         for (reply_id, parent_id) in replies_to_thread {
             if let Some(reply_email) = self.all_emails.remove(&reply_id) {
@@ -335,7 +392,7 @@ impl ReviewTracker {
             }
         }
     }
-    
+
     fn attach_reply_to_parent(&mut self, reply: EmailType, parent_id: &str) {
         // Try to find parent in cover letters
         for cover in self.cover_letters.values_mut() {
@@ -347,7 +404,7 @@ impl ReviewTracker {
                 return;
             }
         }
-        
+
         // Try to find parent in standalone patches
         for patch in self.standalone_patches.values_mut() {
             if patch.header().message_id == parent_id {
@@ -358,17 +415,17 @@ impl ReviewTracker {
                 return;
             }
         }
-        
+
         // If parent not found, store as orphaned (could be handled differently)
     }
-    
+
     fn attach_reply_recursive(email: &mut EmailType, reply: &EmailType, parent_id: &str) -> bool {
         let replies = match email {
             EmailType::CoverLetter { replies, .. } => replies,
             EmailType::Patch { replies, .. } => replies,
             EmailType::Reply { replies, .. } => replies,
         };
-        
+
         for child in replies.values_mut() {
             if child.header().message_id == parent_id {
                 child.add_reply(reply.clone());
@@ -380,7 +437,7 @@ impl ReviewTracker {
         }
         false
     }
-    
+
     fn collect_reviews(&mut self) {
         // Apply review rules after all threading is complete
         let cover_keys: Vec<_> = self.cover_letters.keys().cloned().collect();
@@ -389,7 +446,7 @@ impl ReviewTracker {
                 Self::apply_series_review_rules(cover);
             }
         }
-        
+
         let patch_keys: Vec<_> = self.standalone_patches.keys().cloned().collect();
         for key in patch_keys {
             if let Some(patch) = self.standalone_patches.get_mut(&key) {
@@ -397,31 +454,39 @@ impl ReviewTracker {
             }
         }
     }
-    
+
     fn apply_series_review_rules(cover_letter: &mut EmailType) {
         // Get cover letter reviews first (before any mutable borrows)
         let cover_reviews = cover_letter.collect_reviewed_by_recursive();
-        
+
         if let EmailType::CoverLetter { replies, .. } = cover_letter {
             // Apply cover letter reviews to all patches in the series
             if !cover_reviews.is_empty() {
                 for email in replies.values_mut() {
-                    if let EmailType::Patch { reviewed_by, has_review, .. } = email {
+                    if let EmailType::Patch {
+                        reviewed_by,
+                        has_review,
+                        ..
+                    } = email
+                    {
                         reviewed_by.extend(cover_reviews.clone());
                         *has_review = true;
                     }
                 }
             }
-            
+
             // Apply individual patch reviews
             for email in replies.values_mut() {
                 Self::apply_patch_review_rules(email);
             }
         }
     }
-    
+
     fn apply_patch_review_rules(patch: &mut EmailType) {
-        println!("Applying patch review rules to \n{}", patch.display_thread(2));
+        println!(
+            "Applying patch review rules to \n{}",
+            patch.display_thread(2)
+        );
         let reviews = patch.collect_reviewed_by_recursive();
         match patch {
             EmailType::Patch { has_review, .. } => {
@@ -433,21 +498,21 @@ impl ReviewTracker {
 
     fn get_unreviewed_emails(&self) -> Vec<&EmailType> {
         let mut result = Vec::new();
-        
+
         // Add unreviewed series (cover letters with unreviewed patches)
         for cover in self.cover_letters.values() {
             if !cover.is_series_reviewed() {
                 result.extend(cover.get_all_emails());
             }
         }
-        
+
         // Add unreviewed standalone patches
         for patch in self.standalone_patches.values() {
             if !patch.has_review() {
                 result.extend(patch.get_all_emails());
             }
         }
-        
+
         result
     }
 }
@@ -473,13 +538,13 @@ fn extract_patch_version(subject: &str) -> u32 {
 fn extract_reviewed_by(body: &str) -> Vec<String> {
     let re = Regex::new(r"(?i)^Reviewed-by:\s*(.+)$").unwrap();
     let mut reviewers = Vec::new();
-    
+
     for line in body.lines() {
         if let Some(captures) = re.captures(line.trim()) {
             reviewers.push(captures.get(1).unwrap().as_str().trim().to_string());
         }
     }
-    
+
     reviewers
 }
 
@@ -491,7 +556,6 @@ fn is_patch_email(subject: &str) -> bool {
 fn is_reply_email(subject: &str) -> bool {
     subject.trim_start().to_lowercase().starts_with("re:")
 }
-
 
 fn extract_series_info(subject: &str) -> Option<(u32, u32)> {
     let re = Regex::new(r"\[PATCH[^\]]*\s+(\d+)/(\d+)\]").unwrap();
@@ -507,14 +571,10 @@ fn extract_series_info(subject: &str) -> Option<(u32, u32)> {
 fn run_lei_query(query: &str, output_dir: &str) -> Result<String> {
     let mut cmd = Command::new("lei");
     cmd.args(&["q", "-o", output_dir, query]);
-    let output = cmd.output()
-        .context("Failed to execute lei command")?;
+    let output = cmd.output().context("Failed to execute lei command")?;
 
     if !output.status.success() {
-        anyhow::bail!(
-            "lei command failed: {}",
-            String::from_utf8(output.stderr)?
-        );
+        anyhow::bail!("lei command failed: {}", String::from_utf8(output.stderr)?);
     }
 
     Ok(String::from_utf8(output.stdout)?)
@@ -522,18 +582,18 @@ fn run_lei_query(query: &str, output_dir: &str) -> Result<String> {
 
 fn parse_maildir(maildir_path: &PathBuf) -> Result<Vec<EmailType>> {
     let mut patches = Vec::new();
-    
+
     // Look for new/ and cur/ subdirectories (Maildir format)
     for subdir in &["new", "cur"] {
         let subdir_path = maildir_path.join(subdir);
         if !subdir_path.exists() {
             continue;
         }
-        
+
         for entry in std::fs::read_dir(&subdir_path)? {
             let entry = entry?;
             let file_path = entry.path();
-            
+
             if file_path.is_file() {
                 let raw_email = std::fs::read_to_string(&file_path)?;
                 if let Ok(patch) = parse_email(&raw_email) {
@@ -542,20 +602,19 @@ fn parse_maildir(maildir_path: &PathBuf) -> Result<Vec<EmailType>> {
             }
         }
     }
-    
+
     Ok(patches)
 }
 
 fn parse_email(raw_email: &str) -> Result<EmailType> {
-    let email = MessageParser::default().parse(raw_email.as_bytes())
+    let email = MessageParser::default()
+        .parse(raw_email.as_bytes())
         .ok_or_else(|| anyhow::anyhow!("Failed to parse email"))?;
 
     let subject = email.subject().unwrap();
     let message_id = email.message_id().unwrap().to_string();
-    let in_reply_to = email.in_reply_to()
-        .as_text()
-        .map(|s| s.to_string());
-    
+    let in_reply_to = email.in_reply_to().as_text().map(|s| s.to_string());
+
     let author = email
         .from()
         .and_then(|from| from.first())
@@ -581,7 +640,10 @@ fn parse_email(raw_email: &str) -> Result<EmailType> {
         raw_email: raw_email.to_string(),
     };
 
-    println!("parsed email {} {} {:?} {}", &header.subject, &header.message_id, &header.in_reply_to, &header.author);
+    println!(
+        "parsed email {} {} {:?} {}",
+        &header.subject, &header.message_id, &header.in_reply_to, &header.author
+    );
 
     if is_patch_email(&subject) {
         let title = extract_patch_title(&subject);
@@ -650,14 +712,18 @@ fn write_maildir(emails: &[&EmailType], output_path: &PathBuf) -> Result<()> {
     std::fs::create_dir_all(output_path.join("new"))?;
     std::fs::create_dir_all(output_path.join("cur"))?;
     std::fs::create_dir_all(output_path.join("tmp"))?;
-    
+
     for (i, email) in emails.iter().enumerate() {
         let header = email.header();
-        let filename = format!("{}_{}.eml", i, header.message_id.replace(['/', '<', '>'], "_"));
+        let filename = format!(
+            "{}_{}.eml",
+            i,
+            header.message_id.replace(['/', '<', '>'], "_")
+        );
         let file_path = output_path.join("new").join(filename);
         std::fs::write(file_path, &header.raw_email)?;
     }
-    
+
     Ok(())
 }
 
@@ -670,7 +736,7 @@ fn main() -> Result<()> {
                 .long("query")
                 .value_name("QUERY")
                 .help("Lei search query")
-                .default_value("s:PATCH AND dt:1.week.ago..")
+                .default_value("s:PATCH AND dt:1.week.ago.."),
         )
         .arg(
             clap::Arg::new("output")
@@ -678,14 +744,14 @@ fn main() -> Result<()> {
                 .long("output")
                 .value_name("DIR")
                 .help("Output Maildir directory for unreviewed patches")
-                .default_value("unreviewed")
+                .default_value("unreviewed"),
         )
         .arg(
             clap::Arg::new("verbose")
                 .short('v')
                 .long("verbose")
                 .help("Verbose output")
-                .action(clap::ArgAction::SetTrue)
+                .action(clap::ArgAction::SetTrue),
         )
         .get_matches();
 
@@ -696,66 +762,78 @@ fn main() -> Result<()> {
     // Create temporary directory for lei output
     let temp_dir = tempfile::tempdir()?;
     let lei_output = temp_dir.path().join("lei-output");
-    
+
     if verbose {
         println!("Running lei query: {}", query);
     }
-    
+
     // Run lei query
     run_lei_query(query, lei_output.to_str().unwrap())?;
 
     if verbose {
         println!("Parsing Maildir: {:?}", lei_output);
     }
-    
+
     // Parse emails from Maildir
     let all_emails = parse_maildir(&lei_output)?;
     if verbose {
         println!("Found {} emails", all_emails.len());
     }
-    
+
     // Track patches and reviews
     let mut tracker = ReviewTracker::new();
-    
+
     for email in all_emails {
         tracker.add_email(email);
     }
-    
+
     // Thread replies using message-id and in-reply-to
     tracker.thread_replies();
-    
+
     // Collect and apply review status according to rules
     tracker.collect_reviews();
-    
+
     // Get unreviewed emails (including replies)
     let unreviewed = tracker.get_unreviewed_emails();
-    
+
     if verbose {
-        let total_patches = tracker.cover_letters.values()
+        let total_patches = tracker
+            .cover_letters
+            .values()
             .map(|s| s.get_all_emails().len())
-            .sum::<usize>() + tracker.standalone_patches.len();
-        println!("Found {} emails total ({} series, {} standalone)", 
-                 total_patches, tracker.cover_letters.len(), tracker.standalone_patches.len());
-        println!("Found {} unreviewed items (patches + related replies)", unreviewed.len());
+            .sum::<usize>()
+            + tracker.standalone_patches.len();
+        println!(
+            "Found {} emails total ({} series, {} standalone)",
+            total_patches,
+            tracker.cover_letters.len(),
+            tracker.standalone_patches.len()
+        );
+        println!(
+            "Found {} unreviewed items (patches + related replies)",
+            unreviewed.len()
+        );
     }
-    
+
     if unreviewed.is_empty() {
         println!("No unreviewed patches found!");
         return Ok(());
     }
-    
+
     // Remove existing output directory if it exists
     if output_dir.exists() {
         std::fs::remove_dir_all(&output_dir)?;
     }
-    
+
     // Write unreviewed patches to Maildir
     write_maildir(&unreviewed, &output_dir)?;
-    
-    println!("Wrote {} unreviewed items (patches + replies) to {}", 
-             unreviewed.len(), 
-             output_dir.display());
-    
+
+    println!(
+        "Wrote {} unreviewed items (patches + replies) to {}",
+        unreviewed.len(),
+        output_dir.display()
+    );
+
     if verbose {
         println!("\nUnreviewed emails:");
         for email in &unreviewed {
@@ -764,6 +842,6 @@ fn main() -> Result<()> {
             println!("  {} - {}", header.date.format("%Y-%m-%d"), title);
         }
     }
-    
+
     Ok(())
 }
