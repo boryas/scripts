@@ -12,3 +12,5 @@ c/*
 !c/README.md
 
 rust/**/target
+
+.claude
