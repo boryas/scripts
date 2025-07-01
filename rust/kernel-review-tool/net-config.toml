@@ -1,0 +1,4 @@
+# Configuration for networking patches  
+mailing_list = "netdev@vger.kernel.org"
+days_back = 3
+additional_filters = "nrt:stable@vger.kernel.org"

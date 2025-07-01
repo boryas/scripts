@@ -1,0 +1,15 @@
+# Sample configuration for kernel-review-tool
+# This generates a lei query to search for patches
+
+# Mailing list to search (empty for all lists)
+mailing_list = "linux-kernel@vger.kernel.org"
+
+# Number of days back to search
+days_back = 7
+
+# Additional filters (optional)
+# Examples:
+# additional_filters = "f:author@example.com"  # From specific author
+# additional_filters = "s:btrfs"               # Subject contains btrfs
+# additional_filters = "nrt:stable@vger.kernel.org"  # Not to stable list
+additional_filters = ""
