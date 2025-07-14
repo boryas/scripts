@@ -11,9 +11,9 @@ _fresh_btrfs_mnt() {
 	shift
 	shift
 
-	_log "fresh mount $dev $mnt $@"
+	_log "fresh mount $@ $dev $mnt"
 	$MKFS -f -m single -d single $dev >/dev/null || _fail "Failed to mkfs $dev"
-	_btrfs_mnt $dev $mnt
+	_btrfs_mnt "$@" $dev $mnt
 }
 
 _btrfs_mnt() {
@@ -21,7 +21,7 @@ _btrfs_mnt() {
 	local mnt=$2
 	shift
 	shift
-	mount -o noatime $dev $mnt "$@" || _fail "Failed to mount $dev $mnt"
+	mount -o noatime "$@" $dev $mnt || _fail "Failed to mount $dev $mnt"
 }
 
 _btrfs_uuid() {

@@ -1,4 +1,0 @@
-# Configuration for Btrfs filesystem patches
-mailing_list = "linux-btrfs@vger.kernel.org"
-days_back = 14
-additional_filters = "s:btrfs"

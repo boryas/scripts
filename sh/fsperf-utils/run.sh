@@ -13,11 +13,15 @@ fi
 VM=$1
 REV=$2
 N=$3
+TESTS=$@
 
 _do_one() {
-	label=$1
+	local label=$1
+	local fsperf_cmd="./fsperf -n$N -p $label $TESTS"
+	local cmd="cd /mnt/repos/fsperf; sudo $fsperf_cmd"
 
-	ssh $VM "cd /mnt/repos/fsperf; sudo ./fsperf -n$N -p $label"
+	echo "run fsperf $fsperf_cmd"
+	ssh $VM "$cmd"
 }
 
 cd ~/repos/linux/
@@ -31,7 +35,7 @@ _do_one "$baseline_label"
 
 git co $REV
 test_hash=$(git log -1 --pretty=format:"%h")
-test_label="$REV_$test_hash"
+test_label="$REV""_$test_hash"
 make -j$(nproc)
 rcli vm cycle $VM
 rcli vm ready $VM

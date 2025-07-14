@@ -7,8 +7,6 @@ SCRIPTS_ROOT=$(dirname $SH_ROOT)
 
 source "$SH_ROOT/btrfs.sh"
 
-FSSTRESS=/home/vmuser/fstests/ltp/fsstress
-
 _basic_dev_mnt_usage $@
 dev=$1
 mnt=$2
@@ -19,14 +17,14 @@ CG_ROOT=/sys/fs/cgroup
 BAD_CG=$CG_ROOT/bad-nbr
 GOOD_CG=$CG_ROOT/good-nbr
 NR_BIGGOS=1
+NR_LITTLE=100
 NR_VICTIMS=32
-NR_VILLAINS=512
+NR_VILLAINS=2048
 
 _stats() {
 	echo "================"
 	date
 	_elapsed
-	free -h
 	cat $(_btrfs_sysfs $dev)/commit_stats
 	cat $BAD_CG/memory.pressure
 }
@@ -65,22 +63,10 @@ _subvoled_biggos() {
 	echo "done creating subvols."
 }
 
-_write_biggos() {
-	# big enough files that reading/caching them triggers reclaim
-	for i in $(seq $NR_BIGGOS)
-	do
-		dd if=/dev/zero of=$mnt/biggo.$i bs=1M count=10240
-		#dd if=/dev/zero of=$mnt/biggo.$i bs=1M count=1
-	done
-	sync
-	# drop caches after initial write for good measure
-	echo 3 > /proc/sys/vm/drop_caches
-}
-
 _setup() {
 	[ -f .done ] && rm .done
+	_umount_loop $dev
 	if [ -f .re-mkfs ]; then
-		_umount_loop $dev
 		_fresh_btrfs_mnt $dev $mnt
 	else
 		_btrfs_mnt $dev $mnt
@@ -92,10 +78,16 @@ _setup() {
 
 _kill_cg() {
 	local cg=$1
+	local attempts=0
 	_log "kill cgroup $cg"
-	wc -l $cg/cgroup.procs
-	echo 1 > $cg/cgroup.kill
-	wc -l $cg/cgroup.procs
+	while true; do
+		attempts=$((attempts + 1))
+		echo 1 > $cg/cgroup.kill
+		sleep 1
+		procs=$(wc -l $cg/cgroup.procs | cut -d' ' -f1)
+		[ $procs -eq 0 ] && break
+	done
+	_log "killed cgroup $cg in $attempts attempts"
 }
 
 _my_cleanup() {
@@ -124,19 +116,12 @@ _setup
 
 # Use a lot of page cache reading the big file
 _villain() {
-	#local i=$(shuf -i 1-$NR_BIGGOS -n 1)
 	local i=$1
-	local t=$(shuf -i 1-5 -n 1)
 	echo $BASHPID > $BAD_CG/cgroup.procs
-	while (true)
-	do
-		local skip=$(($(shuf -i 0-9 -n 1) * 1024))
-		dd if=$(_biggo_file $i) of=/dev/null bs=1M skip=$skip count=1024 >/dev/null 2>&1
-		sleep "0.$t"
-	done
+	$DIR/big-read $(_biggo_file $i)
 }
 
-# Hit del_csum a lot by touching lots of small new files
+# Hit del_csum a lot by overwriting lots of small new files
 _victim() {
 	echo $BASHPID > $GOOD_CG/cgroup.procs
 	i=0;
@@ -146,6 +131,7 @@ _victim() {
 
 		dd if=/dev/zero of=$tmp bs=4k count=2 >/dev/null 2>&1
 		i=$((i+1))
+		[ $i -eq $NR_LITTLE ] && i=0
 	done
 }
 
@@ -182,17 +168,18 @@ echo "start $NR_VILLAINS villains"
 for i in $(seq $NR_VILLAINS)
 do
 	_villain $i &
+	disown # get rid of annoying log on kill (done via cgroup anyway)
 done
 
 echo "start $NR_VICTIMS victims"
 for i in $(seq $NR_VICTIMS)
 do
 	_victim &
+	disown # get rid of annoying log on kill (done via cgroup anyway)
 done
 
 _sync &
 SYNC_PID=$!
-echo "sync pid: $SYNC_PID"
 
 _sleep $1
 _elapsed

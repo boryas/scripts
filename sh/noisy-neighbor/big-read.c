@@ -4,22 +4,55 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <errno.h>
 
-int read_loop(char *buf, size_t sz) {
-	int parity = 0;
-	int i = 0;
-	while (1) {
-		off_t roff = rand() % sz;
-		parity |= (buf[roff] % 2);
-		/*
-		for (off_t off = 0; off < sz; ++off) {
-			parity |= (buf[off] % 2);
+#define BUF_SZ (128 * (1 << 10UL))
+
+int read_once(int fd, size_t sz) {
+	char buf[BUF_SZ];
+	size_t rd = 0;
+	int ret = 0;
+
+	while (rd < sz) {
+		ret = read(fd, buf, BUF_SZ);
+		if (ret < 0) {
+			if (errno == EINTR)
+				continue;
+			fprintf(stderr, "read failed: %d\n", errno);
+			return -errno;
+		} else if (ret == 0) {
+			break;
+		} else {
+			rd += ret;
 		}
-		i++;
-		printf("read the whole file %d times\n", i);
-		*/
 	}
-	return parity;
+	return rd;
+}
+
+int read_loop(char *fname) {
+	int fd;
+	struct stat st;
+	size_t sz = 0;
+	int ret;
+
+	while (1) {
+		fd = open(fname, O_RDONLY);
+		if (fd == -1) {
+			perror("open");
+			return 1;
+		}
+		if (!sz) {
+			if (!fstat(fd, &st)) {
+				sz = st.st_size;
+			} else {
+				perror("stat");
+				return 1;
+			}
+		}
+
+                ret = read_once(fd, sz);
+		close(fd);
+	}
 }
 
 int main(int argc, char *argv[]) {
@@ -34,26 +67,5 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 
-	fd = open(argv[1], O_RDONLY);
-	if (fd == -1) {
-		perror("open");
-		return 1;
-	}
-
-	if (!fstat(fd, &st)) {
-		sz = st.st_size;
-	}
-
-	buf = mmap(NULL, sz, PROT_READ, MAP_PRIVATE, fd, 0);
-	if (buf == MAP_FAILED) {
-		perror("mmap");
-		return 1;
-	}
-
-	printf("%d\n", read_loop(buf, sz));
-
-	munmap(buf, sz);
-	close(fd);
-
-	return 0;
+	return read_loop(argv[1]);
 }
