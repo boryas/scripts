@@ -2,6 +2,7 @@ fentry:find_free_extent {
 	// Only BTRFS_BLOCK_GROUP_DATA
 	if (args.ffe_ctl->flags & 1) {
 		@ffe[tid] = 1;
+		@sz[tid] = args.ffe_ctl->num_bytes;
 		@loop[tid] = (uint64)-1;
 		@loops[tid] = 0;
 		@bgs_tried[tid] = 0;
@@ -17,7 +18,9 @@ fexit:find_free_extent {
 		@loops_count[@loops[tid]] = count();
 		@chunk_allocs_count[@ffe_chunk_alloc[tid]] = count();
 		@bg_hist = hist(@bgs_tried[tid]);
+		@sz_hist = hist(@sz[tid]);
 		delete(@ffe, tid);
+		delete(@sz, tid);
 		delete(@ffe_success, tid);
 		delete(@loop, tid);
 		delete(@loops, tid);
