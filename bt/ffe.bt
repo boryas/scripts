@@ -6,6 +6,7 @@ fentry:find_free_extent {
 		@loop[tid] = (uint64)-1;
 		@loops[tid] = 0;
 		@bgs_tried[tid] = 0;
+		@bgs_bailed[tid] = 0;
 		@ffe_success[tid] = 0;
 		@ffe_chunk_alloc[tid] = 0;
 	}
@@ -13,7 +14,7 @@ fentry:find_free_extent {
 
 fexit:find_free_extent {
 	if (@ffe[tid]) {
-		printf("ffe completed. retval: %d, success: %d, loops: %d, bgs_tried: %d, chunk_alloc: %d\n", retval, @ffe_success[tid], @loops[tid], @bgs_tried[tid], @ffe_chunk_alloc[tid]);
+		printf("ffe completed. retval: %d, success: %d, loops: %d, bgs_tried: %d, bgs_bailed: %d, chunk_alloc: %d\n", retval, @ffe_success[tid], @loops[tid], @bgs_tried[tid], @bgs_bailed[tid], @ffe_chunk_alloc[tid]);
 		@success_count[@ffe_success[tid]] = count();
 		@loops_count[@loops[tid]] = count();
 		@chunk_allocs_count[@ffe_chunk_alloc[tid]] = count();
@@ -25,6 +26,7 @@ fexit:find_free_extent {
 		delete(@loop, tid);
 		delete(@loops, tid);
 		delete(@bgs_tried, tid);
+		delete(@bgs_bailed, tid);
 		delete(@ffe_chunk_alloc, tid);
 	}
 }
@@ -50,6 +52,13 @@ tracepoint:btrfs:btrfs_reserve_extent {
 	if (@ffe[tid]) {
 		@ffe_success[tid] += 1;
 		//printf("ffe reserve size %llu loop %llu bg %llu\n", args.len, args.loop, args.bg_objectid);
+	}
+}
+
+fentry:btrfs_add_free_space_unused {
+	if (@ffe[tid]) {
+		@bgs_bailed[tid] += 1;
+		printf("ffe bg failed after do_allocation. size %llu bg %llu stack %s\n", args.size, args.block_group->start, kstack);
 	}
 }
 
