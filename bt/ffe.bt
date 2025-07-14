@@ -1,0 +1,57 @@
+fentry:find_free_extent {
+	// Only BTRFS_BLOCK_GROUP_DATA
+	if (args.ffe_ctl->flags & 1) {
+		@ffe[tid] = 1;
+		@loop[tid] = (uint64)-1;
+		@loops[tid] = 0;
+		@bgs_tried[tid] = 0;
+		@ffe_success[tid] = 0;
+		@ffe_chunk_alloc[tid] = 0;
+	}
+}
+
+fexit:find_free_extent {
+	if (@ffe[tid]) {
+		printf("ffe completed. retval: %d, success: %d, loops: %d, bgs_tried: %d, chunk_alloc: %d\n", retval, @ffe_success[tid], @loops[tid], @bgs_tried[tid], @ffe_chunk_alloc[tid]);
+		@success_count[@ffe_success[tid]] = count();
+		@loops_count[@loops[tid]] = count();
+		@chunk_allocs_count[@ffe_chunk_alloc[tid]] = count();
+		@bg_hist = hist(@bgs_tried[tid]);
+		delete(@ffe, tid);
+		delete(@ffe_success, tid);
+		delete(@loop, tid);
+		delete(@loops, tid);
+		delete(@bgs_tried, tid);
+		delete(@ffe_chunk_alloc, tid);
+	}
+}
+
+tracepoint:btrfs:btrfs_find_free_extent_search_loop {
+	if (@ffe[tid]) {
+		if (@loop[tid] != args.loop) {
+			@loops[tid] += 1;
+			@loop[tid] = args.loop;
+			//printf("ffe search loop size %llu loop %llu\n", args.num_bytes, args.loop);
+		}
+	}
+}
+
+tracepoint:btrfs:btrfs_find_free_extent_have_block_group {
+	if (@ffe[tid]) {
+		@bgs_tried[tid] += 1;
+		//printf("ffe have bg size %llu loop %llu bg %llu\n", args.num_bytes, args.loop, args.bg_start);
+	}
+}
+
+tracepoint:btrfs:btrfs_reserve_extent {
+	if (@ffe[tid]) {
+		@ffe_success[tid] += 1;
+		//printf("ffe reserve size %llu loop %llu bg %llu\n", args.len, args.loop, args.bg_objectid);
+	}
+}
+
+fentry:btrfs_chunk_alloc {
+	if (@ffe[tid]) {
+		@ffe_chunk_alloc[tid] = 1;
+	}
+}
