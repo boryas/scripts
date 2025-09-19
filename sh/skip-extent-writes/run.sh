@@ -104,6 +104,7 @@ for i in $(seq $N); do
 
 	_log "totally broken"
 	broken=$((broken + 1))
+	_bad_exit
 done
 
 [ $broken -gt 0 ] && _bad_exit

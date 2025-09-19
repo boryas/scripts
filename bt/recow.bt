@@ -1,5 +1,24 @@
 tracepoint:btrfs:btrfs_cow_block {
+	//printf("btrfs_cow_block: root %llu eb %llu level %d cow-eb %llu cow-level %d\nstack: %s\n", args.root_objectid, args.buf_start, args.buf_level, args.cow_start, args.cow_level, kstack);
 	printf("btrfs_cow_block: root %llu eb %llu level %d cow-eb %llu cow-level %d\n", args.root_objectid, args.buf_start, args.buf_level, args.cow_start, args.cow_level);
+}
+
+/*
+fentry:__filemap_fdatawait_range {
+	printf("__fdatawait_range mapping %p\n", args->mapping);
+}
+*/
+
+fentry:write_one_eb {
+	printf("write_one_eb: %llu\n", args->eb->start);
+}
+
+fentry:btrfs_commit_transaction {
+	printf("commit txn!\n");
+}
+
+tracepoint:syscalls:sys_enter_sync {
+	printf("sync!\n");
 }
 
 fentry:write_all_supers {
