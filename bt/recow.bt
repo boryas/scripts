@@ -1,0 +1,7 @@
+tracepoint:btrfs:btrfs_cow_block {
+	printf("btrfs_cow_block: root %llu eb %llu level %d cow-eb %llu cow-level %d\n", args.root_objectid, args.buf_start, args.buf_level, args.cow_start, args.cow_level);
+}
+
+fentry:write_all_supers {
+	printf("write all supers!\n");
+}

@@ -1,0 +1,18 @@
+fentry:find_free_extent {
+	// Only BTRFS_BLOCK_GROUP_DATA
+	if (args.ffe_ctl->flags & 1) {
+		@ffe[tid] = 1;
+		@sz[tid] = args.ffe_ctl->num_bytes;
+	}
+}
+
+fexit:find_free_extent {
+	if (@ffe[tid]) {
+		delete(@ffe, tid);
+		delete(@sz, tid);
+	}
+}
+
+
+fentry:btrfs_chunk_alloc {
+}

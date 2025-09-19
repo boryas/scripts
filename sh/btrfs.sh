@@ -13,7 +13,7 @@ _fresh_btrfs_mnt() {
 
 	_log "fresh mount $@ $dev $mnt"
 	$MKFS -f -m single -d single $dev >/dev/null || _fail "Failed to mkfs $dev"
-	_btrfs_mnt "$@" $dev $mnt
+	_btrfs_mnt $@ $dev $mnt
 }
 
 _btrfs_mnt() {

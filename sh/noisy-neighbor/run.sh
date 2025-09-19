@@ -19,7 +19,7 @@ GOOD_CG=$CG_ROOT/good-nbr
 NR_BIGGOS=1
 NR_LITTLE=100
 NR_VICTIMS=32
-NR_VILLAINS=2048
+NR_VILLAINS=512
 
 _stats() {
 	echo "================"

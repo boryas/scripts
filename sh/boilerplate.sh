@@ -24,6 +24,14 @@ _fail() {
 	exit 1
 }
 
+_sad() {
+	echo -e ${RED}$@${PLAIN}
+}
+
+_happy() {
+	echo -e ${GREEN}$@${PLAIN}
+}
+
 _ok() {
 	echo -e "${GREEN}OK${PLAIN}"
 	exit 0
