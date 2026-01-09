@@ -3,7 +3,6 @@
 dev=/dev/tst/lol
 mnt=/mnt/lol
 
-run=$1
 NOISE=$((100 << 20))
 FILES=100
 LOOPS=100
@@ -116,9 +115,13 @@ trigger_cleaner() {
 }
 
 wait_reclaim_done() {
-	# TODO: loop reading unalloc?
-	echo "SLEEPY TIME"
-	sleep 3600
+	local sysfs=/sys/fs/btrfs/$(get_uuid)
+	local si=$sysfs/allocation/data
+	reclaims=$(cat $si/reclaim_count)
+	echo "wait reclaim done; reclaims: $reclaims"
+	sleep 30
+	reclaims=$(cat $si/reclaim_count)
+	echo "wait reclaim done; reclaims: $reclaims"
 }
 
 pct() {
@@ -212,13 +215,15 @@ last_gig() {
 	local SIZES=( $(get_frag_sizes | sort -n) )
 	local i=0
 
+	echo "do fios"
 	# fill it up with fragmented usage
 	for sz in ${SIZES[@]}
 	do
+		echo "do fio i $i sz $sz"
 		frag_fio $i $sz 50
 		i=$(($i + 1))
-		sleep 1
 	done
+	echo "fios done"
 
 	# see if we spam reclaims
 	trigger_cleaner
@@ -279,7 +284,8 @@ get_frag_sizes() {
 
 #RUNS=("free-30" "free-50" "free-70" "per-50" "per-70" "free-dyn" "per-dyn")
 #RUNS=("free-30" "per-30" "per-dyn")
-RUNS=("free-30")
+#RUNS=("free-30")
+RUNS=("per-dyn")
 
 if [ $# -lt 1 ]
 then
