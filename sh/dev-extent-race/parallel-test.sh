@@ -19,7 +19,23 @@ mnt=$2
 duration=${3:-60}
 
 # Worker: Force chunk allocation with delay to avoid ENOSPC
-worker_force_alloc() {
+worker_metadata_force_alloc() {
+	local sysfs=$1
+	local flag_file="/tmp/btrfs-force-alloc.run"
+	touch "$flag_file"
+
+	local counter=0
+	while [ -f "$flag_file" ]; do
+		echo 1 > "$sysfs/allocation/metadata/force_chunk_alloc" 2>/dev/null || true
+		((counter++))
+		# Short delay to increase contention while avoiding ENOSPC
+		#sleep 0.1
+	done
+
+	_log "[Force Alloc Worker] Stopped after $counter iterations"
+}
+
+worker_data_force_alloc() {
 	local sysfs=$1
 	local flag_file="/tmp/btrfs-force-alloc.run"
 	touch "$flag_file"
@@ -29,7 +45,7 @@ worker_force_alloc() {
 		echo 1 > "$sysfs/allocation/data/force_chunk_alloc" 2>/dev/null || true
 		((counter++))
 		# Short delay to increase contention while avoiding ENOSPC
-		sleep 0.1
+		#sleep 0.1
 	done
 
 	_log "[Force Alloc Worker] Stopped after $counter iterations"
@@ -44,7 +60,7 @@ worker_balance() {
 	local counter=0
 	while [ -f "$flag_file" ]; do
 		# Balance all data block groups - relocates them, freeing old dev extents
-		$BTRFS balance start -dusage=100 "$mnt" 2>/dev/null || true
+		$BTRFS balance start -musage=100 -dusage=100 "$mnt" 2>/dev/null || true
 		((counter++))
 		# Small delay before next iteration
 		sleep 0.1
@@ -109,9 +125,10 @@ _log "  - Balance worker (usage=100)"
 _log "  - File I/O worker"
 
 # Launch workers
-worker_force_alloc "$sysfs" &
-worker_balance "$mnt" &
-worker_file_io "$mnt" &
+worker_data_force_alloc "$sysfs" &
+worker_metadata_force_alloc "$sysfs" &
+#worker_balance "$mnt" &
+#worker_file_io "$mnt" &
 
 # Run for duration, checking for bug periodically
 bug_found=0
