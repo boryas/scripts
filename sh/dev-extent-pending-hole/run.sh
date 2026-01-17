@@ -25,27 +25,51 @@ _fresh_btrfs_mnt "$dev" "$mnt"
 
 # cleaner thread to hit delete_unused_bgs
 _cleaner() {
+	_log "fire cleaner thread"
 	btrfs fi sync $mnt
 	sleep 1
 	btrfs fi sync $mnt
 }
 
+_log "push the BG frontier"
+fallocate -l 20G $mnt/foo
+_log "one more"
+fallocate -l 1G $mnt/sticky
+_log "sync"
+sync
+_log "rm big gap of bgs"
+rm $mnt/foo
+_log "sync"
+sync
+_cleaner
+_log "let everything quiesce"
+sleep 20
+_log "sync"
+sync
+
+# should have one bg 20G out and the rest at the beginning..
+# sort of like an empty FS but with a random sticky chunk
+
 _cleaner &
 
-sleep 1
+_log "sleep 3 after cleaner thread"
+sleep 3
 
-for i in $(seq 0 15); do
-	dd if=/dev/zero of=$mnt/foo.$i bs=1M count=256
-done
-
-# 9-15 covers >1G so a bg will be freed
-for i in $(seq 9 15); do
-	rm $mnt/foo.$i
-done
-
-
-$DRGN/dump_chunk_allocated.py $mnt
-#$DRGN/dump_commit_root_dev_extents.py $mnt
-
-# kernel should be stuck in deleting commit and show the gap
+_log "force alloc meta"
 echo 1 > "$(_btrfs_sysfs_space_info $dev metadata)/force_chunk_alloc"
+_log "force alloc data"
+echo 1 > "$(_btrfs_sysfs_space_info $dev data)/force_chunk_alloc"
+_log "force alloc meta"
+echo 1 > "$(_btrfs_sysfs_space_info $dev metadata)/force_chunk_alloc"
+_log "force alloc data"
+echo 1 > "$(_btrfs_sysfs_space_info $dev data)/force_chunk_alloc"
+
+_log "sleep 10"
+sleep 10
+
+_log "force alloc meta"
+echo 1 > "$(_btrfs_sysfs_space_info $dev metadata)/force_chunk_alloc"
+
+$DRGN/dump_chunk_maps.py $mnt
+#$DRGN/dump_chunk_allocated.py $mnt
+#$DRGN/dump_commit_root_dev_extents.py $mnt
