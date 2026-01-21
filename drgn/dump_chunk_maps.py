@@ -12,13 +12,22 @@ The pattern described in the email that causes EEXIST:
 The second stripe of the DUP overlaps with the data chunk at physical P.
 
 Usage:
-    drgn scripts/drgn/dump_chunk_maps.py <mountpoint>
+    drgn scripts/drgn/dump_chunk_maps.py [-q|--quiet] <mountpoint>
+
+Options:
+    -q, --quiet    Only output if overlaps are detected (silent otherwise)
+
+Exit codes:
+    0    No overlaps detected
+    1    Overlaps detected (or error)
 
 Example:
     drgn scripts/drgn/dump_chunk_maps.py /mnt/btrfs
+    drgn scripts/drgn/dump_chunk_maps.py -q /mnt/btrfs
 """
 
 import sys
+import argparse
 from drgn import cast, container_of
 from drgn.helpers.linux.fs import path_lookup
 
@@ -305,18 +314,31 @@ def print_summary(chunks, dev_extents):
 # ============================================================================
 
 def main():
-    if len(sys.argv) < 2:
-        print(__doc__)
-        sys.exit(1)
+    parser = argparse.ArgumentParser(
+        description="Dump btrfs chunk maps and detect physical address overlaps.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Exit codes:
+    0    No overlaps detected
+    1    Overlaps detected (or error)
+        """
+    )
+    parser.add_argument('-q', '--quiet', action='store_true',
+                        help='Only output if overlaps are detected')
+    parser.add_argument('mountpoint', help='Btrfs mountpoint to analyze')
+    args = parser.parse_args()
 
-    mountpoint = sys.argv[1]
+    quiet = args.quiet
+    mountpoint = args.mountpoint
 
-    print(f"Analyzing btrfs filesystem at: {mountpoint}\n")
+    if not quiet:
+        print(f"Analyzing btrfs filesystem at: {mountpoint}\n")
 
     # Get fs_info
     try:
         fs_info = get_fs_info(mountpoint)
-        print(f"fs_info @ {hex(fs_info.value_())}")
+        if not quiet:
+            print(f"fs_info @ {hex(fs_info.value_())}")
     except Exception as e:
         print(f"Error getting fs_info: {e}")
         sys.exit(1)
@@ -327,14 +349,21 @@ def main():
     overlaps = find_overlaps(dev_extents)
 
     # Presentation phase
-    print_summary(chunks, dev_extents)
-    print_chunks(chunks)
-    print_dev_extents(dev_extents)
-    print_overlaps(overlaps)
-
     if overlaps:
+        # Always print when overlaps are found
+        print_summary(chunks, dev_extents)
+        print_chunks(chunks)
+        print_dev_extents(dev_extents)
+        print_overlaps(overlaps)
         print("WARNING: Overlapping dev extents detected! This may cause EEXIST errors.")
         sys.exit(1)
+    else:
+        if not quiet:
+            print_summary(chunks, dev_extents)
+            print_chunks(chunks)
+            print_dev_extents(dev_extents)
+            print_overlaps(overlaps)
+        sys.exit(0)
 
 
 if __name__ == '__main__':
