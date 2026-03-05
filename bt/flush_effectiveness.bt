@@ -1,0 +1,277 @@
+#!/usr/bin/env bpftrace
+/*
+ * flush_effectiveness.bt — Measure btrfs metadata flush strategy effectiveness
+ *
+ * Tracks each flush_space() call (both preemptive and async reclaim) and
+ * measures:
+ *   - bytes_may_use delta (positive = space freed, negative = grew)
+ *   - bytes_pinned delta (positive = space moved to pinned)
+ *   - delayed ref heads delta (positive = refs grew, negative = refs drained)
+ *   - duration
+ *   - clamp value and ticket state
+ *
+ * Usage: sudo bpftrace flush_effectiveness.bt
+ *        Run during a writeback storm, Ctrl-C for summary histograms.
+ *
+ * Notes:
+ *   flush_space and maybe_clamp_preempt are static functions.
+ *   If fentry doesn't attach, try kprobe (the symbol should still
+ *   exist as flush_space.isra.0 or similar — check /proc/kallsyms).
+ */
+
+BEGIN
+{
+	printf("Tracing btrfs flush_space effectiveness... Ctrl-C for summary.\n");
+	printf("%-10s %-22s %12s %12s %10s %10s %5s %8s\n",
+	       "SOURCE", "STATE", "FREED_MB", "PINNED_MB",
+	       "HEADS_D", "DUR_MS", "CLAMP", "TICKETS");
+	printf("%-10s %-22s %12s %12s %10s %10s %5s %8s\n",
+	       "------", "-----", "--------", "---------",
+	       "-------", "------", "-----", "-------");
+}
+
+/*
+ * flush_space(fs_info, space_info, num_bytes, state, for_preempt)
+ *
+ * Capture pre-state on entry.  Filter to metadata space_info only
+ * (flags & BTRFS_BLOCK_GROUP_METADATA = 0x4).
+ */
+fentry:flush_space
+{
+	$si = args->space_info;
+	if ($si->flags & 0x4) {
+		@pre_may_use[tid] = $si->bytes_may_use;
+		@pre_pinned[tid] = $si->bytes_pinned;
+		@state[tid] = (uint64)args->state;
+		@preempt[tid] = args->for_preempt ? 1 : 0;
+		@start[tid] = nsecs;
+		@clamp[tid] = $si->clamp;
+		@reclaim_sz[tid] = $si->reclaim_size;
+
+		/* Snapshot delayed ref heads count */
+		$trans = args->fs_info->running_transaction;
+		@pre_heads[tid] = ($trans != 0)
+			? $trans->delayed_refs.num_heads_ready : 0;
+	}
+}
+
+fexit:flush_space
+{
+	if (@start[tid] == 0) { return; }
+
+	$si = args->space_info;
+	$st = @state[tid];
+	$src = @preempt[tid] ? "preempt" : "async";
+
+	/* Compute deltas (signed) */
+	$freed = (int64)(@pre_may_use[tid] - $si->bytes_may_use);
+	$freed_mb = $freed / (1024 * 1024);
+	$pinned = (int64)($si->bytes_pinned - @pre_pinned[tid]);
+	$pinned_mb = $pinned / (1024 * 1024);
+	$dur_us = (nsecs - @start[tid]) / 1000;
+	$dur_ms = $dur_us / 1000;
+
+	/* Heads delta (signed) */
+	$trans = args->fs_info->running_transaction;
+	$heads_now = ($trans != 0)
+		? $trans->delayed_refs.num_heads_ready : 0;
+	$heads_d = (int64)$heads_now - (int64)@pre_heads[tid];
+
+	/* State name lookup */
+	$name = "?";
+	if ($st == 1)  { $name = "DELAYED_ITEMS_NR"; }
+	if ($st == 2)  { $name = "DELAYED_ITEMS"; }
+	if ($st == 3)  { $name = "DELAYED_REFS_NR"; }
+	if ($st == 4)  { $name = "DELAYED_REFS"; }
+	if ($st == 5)  { $name = "DELALLOC"; }
+	if ($st == 6)  { $name = "DELALLOC_WAIT"; }
+	if ($st == 7)  { $name = "DELALLOC_FULL"; }
+	if ($st == 8)  { $name = "ALLOC_CHUNK"; }
+	if ($st == 9)  { $name = "ALLOC_CHUNK_FORCE"; }
+	if ($st == 10) { $name = "RUN_DELAYED_IPUTS"; }
+	if ($st == 11) { $name = "COMMIT_TRANS"; }
+
+	/* Per-event output */
+	printf("%-10s %-22s %12lld %12lld %10lld %10llu %5d %8lld\n",
+	       $src, $name, $freed_mb, $pinned_mb,
+	       $heads_d, $dur_ms, @clamp[tid],
+	       @reclaim_sz[tid] / (1024 * 1024));
+
+	/* ---- Aggregate stats ---- */
+
+	/*
+	 * Split freed histograms into positive (actually freed) and
+	 * negative (bytes_may_use GREW — harmful).  bpftrace hist()
+	 * treats values as unsigned so negative values wrap to huge
+	 * positive buckets if not split.
+	 */
+	if ($freed_mb > 0) {
+		@freed_pos[$src, $name] = hist($freed_mb);
+	} else if ($freed_mb < 0) {
+		@freed_neg[$src, $name] = hist(-$freed_mb);
+	} else {
+		@freed_zero[$src, $name] = count();
+	}
+
+	/* Same split for heads delta */
+	if ($heads_d > 0) {
+		@heads_grew[$src, $name] = hist($heads_d);
+	} else if ($heads_d < 0) {
+		@heads_drained[$src, $name] = hist(-$heads_d);
+	} else {
+		@heads_zero[$src, $name] = count();
+	}
+
+	/* Duration in ms */
+	@dur_hist[$src, $name] = hist($dur_ms);
+
+	/* Call count */
+	@calls[$src, $name] = count();
+
+	/* Total freed and pinned (bytes, signed sum — correct) */
+	@total_freed[$src, $name] = sum($freed);
+	@total_pinned[$src, $name] = sum($pinned);
+
+	/* Track worst-case feedback: DELALLOC that grew heads */
+	if ($st == 5 || $st == 6 || $st == 7) {
+		if ($heads_d > 0) {
+			@delalloc_grew_heads = count();
+			@delalloc_heads_growth = sum($heads_d);
+		}
+		if ($freed_mb < 0) {
+			@delalloc_grew_may_use = count();
+			@delalloc_may_use_growth = sum(-$freed);
+		}
+	}
+
+	/* Cleanup */
+	delete(@pre_may_use[tid]);
+	delete(@pre_pinned[tid]);
+	delete(@state[tid]);
+	delete(@preempt[tid]);
+	delete(@start[tid]);
+	delete(@clamp[tid]);
+	delete(@reclaim_sz[tid]);
+	delete(@pre_heads[tid]);
+}
+
+/*
+ * Track preemptive reclaim entry/exit for overall timing.
+ */
+fentry:btrfs_preempt_reclaim_metadata_space
+{
+	@preempt_start[tid] = nsecs;
+}
+
+fexit:btrfs_preempt_reclaim_metadata_space
+{
+	if (@preempt_start[tid]) {
+		$dur_ms = (nsecs - @preempt_start[tid]) / 1000 / 1000;
+		@preempt_dur = hist($dur_ms);
+		@preempt_calls = count();
+		delete(@preempt_start[tid]);
+	}
+}
+
+/*
+ * Track async reclaim entry/exit.
+ */
+fentry:btrfs_async_reclaim_metadata_space
+{
+	@async_start[tid] = nsecs;
+}
+
+fexit:btrfs_async_reclaim_metadata_space
+{
+	if (@async_start[tid]) {
+		$dur_ms = (nsecs - @async_start[tid]) / 1000 / 1000;
+		@async_dur = hist($dur_ms);
+		@async_calls = count();
+		delete(@async_start[tid]);
+	}
+}
+
+/*
+ * Periodic separator.
+ */
+interval:s:5
+{
+	printf("--- %llu seconds elapsed ---\n", elapsed / 1000000000);
+}
+
+END
+{
+	printf("\n\n========== SUMMARY ==========\n\n");
+
+	printf("--- Call counts ---\n");
+	print(@calls);
+
+	printf("\n--- Total bytes_may_use freed (bytes, signed) ---\n");
+	printf("    positive = space freed, negative = bytes_may_use GREW\n");
+	print(@total_freed);
+
+	printf("\n--- Total bytes_pinned increase (bytes) ---\n");
+	print(@total_pinned);
+
+	printf("\n--- bytes_may_use FREED histogram (MB) ---\n");
+	print(@freed_pos);
+
+	printf("\n--- bytes_may_use GREW histogram (MB, shown as positive) ---\n");
+	printf("    These calls INCREASED bytes_may_use — harmful!\n");
+	print(@freed_neg);
+
+	printf("\n--- bytes_may_use unchanged ---\n");
+	print(@freed_zero);
+
+	printf("\n--- Delayed ref heads GREW histogram ---\n");
+	print(@heads_grew);
+
+	printf("\n--- Delayed ref heads DRAINED histogram ---\n");
+	print(@heads_drained);
+
+	printf("\n--- Delayed ref heads unchanged ---\n");
+	print(@heads_zero);
+
+	printf("\n--- Duration histogram (ms) ---\n");
+	print(@dur_hist);
+
+	printf("\n--- Preemptive reclaim total duration (ms) ---\n");
+	print(@preempt_dur);
+	printf("  calls: ");
+	print(@preempt_calls);
+
+	printf("\n--- Async reclaim total duration (ms) ---\n");
+	print(@async_dur);
+	printf("  calls: ");
+	print(@async_calls);
+
+	printf("\n--- FLUSH_DELALLOC* feedback loop indicator ---\n");
+	printf("  Times DELALLOC grew num_heads_ready: ");
+	print(@delalloc_grew_heads);
+	printf("  Total heads growth from DELALLOC:    ");
+	print(@delalloc_heads_growth);
+	printf("  Times DELALLOC grew bytes_may_use:   ");
+	print(@delalloc_grew_may_use);
+	printf("  Total bytes_may_use growth (bytes):  ");
+	print(@delalloc_may_use_growth);
+
+	/* Cleanup aggregates */
+	clear(@calls);
+	clear(@total_freed);
+	clear(@total_pinned);
+	clear(@freed_pos);
+	clear(@freed_neg);
+	clear(@freed_zero);
+	clear(@heads_grew);
+	clear(@heads_drained);
+	clear(@heads_zero);
+	clear(@dur_hist);
+	clear(@preempt_dur);
+	clear(@preempt_calls);
+	clear(@async_dur);
+	clear(@async_calls);
+	clear(@delalloc_grew_heads);
+	clear(@delalloc_heads_growth);
+	clear(@delalloc_grew_may_use);
+	clear(@delalloc_may_use_growth);
+}

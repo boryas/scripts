@@ -1,0 +1,103 @@
+#!/usr/bin/env bpftrace
+/*
+ * extent_lock_cost.bt — Extent range lock profiler (villain-only)
+ *
+ * Emits per-event tuples in StrobeLight format with two event types:
+ *
+ *   extent_lock_acquire — time to acquire a range lock on the extent
+ *                         I/O tree.  Includes any time sleeping in
+ *                         wait_extent_bit() waiting for a prior holder.
+ *                         "How bad is extent lock contention?"
+ *
+ *   extent_lock_hold    — time a range lock was held, from acquisition
+ *                         to btrfs_clear_extent_bit (unlock).
+ *                         "Who holds extent locks for a long time?"
+ *
+ * Both event types carry the holder's (villain's) stacks.
+ *
+ * Mechanism:
+ *   kprobe/kretprobe on lock_extent measures acquisition delay.
+ *   The kretprobe also records the acquisition timestamp keyed by
+ *   (tid, range_start).
+ *
+ *   tracepoint:btrfs:btrfs_clear_extent_bit fires at unlock time.
+ *   If clearing EXTENT_LOCKED or EXTENT_DIO_LOCKED (bits & 0x6) and
+ *   we have a recorded acquisition for (tid, start), emit the hold
+ *   duration.
+ *
+ *   Rollback clears inside the lock_extent retry loop also fire the
+ *   tracepoint, but they occur before the kretprobe sets @el_acquired,
+ *   so the lookup returns 0 and they're skipped.
+ *
+ * Notes:
+ *   - All delays are in nanoseconds.
+ *   - Hold tracking uses (tid, start) as key.  Partial-range unlocks
+ *     with a different start value will miss; this is uncommon for
+ *     EXTENT_LOCKED operations.
+ *
+ * Bit values (from ENUM_BIT macro):
+ *   EXTENT_LOCKED     = 0x2
+ *   EXTENT_DIO_LOCKED = 0x4
+ *   EXTENT_LOCK_BITS  = 0x6
+ *
+ * Probe target:
+ *   lock_extent(struct extent_io_tree *, u64 start, u64 end,
+ *               struct extent_state **cached)
+ *   btrfs_lock_extent_bits() is inlined into this symbol.
+ */
+
+/* ── Lock entry: save args for kretprobe ───────────────────────── */
+
+kprobe:lock_extent
+{
+	@el_entry[tid] = nsecs;
+	@el_start[tid] = arg1;
+}
+
+/* ── Lock acquired: emit acquire tuple, record for hold tracking ── */
+
+kretprobe:lock_extent
+{
+	$entry = @el_entry[tid];
+	if ($entry) {
+		$now = nsecs;
+		$start = @el_start[tid];
+
+		$tup = ($now, "extent_lock_acquire", $now - $entry,
+			cgroup_path(cgroup),
+			"_sl_pid", pid, "_sl_comm", comm,
+			"_sl_ustack", ustack(raw),
+			"_sl_kstack", kstack(raw));
+		print($tup);
+
+		@el_acquired[tid, $start] = $now;
+
+		_ = delete(@el_entry[tid]);
+		_ = delete(@el_start[tid]);
+	}
+}
+
+/* ── Unlock: emit hold tuple if we tracked the acquisition ─────── */
+
+tracepoint:btrfs:btrfs_clear_extent_bit
+/ args->clear_bits & 6 /
+{
+	$acq = @el_acquired[tid, args->start];
+	if ($acq) {
+		$tup = (nsecs, "extent_lock_hold", nsecs - $acq,
+			cgroup_path(cgroup),
+			"_sl_pid", pid, "_sl_comm", comm,
+			"_sl_ustack", ustack(raw),
+			"_sl_kstack", kstack(raw));
+		print($tup);
+
+		_ = delete(@el_acquired[tid, args->start]);
+	}
+}
+
+END
+{
+	clear(@el_entry);
+	clear(@el_start);
+	clear(@el_acquired);
+}

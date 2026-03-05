@@ -1,0 +1,176 @@
+#!/usr/bin/env bpftrace
+/*
+ * cow_lock_cost.bt — COW lock contention profiler (three orientations)
+ *
+ * Emits per-event tuples in StrobeLight format with three event types:
+ *
+ *   cow_lock_victim_write — per victim (write lock).  Victim's stacks.
+ *   cow_lock_victim_read  — per victim (read lock).   Victim's stacks.
+ *                           delay = time the victim spent blocked.
+ *                           "What is being blocked by COW?"
+ *
+ *   cow_lock_villain      — per COW exit.  Villain's stacks/pid/comm.
+ *                           delay = wall-clock duration of the COW itself.
+ *                           "Which COW paths are slowest?"
+ *
+ *   cow_lock_villain_cost — per COW exit, only when victims > 0.
+ *                           Villain's stacks/pid/comm.
+ *                           delay = estimated total victim wait, computed
+ *                           as victim_count * cow_duration / 2 (assumes
+ *                           uniform arrival → average wait is half the
+ *                           COW duration).
+ *                           "Which COW paths cause the most contention?"
+ *
+ * Mechanism:
+ *   kprobe:btrfs_force_cow_block marks buf->start and parent->start as
+ *   cow-active.  Both buffers are already write-locked by the caller
+ *   (btrfs_search_slot), so other threads hitting the same tree path
+ *   block while the COW work runs (alloc, copy, backref update, free).
+ *
+ *   Victim detection uses kprobe/kretprobe on btrfs_tree_lock_nested and
+ *   btrfs_tree_read_lock_nested.  The cow-active check happens at kprobe
+ *   time (BEFORE down_write/down_read), so the marker is still live.
+ *
+ *   The victim kprobes also increment a per-villain waiter count.  At
+ *   COW exit the villain_cost tuple uses count * duration / 2 as an
+ *   estimate of total victim wait (uniform arrival approximation).
+ *
+ * Notes:
+ *   - Only contention on the buf/parent eb locks is tracked.  Internal
+ *     locks taken during COW (extent-tree alloc, backref tree) are not
+ *     attributed — those ebs have different bytenrs and don't match.
+ */
+
+/* ── COW entry: mark buf + parent as cow-active ────────────────── */
+
+kprobe:btrfs_force_cow_block
+{
+	$buf = (struct extent_buffer *)arg2;
+	$parent = (struct extent_buffer *)arg3;
+
+	$bs = $buf->start;
+	@cow_active[$bs] = tid;
+	@cow_buf[tid] = $bs;
+
+	if ($parent != 0) {
+		$ps = $parent->start;
+		@cow_active[$ps] = tid;
+		@cow_parent[tid] = $ps;
+	}
+
+	@cow_entry_ns[tid] = nsecs;
+	@cow_waiters[tid] = (uint64)0;
+}
+
+/* ── COW exit: emit villain tuples, clear markers ──────────────── */
+
+kretprobe:btrfs_force_cow_block
+{
+	$entry = @cow_entry_ns[tid];
+	if ($entry) {
+		$now_ns = nsecs;
+		$delay_ns = $now_ns - $entry;
+		/* cow_lock_villain: weight = COW duration (ns) */
+		$tup = ($now_ns, "cow_lock_villain", $delay_ns,
+			cgroup_path(cgroup),
+			"_sl_pid", pid, "_sl_comm", comm,
+			"_sl_ustack", ustack(raw),
+			"_sl_kstack", kstack(raw));
+		print($tup);
+
+		/* cow_lock_villain_cost: weight = estimated total victim wait */
+		$waiters = @cow_waiters[tid];
+		if ($waiters) {
+			$vcost_ns = ($waiters * $delay_ns) / 2;
+			$tup2 = ($now_ns, "cow_lock_villain_cost", $vcost_ns,
+				cgroup_path(cgroup),
+				"_sl_pid", pid, "_sl_comm", comm,
+				"_sl_ustack", ustack(raw),
+				"_sl_kstack", kstack(raw));
+			print($tup2);
+		}
+
+		_ = delete(@cow_entry_ns[tid]);
+		_ = delete(@cow_waiters[tid]);
+	}
+
+	$bs = @cow_buf[tid];
+	if ($bs) {
+		_ = delete(@cow_active[$bs]);
+		_ = delete(@cow_buf[tid]);
+	}
+
+	$ps = @cow_parent[tid];
+	if ($ps) {
+		_ = delete(@cow_active[$ps]);
+		_ = delete(@cow_parent[tid]);
+	}
+}
+
+/*
+ * ── Victim: check cow-active BEFORE blocking ──────────────────────
+ *
+ * kprobe fires before down_write/read_nested — the cow-active marker
+ * is still live because the COW thread hasn't returned yet.
+ * kretprobe fires after the lock is acquired — compute wait time.
+ *
+ * Write and read lock probes share the same victim logic; only the
+ * event name differs.
+ */
+
+kprobe:btrfs_tree_lock_nested,
+kprobe:btrfs_tree_read_lock_nested
+{
+	$eb = (struct extent_buffer *)arg0;
+	$block = $eb->start;
+	$v = @cow_active[$block];
+
+	if ($v && $v != (uint64)tid && !@victim_start[tid]) {
+		@victim_start[tid] = nsecs;
+		@cow_waiters[$v] += 1;
+	}
+}
+
+kretprobe:btrfs_tree_lock_nested
+{
+	$start = @victim_start[tid];
+	if ($start) {
+		$wait_ns = nsecs - $start;
+
+		$tup = (nsecs, "cow_lock_victim_write", $wait_ns,
+			cgroup_path(cgroup),
+			"_sl_pid", pid, "_sl_comm", comm,
+			"_sl_ustack", ustack(raw),
+			"_sl_kstack", kstack(raw));
+		print($tup);
+
+		_ = delete(@victim_start[tid]);
+	}
+}
+
+kretprobe:btrfs_tree_read_lock_nested
+{
+	$start = @victim_start[tid];
+	if ($start) {
+		$wait_ns = nsecs - $start;
+
+		$tup = (nsecs, "cow_lock_victim_read", $wait_ns,
+			cgroup_path(cgroup),
+			"_sl_pid", pid, "_sl_comm", comm,
+			"_sl_ustack", ustack(raw),
+			"_sl_kstack", kstack(raw));
+		print($tup);
+
+		_ = delete(@victim_start[tid]);
+	}
+}
+
+END
+{
+	clear(@cow_active);
+	clear(@cow_buf);
+	clear(@cow_parent);
+	clear(@cow_entry_ns);
+	clear(@cow_waiters);
+	clear(@victim_start);
+}
