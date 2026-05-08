@@ -1,0 +1,199 @@
+/*
+ * commit_oe_burst.bt — Test OE completion burst theory
+ *
+ * Theory: shrink_delalloc during a commit window creates OEs whose
+ * completions are blocked (btrfs_join_transaction blocked at COMMIT_DOING).
+ * After the commit, they burst, creating a flood of delayed refs.
+ *
+ * This script tracks:
+ *   1. Commit windows (start/end of btrfs_commit_transaction)
+ *   2. OE completions binned by: during commit vs outside commit
+ *   3. flush_space DELALLOC calls during vs outside commit windows
+ *      (via tracepoint, since shrink_delalloc/flush_space are static)
+ *   4. OE completion rate around commit boundaries
+ *   5. Writer bottleneck: btrfs_delalloc_reserve_metadata latency
+ *   6. Writer bottleneck: balance_dirty_pages time
+ *
+ * Flush state values: DELAYED_REFS_NR=3, DELAYED_REFS=4, DELALLOC=5,
+ *   DELALLOC_WAIT=6, DELALLOC_FULL=7
+ *
+ * Usage: bpftrace commit_oe_burst.bt
+ */
+
+BEGIN
+{
+	@commit_active = 0;
+	@commit_count = 0;
+	printf("Tracing commit/OE interaction... Ctrl-C to stop.\n");
+	printf("%-12s %-8s %s\n", "TIME_MS", "EVENT", "DETAILS");
+}
+
+/* Track commit windows */
+kprobe:btrfs_commit_transaction
+{
+	@commit_active = 1;
+	@commit_start = nsecs;
+	@commit_count++;
+	@delalloc_during_commit = 0;
+	@oe_during_commit = 0;
+	printf("%-12llu %-8s commit #%lld start\n",
+	       elapsed / 1000000, "COMMIT", @commit_count);
+}
+
+kretprobe:btrfs_commit_transaction
+{
+	$dur_ms = (nsecs - @commit_start) / 1000000;
+	printf("%-12llu %-8s commit #%lld end, dur=%llums, oe_during=%lld, delalloc_during=%lld\n",
+	       elapsed / 1000000, "COMMIT", @commit_count, $dur_ms,
+	       @oe_during_commit, @delalloc_during_commit);
+	@commit_active = 0;
+	@post_commit_start = nsecs;
+	@oe_post_commit = 0;
+}
+
+/* OE completions */
+kprobe:btrfs_finish_one_ordered
+{
+	if (@commit_active) {
+		@oe_during_commit++;
+		@oe_during_total++;
+	} else {
+		@oe_outside_total++;
+		/* Count OEs in the 2s window after a commit ends */
+		if (@post_commit_start > 0 &&
+		    (nsecs - @post_commit_start) < 2000000000) {
+			@oe_post_commit++;
+		}
+	}
+}
+
+/* Detect btrfs_join_transaction blocking in OE completion path */
+kprobe:wait_current_trans
+{
+	@join_wait_start[tid] = nsecs;
+}
+
+kretprobe:wait_current_trans
+/@join_wait_start[tid]/
+{
+	$wait_us = (nsecs - @join_wait_start[tid]) / 1000;
+	if ($wait_us > 1000) {
+		@join_wait_hist = hist($wait_us);
+		@join_waits_over_1ms++;
+	}
+	delete(@join_wait_start[tid]);
+}
+
+/* flush_space via tracepoint — track DELALLOC (5,6,7) during commits */
+tracepoint:btrfs:btrfs_flush_space
+{
+	$state = args.state;
+	$preempt = args.for_preempt;
+
+	if (@commit_active) {
+		@flush_during_commit[$state, $preempt] = count();
+		if ($state >= 5 && $state <= 7) {
+			@delalloc_during_commit++;
+			@delalloc_during_total++;
+			printf("%-12llu %-8s DELALLOC (state=%d preempt=%d) DURING commit #%lld\n",
+			       elapsed / 1000000, "FLUSH", $state, $preempt,
+			       @commit_count);
+		}
+	} else {
+		@flush_outside_commit[$state, $preempt] = count();
+		if ($state >= 5 && $state <= 7) {
+			@delalloc_outside_total++;
+		}
+	}
+}
+
+/* Writer bottleneck: metadata reservation latency */
+kprobe:btrfs_delalloc_reserve_metadata
+{
+	@rsv_start[tid] = nsecs;
+}
+
+kretprobe:btrfs_delalloc_reserve_metadata
+/@rsv_start[tid]/
+{
+	$dur_us = (nsecs - @rsv_start[tid]) / 1000;
+	@rsv_count++;
+	if ($dur_us > 1000) {
+		@rsv_slow++;
+		@rsv_hist = hist($dur_us);
+	}
+	delete(@rsv_start[tid]);
+}
+
+/* Writer bottleneck: dirty page throttling */
+kprobe:balance_dirty_pages_ratelimited
+{
+	@bdp_start[tid] = nsecs;
+}
+
+kretprobe:balance_dirty_pages_ratelimited
+/@bdp_start[tid]/
+{
+	$dur_us = (nsecs - @bdp_start[tid]) / 1000;
+	@bdp_count++;
+	if ($dur_us > 1000) {
+		@bdp_slow++;
+		@bdp_hist = hist($dur_us);
+	}
+	delete(@bdp_start[tid]);
+}
+
+/* Periodic 5s summary */
+interval:s:5
+{
+	printf("%-12llu %-8s oe: during=%lld outside=%lld post2s=%lld | delalloc: during=%lld outside=%lld | rsv: %lld (slow %lld) | bdp: %lld (slow %lld)\n",
+	       elapsed / 1000000, "RATE",
+	       @oe_during_total, @oe_outside_total, @oe_post_commit,
+	       @delalloc_during_total, @delalloc_outside_total,
+	       @rsv_count, @rsv_slow, @bdp_count, @bdp_slow);
+}
+
+END
+{
+	printf("\n=== Summary ===\n");
+	printf("Total commits: %lld\n", @commit_count);
+	printf("OE completions during commits: %lld\n", @oe_during_total);
+	printf("OE completions outside commits: %lld\n", @oe_outside_total);
+	printf("DELALLOC flushes during commits: %lld\n", @delalloc_during_total);
+	printf("DELALLOC flushes outside commits: %lld\n", @delalloc_outside_total);
+	printf("join waits > 1ms: %lld\n", @join_waits_over_1ms);
+	printf("metadata rsv calls: %lld (slow >1ms: %lld)\n", @rsv_count, @rsv_slow);
+	printf("balance_dirty_pages calls: %lld (slow >1ms: %lld)\n", @bdp_count, @bdp_slow);
+
+	if (@join_waits_over_1ms) {
+		printf("\nwait_current_trans wait times (us):\n");
+		print(@join_wait_hist);
+	}
+
+	if (@rsv_slow) {
+		printf("\nbtrfs_delalloc_reserve_metadata slow calls (us):\n");
+		print(@rsv_hist);
+	}
+
+	if (@bdp_slow) {
+		printf("\nbalance_dirty_pages_ratelimited slow calls (us):\n");
+		print(@bdp_hist);
+	}
+
+	printf("\nflush_space states during commits [state, preempt]:\n");
+	print(@flush_during_commit);
+
+	printf("\nflush_space states outside commits [state, preempt]:\n");
+	print(@flush_outside_commit);
+
+	clear(@commit_active);
+	clear(@commit_start);
+	clear(@commit_count);
+	clear(@post_commit_start);
+	clear(@oe_during_commit);
+	clear(@oe_post_commit);
+	clear(@delalloc_during_commit);
+	clear(@join_wait_start);
+	clear(@rsv_start);
+	clear(@bdp_start);
+}

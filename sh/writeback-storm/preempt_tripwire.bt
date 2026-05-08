@@ -1,0 +1,16 @@
+/*
+ * preempt_tripwire.bt — exit on first preemptive reclaim
+ *
+ * Preemptive reclaim fires when metadata pressure crosses the ~80%
+ * watermark. This is the moment when dirty data is high and a forced
+ * commit will collide with FLUSH_DELALLOC.
+ *
+ * Usage: bpftrace preempt_tripwire.bt
+ *        Exits with 0 when preemptive metadata reclaim fires.
+ */
+
+kprobe:btrfs_preempt_reclaim_metadata_space
+{
+	printf("preempt_reclaim fired at %llu ms\n", elapsed / 1000000);
+	exit();
+}

@@ -6,6 +6,7 @@ SCRIPT=$(readlink -f "$0")
 DIR=$(dirname "$SCRIPT")
 
 mnt=${1:-/}
+commit=${2:-10}
 workdir="$mnt/writeback-storm"
 
 echo "[*] Cleaning workload files..."
@@ -24,7 +25,11 @@ sysctl -w vm.dirty_ratio=80
 sysctl -w vm.dirty_writeback_centisecs=0
 sysctl -w vm.dirty_expire_centisecs=360000
 
-echo "[*] Remounting with commit=9999999..."
-mount -o remount,commit=9999999 "$mnt"
+echo "[*] Setting commit interval to $commit"
+mount -o remount,commit=$commit /
+btrfs filesystem sync /
+sleep 1
+btrfs filesystem sync /
+echo "[*] Reset complete."
 
 echo "[*] Reset complete."
