@@ -1,0 +1,64 @@
+Built helpers
+Phase 1: creating and holding 200000 files...
+  waiting for hold-inodes (PID=310)...
+hold-inodes: opened 20000 / 200000
+hold-inodes: opened 40000 / 200000
+  inodes: 60316
+hold-inodes: opened 60000 / 200000
+hold-inodes: opened 80000 / 200000
+hold-inodes: opened 100000 / 200000
+  inodes: 107056
+hold-inodes: opened 120000 / 200000
+hold-inodes: opened 140000 / 200000
+  inodes: 151350
+hold-inodes: opened 160000 / 200000
+hold-inodes: opened 180000 / 200000
+  inodes: 197085
+hold-inodes: opened 200000 / 200000
+hold-inodes: created 200000, holding 140000, closed 60000 (LRU), waiting for signal
+  inodes: 205805
+  inodes: 205805
+  inodes: 205805
+  inode-state: 205803	0	0	0	0	0	0
+Creating pressure files...
+Pressure files created (4 x 512MB)
+
+Phase 2: starting workloads for 60s
+  8 churn threads (C create/unlink loop)
+  4 pressure readers (pagecache churn)
+=== vmstat before ===
+pgsteal_kswapd 371219
+pgsteal_direct 128
+pgscan_kswapd 398255
+pgscan_direct 322
+pgscan_direct_throttle 0
+POLL: free=1398MB scan_k=+446684 scan_d=+19155 inode-state=148721	3670	0	0	0	0	0
+POLL: free=1381MB scan_k=+3532798 scan_d=+1168104 inode-state=145051	0	0	0	0	0	0
+POLL: free=1369MB scan_k=+3535019 scan_d=+1115145 inode-state=145050	0	0	0	0	0	0
+POLL: free=1353MB scan_k=+3473348 scan_d=+1135391 inode-state=145050	0	0	0	0	0	0
+POLL: free=1334MB scan_k=+3487156 scan_d=+1076532 inode-state=145051	0	0	0	0	0	0
+POLL: free=1325MB scan_k=+3378483 scan_d=+1125845 inode-state=145050	0	0	0	0	0	0
+POLL: free=1309MB scan_k=+3481339 scan_d=+1028484 inode-state=145049	0	0	0	0	0	0
+POLL: free=1295MB scan_k=+3359713 scan_d=+1134514 inode-state=145049	0	0	0	0	0	0
+POLL: free=1283MB scan_k=+3651392 scan_d=+1056343 inode-state=145049	0	0	0	0	0	0
+POLL: free=1266MB scan_k=+3284160 scan_d=+1148447 inode-state=145049	0	0	0	0	0	0
+POLL: free=1253MB scan_k=+3287318 scan_d=+896595 inode-state=145051	0	0	0	0	0	0
+POLL: free=1237MB scan_k=+3416383 scan_d=+1084961 inode-state=145051	0	0	0	0	0	0
+churn: 8 workers, 439598 total ops (7327 ops/sec)
+stopping...
+hold-inodes: closing 200000 fds
+
+=== vmstat after ===
+pgsteal_kswapd 40717803
+pgsteal_direct 12759356
+pgscan_kswapd 40745677
+pgscan_direct 12759461
+pgscan_direct_throttle 0
+=== memory pressure ===
+some avg10=26.51 avg60=16.17 avg300=4.72 total=15850213
+full avg10=24.59 avg60=15.00 avg300=4.37 total=14747824
+=== CPU pressure ===
+some avg10=22.84 avg60=14.44 avg300=4.26 total=14583783
+full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+done
+cleanup...

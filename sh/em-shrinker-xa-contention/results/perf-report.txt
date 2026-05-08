@@ -1,0 +1,1120 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 529K of event 'cpu/cycles/P'
+# Event count (approx.): 514963209
+#
+# Overhead  Command          Symbol                                                        IPC   [IPC Coverage]
+# ........  ...............  ............................................................  ....................
+#
+     8.47%  cat              [k] __intel_pmu_enable_all                                    -      -            
+            |
+            ---__intel_pmu_enable_all
+               perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+               |          
+               |--3.02%--rep_movs_alternative
+               |          _copy_to_iter
+               |          copy_page_to_iter
+               |          filemap_read
+               |          vfs_read
+               |          ksys_read
+               |          do_syscall_64
+               |          entry_SYSCALL_64
+               |          read
+               |          0
+               |          
+               |--0.60%--__filemap_add_folio
+               |          filemap_add_folio
+               |          page_cache_ra_unbounded
+               |          filemap_get_pages
+               |          filemap_read
+               |          vfs_read
+               |          ksys_read
+               |          do_syscall_64
+               |          entry_SYSCALL_64
+               |          read
+               |          |          
+               |           --0.60%--0
+               |          
+               |--0.47%--__pv_queued_spin_lock_slowpath
+               |          |          
+               |           --0.47%--_raw_spin_lock
+               |                     |          
+               |                      --0.44%--__remove_mapping
+               |                                shrink_folio_list
+               |                                shrink_lruvec
+               |                                shrink_node
+               |                                do_try_to_free_pages
+               |                                try_to_free_pages
+               |                                __alloc_pages_slowpath
+               |                                __alloc_frozen_pages_noprof
+               |                                |          
+               |                                 --0.44%--alloc_pages_mpol
+               |                                           |          
+               |                                            --0.44%--folio_alloc_noprof
+               |                                                      page_cache_ra_unbounded
+               |                                                      filemap_get_pages
+               |                                                      filemap_read
+               |                                                      vfs_read
+               |                                                      ksys_read
+               |                                                      do_syscall_64
+               |                                                      entry_SYSCALL_64
+               |                                                      read
+               |                                                      |          
+               |                                                       --0.44%--0
+               |          
+               |--0.44%--__rmqueue_pcplist
+               |          get_page_from_freelist
+               |          |          
+               |           --0.43%--__alloc_pages_slowpath
+               |                     __alloc_frozen_pages_noprof
+               |                     alloc_pages_mpol
+               |                     |          
+               |                      --0.42%--folio_alloc_noprof
+               |                                |          
+               |                                 --0.42%--page_cache_ra_unbounded
+               |                                           filemap_get_pages
+               |                                           filemap_read
+               |                                           vfs_read
+               |                                           ksys_read
+               |                                           do_syscall_64
+               |                                           entry_SYSCALL_64
+               |                                           read
+               |                                           |          
+               |                                            --0.42%--0
+               |          
+               |--0.39%--filemap_get_read_batch
+               |          filemap_get_pages
+               |          filemap_read
+               |          vfs_read
+               |          ksys_read
+               |          do_syscall_64
+               |          entry_SYSCALL_64
+               |          read
+               |          0
+               |          
+                --0.34%--folio_batch_move_lru
+                          |          
+                           --0.31%--folio_add_lru
+                                     filemap_add_folio
+                                     page_cache_ra_unbounded
+                                     filemap_get_pages
+                                     filemap_read
+                                     vfs_read
+                                     ksys_read
+                                     do_syscall_64
+                                     entry_SYSCALL_64
+                                     read
+                                     |          
+                                      --0.31%--0
+
+     6.95%  cat              [k] idle_cpu                                                  -      -            
+            |
+            ---idle_cpu
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+               |          
+               |--1.35%--rep_movs_alternative
+               |          _copy_to_iter
+               |          copy_page_to_iter
+               |          filemap_read
+               |          vfs_read
+               |          ksys_read
+               |          do_syscall_64
+               |          entry_SYSCALL_64
+               |          read
+               |          0
+               |          
+               |--0.67%--__filemap_add_folio
+               |          filemap_add_folio
+               |          page_cache_ra_unbounded
+               |          filemap_get_pages
+               |          filemap_read
+               |          vfs_read
+               |          ksys_read
+               |          do_syscall_64
+               |          entry_SYSCALL_64
+               |          read
+               |          |          
+               |           --0.67%--0
+               |          
+               |--0.60%--__pv_queued_spin_lock_slowpath
+               |          |          
+               |           --0.59%--_raw_spin_lock
+               |                     |          
+               |                      --0.56%--__remove_mapping
+               |                                shrink_folio_list
+               |                                shrink_lruvec
+               |                                shrink_node
+               |                                do_try_to_free_pages
+               |                                try_to_free_pages
+               |                                __alloc_pages_slowpath
+               |                                __alloc_frozen_pages_noprof
+               |                                alloc_pages_mpol
+               |                                |          
+               |                                 --0.56%--folio_alloc_noprof
+               |                                           page_cache_ra_unbounded
+               |                                           filemap_get_pages
+               |                                           filemap_read
+               |                                           vfs_read
+               |                                           ksys_read
+               |                                           do_syscall_64
+               |                                           entry_SYSCALL_64
+               |                                           read
+               |                                           |          
+               |                                            --0.56%--0
+               |          
+               |--0.43%--__rmqueue_pcplist
+               |          get_page_from_freelist
+               |          |          
+               |           --0.42%--__alloc_pages_slowpath
+               |                     __alloc_frozen_pages_noprof
+               |                     alloc_pages_mpol
+               |                     |          
+               |                      --0.42%--folio_alloc_noprof
+               |                                |          
+               |                                 --0.42%--page_cache_ra_unbounded
+               |                                           filemap_get_pages
+               |                                           filemap_read
+               |                                           vfs_read
+               |                                           ksys_read
+               |                                           do_syscall_64
+               |                                           entry_SYSCALL_64
+               |                                           read
+               |                                           0
+               |          
+               |--0.40%--folio_batch_move_lru
+               |          |          
+               |           --0.37%--folio_add_lru
+               |                     filemap_add_folio
+               |                     page_cache_ra_unbounded
+               |                     filemap_get_pages
+               |                     filemap_read
+               |                     vfs_read
+               |                     ksys_read
+               |                     do_syscall_64
+               |                     entry_SYSCALL_64
+               |                     read
+               |                     0
+               |          
+                --0.33%--free_pcppages_bulk
+
+     6.78%  cat              [k] __raw_callee_save___pv_queued_spin_unlock                 -      -            
+            |
+            ---__raw_callee_save___pv_queued_spin_unlock
+               perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+               |          
+               |--2.99%--rep_movs_alternative
+               |          _copy_to_iter
+               |          copy_page_to_iter
+               |          filemap_read
+               |          vfs_read
+               |          ksys_read
+               |          do_syscall_64
+               |          entry_SYSCALL_64
+               |          read
+               |          0
+               |          
+               |--0.38%--__filemap_add_folio
+               |          filemap_add_folio
+               |          page_cache_ra_unbounded
+               |          filemap_get_pages
+               |          filemap_read
+               |          vfs_read
+               |          ksys_read
+               |          do_syscall_64
+               |          entry_SYSCALL_64
+               |          read
+               |          |          
+               |           --0.38%--0
+               |          
+               |--0.37%--filemap_get_read_batch
+               |          filemap_get_pages
+               |          filemap_read
+               |          vfs_read
+               |          ksys_read
+               |          do_syscall_64
+               |          entry_SYSCALL_64
+               |          read
+               |          0
+               |          
+                --0.32%--__pv_queued_spin_lock_slowpath
+                          |          
+                           --0.32%--_raw_spin_lock
+
+     5.66%  swapper          [k] __intel_pmu_enable_all                                    -      -            
+            |
+            ---__intel_pmu_enable_all
+               perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+               |          
+                --5.60%--pv_native_safe_halt
+                          default_idle
+                          default_idle_call
+                          do_idle
+                          cpu_startup_entry
+                          |          
+                          |--4.95%--ap_starting
+                          |          common_startup_64
+                          |          
+                           --0.65%--0xffffffff822e542a
+                                     start_kernel
+                                     reserve_bios_regions
+                                     x86_64_start_kernel
+                                     common_startup_64
+
+     4.47%  swapper          [k] __raw_callee_save___pv_queued_spin_unlock                 -      -            
+            |
+            ---__raw_callee_save___pv_queued_spin_unlock
+               |          
+                --4.45%--perf_adjust_freq_unthr_context
+                          perf_event_task_tick
+                          sched_tick
+                          update_process_times
+                          tick_nohz_handler
+                          __hrtimer_run_queues
+                          hrtimer_interrupt
+                          __sysvec_apic_timer_interrupt
+                          sysvec_apic_timer_interrupt
+                          asm_sysvec_apic_timer_interrupt
+                          |          
+                           --4.42%--pv_native_safe_halt
+                                     default_idle
+                                     default_idle_call
+                                     do_idle
+                                     cpu_startup_entry
+                                     |          
+                                     |--3.78%--ap_starting
+                                     |          common_startup_64
+                                     |          
+                                      --0.63%--0xffffffff822e542a
+                                                start_kernel
+                                                reserve_bios_regions
+                                                x86_64_start_kernel
+                                                common_startup_64
+
+     4.27%  cat              [k] perf_adjust_freq_unthr_context                            -      -            
+            |
+            ---perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+               |          
+                --1.60%--rep_movs_alternative
+                          _copy_to_iter
+                          copy_page_to_iter
+                          filemap_read
+                          vfs_read
+                          ksys_read
+                          do_syscall_64
+                          entry_SYSCALL_64
+                          read
+                          0
+
+     4.04%  cat              [k] sched_tick                                                -      -            
+            |
+            ---sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+               |          
+               |--0.91%--rep_movs_alternative
+               |          _copy_to_iter
+               |          copy_page_to_iter
+               |          filemap_read
+               |          vfs_read
+               |          ksys_read
+               |          do_syscall_64
+               |          entry_SYSCALL_64
+               |          read
+               |          0
+               |          
+               |--0.34%--__filemap_add_folio
+               |          filemap_add_folio
+               |          page_cache_ra_unbounded
+               |          filemap_get_pages
+               |          filemap_read
+               |          vfs_read
+               |          ksys_read
+               |          do_syscall_64
+               |          entry_SYSCALL_64
+               |          read
+               |          0
+               |          
+                --0.33%--__pv_queued_spin_lock_slowpath
+                          |          
+                           --0.33%--_raw_spin_lock
+                                     |          
+                                      --0.31%--__remove_mapping
+                                                shrink_folio_list
+                                                shrink_lruvec
+                                                shrink_node
+                                                do_try_to_free_pages
+                                                try_to_free_pages
+                                                __alloc_pages_slowpath
+                                                __alloc_frozen_pages_noprof
+                                                alloc_pages_mpol
+                                                |          
+                                                 --0.31%--folio_alloc_noprof
+                                                           |          
+                                                            --0.31%--page_cache_ra_unbounded
+                                                                      filemap_get_pages
+                                                                      filemap_read
+                                                                      vfs_read
+                                                                      ksys_read
+                                                                      do_syscall_64
+                                                                      entry_SYSCALL_64
+                                                                      read
+                                                                      0
+
+     3.65%  swapper          [k] perf_adjust_freq_unthr_context                            -      -            
+            |
+            ---perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+               |          
+                --3.63%--pv_native_safe_halt
+                          default_idle
+                          default_idle_call
+                          do_idle
+                          cpu_startup_entry
+                          |          
+                          |--3.28%--ap_starting
+                          |          common_startup_64
+                          |          
+                           --0.35%--0xffffffff822e542a
+                                     start_kernel
+                                     reserve_bios_regions
+                                     x86_64_start_kernel
+                                     common_startup_64
+
+     3.65%  cat              [k] sched_balance_trigger                                     -      -            
+            |
+            ---sched_balance_trigger
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+               |          
+               |--0.61%--rep_movs_alternative
+               |          _copy_to_iter
+               |          copy_page_to_iter
+               |          filemap_read
+               |          vfs_read
+               |          ksys_read
+               |          do_syscall_64
+               |          entry_SYSCALL_64
+               |          read
+               |          0
+               |          
+               |--0.41%--__filemap_add_folio
+               |          filemap_add_folio
+               |          page_cache_ra_unbounded
+               |          filemap_get_pages
+               |          filemap_read
+               |          vfs_read
+               |          ksys_read
+               |          do_syscall_64
+               |          entry_SYSCALL_64
+               |          read
+               |          0
+               |          
+                --0.34%--__pv_queued_spin_lock_slowpath
+                          |          
+                           --0.34%--_raw_spin_lock
+                                     |          
+                                      --0.32%--__remove_mapping
+                                                shrink_folio_list
+                                                shrink_lruvec
+                                                shrink_node
+                                                do_try_to_free_pages
+                                                try_to_free_pages
+                                                __alloc_pages_slowpath
+                                                __alloc_frozen_pages_noprof
+                                                alloc_pages_mpol
+                                                |          
+                                                 --0.32%--folio_alloc_noprof
+                                                           page_cache_ra_unbounded
+                                                           filemap_get_pages
+                                                           filemap_read
+                                                           vfs_read
+                                                           ksys_read
+                                                           do_syscall_64
+                                                           entry_SYSCALL_64
+                                                           read
+                                                           0
+
+     2.60%  kswapd0          [k] sched_tick                                                -      -            
+            |
+            ---sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+               |          
+               |--0.63%--__remove_mapping
+               |          shrink_folio_list
+               |          shrink_lruvec
+               |          shrink_node
+               |          kswapd
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.38%--shrink_lruvec
+               |          shrink_node
+               |          kswapd
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+                --0.34%--free_pcppages_bulk
+                          free_frozen_page_commit
+                          free_unref_folios
+                          shrink_folio_list
+                          shrink_lruvec
+                          shrink_node
+                          kswapd
+                          kthread
+                          ret_from_fork
+                          ret_from_fork_asm
+
+     2.39%  churn            [k] idle_cpu                                                  -      -            
+            |
+            ---idle_cpu
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+
+     2.36%  churn            [k] __intel_pmu_enable_all                                    -      -            
+            |
+            ---__intel_pmu_enable_all
+               perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+
+     2.25%  kthreadd         [k] __raw_callee_save___pv_queued_spin_unlock                 -      -            
+            |
+            ---__raw_callee_save___pv_queued_spin_unlock
+               perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+               |          
+                --1.36%--crc32c_x86_3way
+                          crc32c_arch
+                          chksum_digest_arch
+                          crypto_shash_digest
+                          |          
+                           --1.36%--btrfs_data_csum_ok
+                                     btrfs_check_read_bio
+                                     process_scheduled_works
+                                     worker_thread
+                                     kthread
+                                     ret_from_fork
+                                     ret_from_fork_asm
+
+     2.21%  swapper          [k] idle_cpu                                                  -      -            
+            |
+            ---idle_cpu
+               |          
+                --2.19%--sched_tick
+                          update_process_times
+                          tick_nohz_handler
+                          __hrtimer_run_queues
+                          hrtimer_interrupt
+                          __sysvec_apic_timer_interrupt
+                          sysvec_apic_timer_interrupt
+                          asm_sysvec_apic_timer_interrupt
+                          |          
+                           --2.15%--pv_native_safe_halt
+                                     default_idle
+                                     default_idle_call
+                                     do_idle
+                                     cpu_startup_entry
+                                     |          
+                                      --1.87%--ap_starting
+                                                common_startup_64
+
+     2.12%  kthreadd         [k] __intel_pmu_enable_all                                    -      -            
+            |
+            ---__intel_pmu_enable_all
+               perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+               |          
+                --1.33%--crc32c_x86_3way
+                          crc32c_arch
+                          |          
+                           --1.33%--chksum_digest_arch
+                                     crypto_shash_digest
+                                     |          
+                                      --1.33%--btrfs_data_csum_ok
+                                                btrfs_check_read_bio
+                                                process_scheduled_works
+                                                worker_thread
+                                                kthread
+                                                ret_from_fork
+                                                ret_from_fork_asm
+
+     2.09%  kswapd0          [k] idle_cpu                                                  -      -            
+            |
+            ---idle_cpu
+               |          
+                --2.09%--sched_tick
+                          update_process_times
+                          tick_nohz_handler
+                          __hrtimer_run_queues
+                          hrtimer_interrupt
+                          __sysvec_apic_timer_interrupt
+                          sysvec_apic_timer_interrupt
+                          asm_sysvec_apic_timer_interrupt
+                          |          
+                          |--0.51%--__remove_mapping
+                          |          shrink_folio_list
+                          |          shrink_lruvec
+                          |          shrink_node
+                          |          kswapd
+                          |          kthread
+                          |          ret_from_fork
+                          |          ret_from_fork_asm
+                          |          
+                           --0.33%--shrink_lruvec
+                                     shrink_node
+                                     kswapd
+                                     kthread
+                                     ret_from_fork
+                                     ret_from_fork_asm
+
+     1.69%  churn            [k] sched_tick                                                -      -            
+            |
+            ---sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+
+     1.67%  swapper          [k] sched_tick                                                -      -            
+            |
+            ---sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+               |          
+                --1.65%--pv_native_safe_halt
+                          default_idle
+                          default_idle_call
+                          do_idle
+                          cpu_startup_entry
+                          |          
+                           --1.44%--ap_starting
+                                     common_startup_64
+
+     1.64%  rpm              [k] memcpy_orig                                               -      -            
+            |
+            ---memcpy_orig
+               copy_folio_from_iter_atomic
+               generic_perform_write
+               shmem_file_write_iter
+               iter_file_splice_write
+               direct_splice_actor
+               splice_direct_to_actor
+               do_splice_direct
+               ovl_copy_up_file
+               ovl_copy_up_flags.llvm.10606169807150136329
+               ovl_open.llvm.14484596832050821831
+               do_dentry_open
+               vfs_open
+               path_openat
+               do_filp_open
+               do_sys_openat2
+               __x64_sys_openat
+               do_syscall_64
+               entry_SYSCALL_64
+               __GI___libc_open
+               0x67616d697379732f
+
+     1.43%  kthreadd         [k] perf_adjust_freq_unthr_context                            -      -            
+            |
+            ---perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+               |          
+                --0.87%--crc32c_x86_3way
+                          crc32c_arch
+                          chksum_digest_arch
+                          crypto_shash_digest
+                          |          
+                           --0.87%--btrfs_data_csum_ok
+                                     btrfs_check_read_bio
+                                     process_scheduled_works
+                                     worker_thread
+                                     kthread
+                                     ret_from_fork
+                                     ret_from_fork_asm
+
+     1.42%  kswapd0          [k] __intel_pmu_enable_all                                    -      -            
+            |
+            ---__intel_pmu_enable_all
+               perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+               |          
+                --0.35%--__remove_mapping
+                          shrink_folio_list
+                          shrink_lruvec
+                          shrink_node
+                          kswapd
+                          kthread
+                          ret_from_fork
+                          ret_from_fork_asm
+
+     1.27%  churn            [k] __raw_callee_save___pv_queued_spin_unlock                 -      -            
+            |
+            ---__raw_callee_save___pv_queued_spin_unlock
+               perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+
+     1.22%  churn            [k] perf_adjust_freq_unthr_context                            -      -            
+            |
+            ---perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+
+     1.22%  kswapd0          [k] sched_balance_trigger                                     -      -            
+            |
+            ---sched_balance_trigger
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+               |          
+                --0.31%--__remove_mapping
+                          shrink_folio_list
+                          shrink_lruvec
+                          shrink_node
+                          kswapd
+                          kthread
+                          ret_from_fork
+                          ret_from_fork_asm
+
+     0.85%  swapper          [k] perf_event_task_tick                                      -      -            
+            |
+            ---perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+               |          
+                --0.84%--pv_native_safe_halt
+                          default_idle
+                          default_idle_call
+                          do_idle
+                          cpu_startup_entry
+                          |          
+                           --0.71%--ap_starting
+                                     common_startup_64
+
+     0.77%  kthreadd         [k] sched_tick                                                -      -            
+            |
+            ---sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+               |          
+                --0.49%--crc32c_x86_3way
+                          crc32c_arch
+                          chksum_digest_arch
+                          crypto_shash_digest
+                          |          
+                           --0.49%--btrfs_data_csum_ok
+                                     btrfs_check_read_bio
+                                     process_scheduled_works
+                                     worker_thread
+                                     kthread
+                                     ret_from_fork
+                                     ret_from_fork_asm
+
+     0.72%  kthreadd         [k] wq_worker_tick                                            -      -            
+            |
+            ---wq_worker_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+               |          
+                --0.46%--crc32c_x86_3way
+                          crc32c_arch
+                          chksum_digest_arch
+                          crypto_shash_digest
+                          |          
+                           --0.46%--btrfs_data_csum_ok
+                                     btrfs_check_read_bio
+                                     process_scheduled_works
+                                     worker_thread
+                                     kthread
+                                     ret_from_fork
+                                     ret_from_fork_asm
+
+     0.63%  kswapd0          [k] __raw_callee_save___pv_queued_spin_unlock                 -      -            
+            |
+            ---__raw_callee_save___pv_queued_spin_unlock
+               perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+
+     0.62%  cat              [k] perf_event_task_tick                                      -      -            
+            |
+            ---perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+
+     0.60%  churn            [k] perf_event_task_tick                                      -      -            
+            |
+            ---perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+
+     0.59%  kswapd0          [k] perf_adjust_freq_unthr_context                            -      -            
+            |
+            ---perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+
+     0.54%  kthreadd         [k] kthread_data                                              -      -            
+            |
+            ---kthread_data
+               wq_worker_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+               |          
+                --0.32%--crc32c_x86_3way
+                          crc32c_arch
+                          chksum_digest_arch
+                          crypto_shash_digest
+                          |          
+                           --0.31%--btrfs_data_csum_ok
+                                     btrfs_check_read_bio
+                                     process_scheduled_works
+                                     worker_thread
+                                     kthread
+                                     ret_from_fork
+                                     ret_from_fork_asm
+
+     0.48%  kworker/u32:2    [k] __raw_callee_save___pv_queued_spin_unlock                 -      -            
+            |
+            ---__raw_callee_save___pv_queued_spin_unlock
+               perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+
+     0.46%  kworker/u32:0-e  [k] __raw_callee_save___pv_queued_spin_unlock                 -      -            
+            |
+            ---__raw_callee_save___pv_queued_spin_unlock
+               perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+
+     0.45%  kswapd0          [k] perf_event_task_tick                                      -      -            
+            |
+            ---perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+
+     0.44%  kworker/u32:1-e  [k] __raw_callee_save___pv_queued_spin_unlock                 -      -            
+            |
+            ---__raw_callee_save___pv_queued_spin_unlock
+               perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+
+     0.43%  kworker/u32:2    [k] __intel_pmu_enable_all                                    -      -            
+            |
+            ---__intel_pmu_enable_all
+               perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+
+     0.41%  churn            [k] sched_balance_trigger                                     -      -            
+            |
+            ---sched_balance_trigger
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+
+     0.41%  kworker/u32:1-e  [k] __intel_pmu_enable_all                                    -      -            
+            |
+            ---__intel_pmu_enable_all
+               perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+
+     0.41%  kworker/u32:0-e  [k] __intel_pmu_enable_all                                    -      -            
+            |
+            ---__intel_pmu_enable_all
+               perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+
+     0.37%  hold-inodes      [k] idle_cpu                                                  -      -            
+            |
+            ---idle_cpu
+               |          
+                --0.37%--sched_tick
+                          update_process_times
+                          tick_nohz_handler
+                          __hrtimer_run_queues
+                          hrtimer_interrupt
+                          __sysvec_apic_timer_interrupt
+                          sysvec_apic_timer_interrupt
+                          asm_sysvec_apic_timer_interrupt
+
+     0.37%  dd               [k] idle_cpu                                                  -      -            
+            |
+            ---idle_cpu
+               |          
+                --0.37%--sched_tick
+                          update_process_times
+                          tick_nohz_handler
+                          __hrtimer_run_queues
+                          hrtimer_interrupt
+                          __sysvec_apic_timer_interrupt
+                          sysvec_apic_timer_interrupt
+                          asm_sysvec_apic_timer_interrupt
+
+     0.37%  hold-inodes      [k] __intel_pmu_enable_all                                    -      -            
+            |
+            ---__intel_pmu_enable_all
+               perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+
+
+
+#
+# (Tip: To only collect call graph on one event use perf record -e cpu/cpu-cycles,callgraph=1/,branches ; perf report --show-ref-call-graph)
+#

@@ -1,0 +1,764 @@
+E0508 12:57:09.266815   325 SmcTiers.cpp:264] Failed to get SMC tiers for localhost. Client: falcon_client_config_provider. Timeout: none. Exception: 'apache::thrift::transport::TTransportException: Dropping unsent request. Connection closed after: apache::thrift::transport::TTransportException: AsyncSocketException: connect failed, type = Socket not open, errno = 111 (Connection refused): Connection refused'
+I0508 12:57:09.272966   325 SmcTiers.cpp:214] Reading tiers from /etc/smc.tiers
+E0508 12:57:09.266788   324 SmcTiers.cpp:264] Failed to get SMC tiers for localhost. Client: falcon_client_config_provider. Timeout: none. Exception: 'apache::thrift::transport::TTransportException: Dropping unsent request. Connection closed after: apache::thrift::transport::TTransportException: AsyncSocketException: connect failed, type = Socket not open, errno = 111 (Connection refused): Connection refused'
+I0508 12:57:09.274035   324 SmcTiers.cpp:214] Reading tiers from /etc/smc.tiers
+E0508 12:57:09.300474   338 ProducerWriteProcessor.cpp:153] Received unexpected response in Producer:  (returning INTERNAL_ERROR to the caller) [unexpectedResponse=5]
+E0508 12:57:09.526309   323 SmcTiers.cpp:264] Failed to get SMC tiers for localhost. Client: cfgr-logger. Timeout: 1000ms. Exception: 'apache::thrift::transport::TTransportException: Dropping unsent request. Connection closed after: apache::thrift::transport::TTransportException: AsyncSocketException: connect failed, type = Socket not open, errno = 111 (Connection refused): Connection refused'
+I0508 12:57:09.526834   323 SmcTiers.cpp:214] Reading tiers from /etc/smc.tiers
+/home/borisb/local/scripts/sh/em-shrinker-xa-contention/trace-shrinker.bt:33:2-21: WARNING: Return value discarded.
+    delete(@start[tid]);
+    ~~~~~~~~~~~~~~~~~~~
+/home/borisb/local/scripts/sh/em-shrinker-xa-contention/trace-shrinker.bt:34:2-21: WARNING: Return value discarded.
+    delete(@calls[tid]);
+    ~~~~~~~~~~~~~~~~~~~
+Attached 4 probes
+find_first_inode_to_shrink: 52529 us, cond_resched=0
+find_first_inode_to_shrink: 34289 us, cond_resched=0
+find_first_inode_to_shrink: 31795 us, cond_resched=0
+find_first_inode_to_shrink: 411 us, cond_resched=0
+find_first_inode_to_shrink: 58521 us, cond_resched=0
+find_first_inode_to_shrink: 517 us, cond_resched=0
+find_first_inode_to_shrink: 37848 us, cond_resched=0
+find_first_inode_to_shrink: 44971 us, cond_resched=0
+find_first_inode_to_shrink: 28898 us, cond_resched=0
+find_first_inode_to_shrink: 29219 us, cond_resched=0
+@hold_us:
+[0]                    5 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@               |
+[1]                    2 |@@@@@@@@@@@@@@                                      |
+[2, 4)                 6 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@        |
+[4, 8)                 6 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@        |
+[8, 16)                7 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[16, 32)               1 |@@@@@@@                                             |
+[32, 64)               0 |                                                    |
+[64, 128)              0 |                                                    |
+[128, 256)             0 |                                                    |
+[256, 512)             1 |@@@@@@@                                             |
+[512, 1K)              1 |@@@@@@@                                             |
+[1K, 2K)               0 |                                                    |
+[2K, 4K)               0 |                                                    |
+[4K, 8K)               0 |                                                    |
+[8K, 16K)              0 |                                                    |
+[16K, 32K)             3 |@@@@@@@@@@@@@@@@@@@@@@                              |
+[32K, 64K)             5 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@               |
+
+@cond_resched_calls:
+[0]                   37 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+
+find_first_inode_to_shrink: 31073 us, cond_resched=0
+find_first_inode_to_shrink: 26224 us, cond_resched=0
+find_first_inode_to_shrink: 27272 us, cond_resched=0
+find_first_inode_to_shrink: 31705 us, cond_resched=0
+find_first_inode_to_shrink: 36873 us, cond_resched=0
+find_first_inode_to_shrink: 40852 us, cond_resched=0
+find_first_inode_to_shrink: 28292 us, cond_resched=0
+find_first_inode_to_shrink: 34132 us, cond_resched=0
+find_first_inode_to_shrink: 29606 us, cond_resched=0
+find_first_inode_to_shrink: 41911 us, cond_resched=0
+find_first_inode_to_shrink: 26504 us, cond_resched=0
+find_first_inode_to_shrink: 38853 us, cond_resched=0
+find_first_inode_to_shrink: 27137 us, cond_resched=0
+find_first_inode_to_shrink: 27345 us, cond_resched=0
+find_first_inode_to_shrink: 31081 us, cond_resched=0
+find_first_inode_to_shrink: 41859 us, cond_resched=0
+find_first_inode_to_shrink: 34243 us, cond_resched=0
+find_first_inode_to_shrink: 30748 us, cond_resched=0
+find_first_inode_to_shrink: 25839 us, cond_resched=0
+find_first_inode_to_shrink: 34548 us, cond_resched=0
+find_first_inode_to_shrink: 32334 us, cond_resched=0
+find_first_inode_to_shrink: 28458 us, cond_resched=0
+find_first_inode_to_shrink: 26584 us, cond_resched=0
+find_first_inode_to_shrink: 33907 us, cond_resched=0
+find_first_inode_to_shrink: 38923 us, cond_resched=0
+find_first_inode_to_shrink: 30992 us, cond_resched=0
+find_first_inode_to_shrink: 54907 us, cond_resched=0
+find_first_inode_to_shrink: 40174 us, cond_resched=0
+find_first_inode_to_shrink: 31697 us, cond_resched=0
+find_first_inode_to_shrink: 28906 us, cond_resched=0
+find_first_inode_to_shrink: 26105 us, cond_resched=0
+find_first_inode_to_shrink: 25342 us, cond_resched=0
+find_first_inode_to_shrink: 38442 us, cond_resched=0
+find_first_inode_to_shrink: 26128 us, cond_resched=0
+find_first_inode_to_shrink: 39877 us, cond_resched=0
+find_first_inode_to_shrink: 40044 us, cond_resched=0
+find_first_inode_to_shrink: 26772 us, cond_resched=0
+find_first_inode_to_shrink: 68632 us, cond_resched=0
+find_first_inode_to_shrink: 27690 us, cond_resched=0
+find_first_inode_to_shrink: 93127 us, cond_resched=0
+find_first_inode_to_shrink: 59441 us, cond_resched=0
+find_first_inode_to_shrink: 27110 us, cond_resched=0
+find_first_inode_to_shrink: 45979 us, cond_resched=0
+find_first_inode_to_shrink: 30042 us, cond_resched=0
+find_first_inode_to_shrink: 26358 us, cond_resched=0
+find_first_inode_to_shrink: 35562 us, cond_resched=0
+find_first_inode_to_shrink: 34711 us, cond_resched=0
+find_first_inode_to_shrink: 46333 us, cond_resched=0
+find_first_inode_to_shrink: 30160 us, cond_resched=0
+find_first_inode_to_shrink: 28375 us, cond_resched=0
+find_first_inode_to_shrink: 33809 us, cond_resched=0
+find_first_inode_to_shrink: 27747 us, cond_resched=0
+find_first_inode_to_shrink: 30903 us, cond_resched=0
+find_first_inode_to_shrink: 43030 us, cond_resched=0
+find_first_inode_to_shrink: 30927 us, cond_resched=0
+find_first_inode_to_shrink: 25667 us, cond_resched=0
+find_first_inode_to_shrink: 33914 us, cond_resched=0
+find_first_inode_to_shrink: 33967 us, cond_resched=0
+find_first_inode_to_shrink: 239 us, cond_resched=0
+find_first_inode_to_shrink: 33143 us, cond_resched=0
+find_first_inode_to_shrink: 25951 us, cond_resched=0
+find_first_inode_to_shrink: 27626 us, cond_resched=0
+find_first_inode_to_shrink: 27161 us, cond_resched=0
+find_first_inode_to_shrink: 34090 us, cond_resched=0
+find_first_inode_to_shrink: 26255 us, cond_resched=0
+find_first_inode_to_shrink: 27632 us, cond_resched=0
+find_first_inode_to_shrink: 42492 us, cond_resched=0
+find_first_inode_to_shrink: 33331 us, cond_resched=0
+find_first_inode_to_shrink: 44560 us, cond_resched=0
+find_first_inode_to_shrink: 33821 us, cond_resched=0
+find_first_inode_to_shrink: 27732 us, cond_resched=0
+find_first_inode_to_shrink: 34123 us, cond_resched=0
+find_first_inode_to_shrink: 29355 us, cond_resched=0
+find_first_inode_to_shrink: 37956 us, cond_resched=0
+find_first_inode_to_shrink: 34203 us, cond_resched=0
+find_first_inode_to_shrink: 37509 us, cond_resched=0
+find_first_inode_to_shrink: 40455 us, cond_resched=0
+find_first_inode_to_shrink: 34588 us, cond_resched=0
+find_first_inode_to_shrink: 28013 us, cond_resched=0
+find_first_inode_to_shrink: 32953 us, cond_resched=0
+find_first_inode_to_shrink: 27785 us, cond_resched=0
+find_first_inode_to_shrink: 150 us, cond_resched=0
+find_first_inode_to_shrink: 30093 us, cond_resched=0
+find_first_inode_to_shrink: 31551 us, cond_resched=0
+find_first_inode_to_shrink: 35181 us, cond_resched=0
+find_first_inode_to_shrink: 200 us, cond_resched=0
+find_first_inode_to_shrink: 27520 us, cond_resched=0
+find_first_inode_to_shrink: 30669 us, cond_resched=0
+find_first_inode_to_shrink: 205 us, cond_resched=0
+find_first_inode_to_shrink: 40121 us, cond_resched=0
+find_first_inode_to_shrink: 26998 us, cond_resched=0
+find_first_inode_to_shrink: 31794 us, cond_resched=0
+@hold_us:
+[0]                   68 |@@@@@@@@@@@@@@@@@@@@@@@@@@                          |
+[1]                   21 |@@@@@@@@                                            |
+[2, 4)                66 |@@@@@@@@@@@@@@@@@@@@@@@@@                           |
+[4, 8)                71 |@@@@@@@@@@@@@@@@@@@@@@@@@@@                         |
+[8, 16)              133 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[16, 32)               9 |@@@                                                 |
+[32, 64)               3 |@                                                   |
+[64, 128)              0 |                                                    |
+[128, 256)             4 |@                                                   |
+[256, 512)             1 |                                                    |
+[512, 1K)              1 |                                                    |
+[1K, 2K)               0 |                                                    |
+[2K, 4K)               0 |                                                    |
+[4K, 8K)               0 |                                                    |
+[8K, 16K)              0 |                                                    |
+[16K, 32K)            50 |@@@@@@@@@@@@@@@@@@@                                 |
+[32K, 64K)            44 |@@@@@@@@@@@@@@@@@                                   |
+[64K, 128K)            2 |                                                    |
+
+@cond_resched_calls:
+[0]                  473 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+
+find_first_inode_to_shrink: 37535 us, cond_resched=0
+find_first_inode_to_shrink: 28779 us, cond_resched=0
+find_first_inode_to_shrink: 27418 us, cond_resched=0
+find_first_inode_to_shrink: 28904 us, cond_resched=0
+find_first_inode_to_shrink: 33016 us, cond_resched=0
+find_first_inode_to_shrink: 26429 us, cond_resched=0
+find_first_inode_to_shrink: 36008 us, cond_resched=0
+find_first_inode_to_shrink: 28460 us, cond_resched=0
+find_first_inode_to_shrink: 29039 us, cond_resched=0
+find_first_inode_to_shrink: 41035 us, cond_resched=0
+find_first_inode_to_shrink: 27717 us, cond_resched=0
+find_first_inode_to_shrink: 31390 us, cond_resched=0
+find_first_inode_to_shrink: 32949 us, cond_resched=0
+find_first_inode_to_shrink: 33557 us, cond_resched=0
+find_first_inode_to_shrink: 40254 us, cond_resched=0
+find_first_inode_to_shrink: 34219 us, cond_resched=0
+find_first_inode_to_shrink: 38515 us, cond_resched=0
+find_first_inode_to_shrink: 47101 us, cond_resched=0
+find_first_inode_to_shrink: 36370 us, cond_resched=0
+find_first_inode_to_shrink: 37562 us, cond_resched=0
+find_first_inode_to_shrink: 35375 us, cond_resched=0
+find_first_inode_to_shrink: 35122 us, cond_resched=0
+find_first_inode_to_shrink: 33997 us, cond_resched=0
+find_first_inode_to_shrink: 37830 us, cond_resched=0
+find_first_inode_to_shrink: 27640 us, cond_resched=0
+find_first_inode_to_shrink: 39863 us, cond_resched=0
+find_first_inode_to_shrink: 30165 us, cond_resched=0
+find_first_inode_to_shrink: 32218 us, cond_resched=0
+find_first_inode_to_shrink: 28656 us, cond_resched=0
+find_first_inode_to_shrink: 28253 us, cond_resched=0
+find_first_inode_to_shrink: 32583 us, cond_resched=0
+find_first_inode_to_shrink: 36165 us, cond_resched=0
+find_first_inode_to_shrink: 27998 us, cond_resched=0
+find_first_inode_to_shrink: 34909 us, cond_resched=0
+find_first_inode_to_shrink: 38112 us, cond_resched=0
+find_first_inode_to_shrink: 30560 us, cond_resched=0
+find_first_inode_to_shrink: 34024 us, cond_resched=0
+find_first_inode_to_shrink: 37735 us, cond_resched=0
+find_first_inode_to_shrink: 27492 us, cond_resched=0
+find_first_inode_to_shrink: 54530 us, cond_resched=0
+find_first_inode_to_shrink: 38252 us, cond_resched=0
+find_first_inode_to_shrink: 96313 us, cond_resched=0
+find_first_inode_to_shrink: 51101 us, cond_resched=0
+find_first_inode_to_shrink: 296 us, cond_resched=0
+find_first_inode_to_shrink: 26553 us, cond_resched=0
+find_first_inode_to_shrink: 25969 us, cond_resched=0
+find_first_inode_to_shrink: 27922 us, cond_resched=0
+find_first_inode_to_shrink: 29068 us, cond_resched=0
+find_first_inode_to_shrink: 28138 us, cond_resched=0
+find_first_inode_to_shrink: 28353 us, cond_resched=0
+find_first_inode_to_shrink: 34120 us, cond_resched=0
+find_first_inode_to_shrink: 28719 us, cond_resched=0
+find_first_inode_to_shrink: 35343 us, cond_resched=0
+find_first_inode_to_shrink: 39695 us, cond_resched=0
+find_first_inode_to_shrink: 27379 us, cond_resched=0
+find_first_inode_to_shrink: 217 us, cond_resched=0
+find_first_inode_to_shrink: 57618 us, cond_resched=0
+find_first_inode_to_shrink: 35924 us, cond_resched=0
+find_first_inode_to_shrink: 31716 us, cond_resched=0
+find_first_inode_to_shrink: 34259 us, cond_resched=0
+find_first_inode_to_shrink: 39435 us, cond_resched=0
+find_first_inode_to_shrink: 45178 us, cond_resched=0
+find_first_inode_to_shrink: 30901 us, cond_resched=0
+find_first_inode_to_shrink: 31825 us, cond_resched=0
+find_first_inode_to_shrink: 26298 us, cond_resched=0
+find_first_inode_to_shrink: 213 us, cond_resched=0
+find_first_inode_to_shrink: 38707 us, cond_resched=0
+find_first_inode_to_shrink: 35607 us, cond_resched=0
+find_first_inode_to_shrink: 216 us, cond_resched=0
+find_first_inode_to_shrink: 28593 us, cond_resched=0
+find_first_inode_to_shrink: 35474 us, cond_resched=0
+find_first_inode_to_shrink: 35720 us, cond_resched=0
+find_first_inode_to_shrink: 26716 us, cond_resched=0
+find_first_inode_to_shrink: 27989 us, cond_resched=0
+find_first_inode_to_shrink: 36588 us, cond_resched=0
+find_first_inode_to_shrink: 31244 us, cond_resched=0
+find_first_inode_to_shrink: 31141 us, cond_resched=0
+find_first_inode_to_shrink: 43373 us, cond_resched=0
+find_first_inode_to_shrink: 28228 us, cond_resched=0
+find_first_inode_to_shrink: 47058 us, cond_resched=0
+find_first_inode_to_shrink: 29697 us, cond_resched=0
+find_first_inode_to_shrink: 30010 us, cond_resched=0
+find_first_inode_to_shrink: 33956 us, cond_resched=0
+find_first_inode_to_shrink: 31294 us, cond_resched=0
+find_first_inode_to_shrink: 27601 us, cond_resched=0
+find_first_inode_to_shrink: 30481 us, cond_resched=0
+find_first_inode_to_shrink: 32949 us, cond_resched=0
+find_first_inode_to_shrink: 31253 us, cond_resched=0
+find_first_inode_to_shrink: 28435 us, cond_resched=0
+find_first_inode_to_shrink: 31271 us, cond_resched=0
+find_first_inode_to_shrink: 36542 us, cond_resched=0
+find_first_inode_to_shrink: 51278 us, cond_resched=0
+find_first_inode_to_shrink: 29551 us, cond_resched=0
+find_first_inode_to_shrink: 38951 us, cond_resched=0
+@hold_us:
+[0]                  131 |@@@@@@@@@@@@@@@@@@@@@@@@@                           |
+[1]                   43 |@@@@@@@@                                            |
+[2, 4)               120 |@@@@@@@@@@@@@@@@@@@@@@@                             |
+[4, 8)               127 |@@@@@@@@@@@@@@@@@@@@@@@@                            |
+[8, 16)              271 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[16, 32)              22 |@@@@                                                |
+[32, 64)               5 |                                                    |
+[64, 128)              0 |                                                    |
+[128, 256)             7 |@                                                   |
+[256, 512)             2 |                                                    |
+[512, 1K)              1 |                                                    |
+[1K, 2K)               0 |                                                    |
+[2K, 4K)               0 |                                                    |
+[4K, 8K)               0 |                                                    |
+[8K, 16K)              0 |                                                    |
+[16K, 32K)            94 |@@@@@@@@@@@@@@@@@@                                  |
+[32K, 64K)            89 |@@@@@@@@@@@@@@@@@                                   |
+[64K, 128K)            3 |                                                    |
+
+@cond_resched_calls:
+[0]                  915 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+
+find_first_inode_to_shrink: 33397 us, cond_resched=0
+find_first_inode_to_shrink: 33046 us, cond_resched=0
+find_first_inode_to_shrink: 29176 us, cond_resched=0
+find_first_inode_to_shrink: 36201 us, cond_resched=0
+find_first_inode_to_shrink: 36391 us, cond_resched=0
+find_first_inode_to_shrink: 211 us, cond_resched=0
+find_first_inode_to_shrink: 30955 us, cond_resched=0
+find_first_inode_to_shrink: 30053 us, cond_resched=0
+find_first_inode_to_shrink: 37634 us, cond_resched=0
+find_first_inode_to_shrink: 58994 us, cond_resched=0
+find_first_inode_to_shrink: 43274 us, cond_resched=0
+find_first_inode_to_shrink: 26694 us, cond_resched=0
+find_first_inode_to_shrink: 34733 us, cond_resched=0
+find_first_inode_to_shrink: 27661 us, cond_resched=0
+find_first_inode_to_shrink: 28325 us, cond_resched=0
+find_first_inode_to_shrink: 376 us, cond_resched=0
+find_first_inode_to_shrink: 32544 us, cond_resched=0
+find_first_inode_to_shrink: 33018 us, cond_resched=0
+find_first_inode_to_shrink: 37998 us, cond_resched=0
+find_first_inode_to_shrink: 43389 us, cond_resched=0
+find_first_inode_to_shrink: 30003 us, cond_resched=0
+find_first_inode_to_shrink: 29897 us, cond_resched=0
+find_first_inode_to_shrink: 47255 us, cond_resched=0
+find_first_inode_to_shrink: 27748 us, cond_resched=0
+find_first_inode_to_shrink: 35785 us, cond_resched=0
+find_first_inode_to_shrink: 34927 us, cond_resched=0
+find_first_inode_to_shrink: 35192 us, cond_resched=0
+find_first_inode_to_shrink: 38123 us, cond_resched=0
+find_first_inode_to_shrink: 29824 us, cond_resched=0
+find_first_inode_to_shrink: 26319 us, cond_resched=0
+find_first_inode_to_shrink: 26277 us, cond_resched=0
+find_first_inode_to_shrink: 28023 us, cond_resched=0
+find_first_inode_to_shrink: 31432 us, cond_resched=0
+find_first_inode_to_shrink: 30746 us, cond_resched=0
+find_first_inode_to_shrink: 30893 us, cond_resched=0
+find_first_inode_to_shrink: 30486 us, cond_resched=0
+find_first_inode_to_shrink: 32889 us, cond_resched=0
+find_first_inode_to_shrink: 30478 us, cond_resched=0
+find_first_inode_to_shrink: 32256 us, cond_resched=0
+find_first_inode_to_shrink: 29294 us, cond_resched=0
+find_first_inode_to_shrink: 47030 us, cond_resched=0
+find_first_inode_to_shrink: 29417 us, cond_resched=0
+find_first_inode_to_shrink: 28887 us, cond_resched=0
+find_first_inode_to_shrink: 37153 us, cond_resched=0
+find_first_inode_to_shrink: 36503 us, cond_resched=0
+find_first_inode_to_shrink: 29507 us, cond_resched=0
+find_first_inode_to_shrink: 41992 us, cond_resched=0
+find_first_inode_to_shrink: 34789 us, cond_resched=0
+find_first_inode_to_shrink: 25564 us, cond_resched=0
+find_first_inode_to_shrink: 101 us, cond_resched=0
+find_first_inode_to_shrink: 32447 us, cond_resched=0
+find_first_inode_to_shrink: 42069 us, cond_resched=0
+find_first_inode_to_shrink: 31390 us, cond_resched=0
+find_first_inode_to_shrink: 36223 us, cond_resched=0
+find_first_inode_to_shrink: 32667 us, cond_resched=0
+find_first_inode_to_shrink: 32123 us, cond_resched=0
+find_first_inode_to_shrink: 44225 us, cond_resched=0
+find_first_inode_to_shrink: 39087 us, cond_resched=0
+find_first_inode_to_shrink: 26843 us, cond_resched=0
+find_first_inode_to_shrink: 46853 us, cond_resched=0
+find_first_inode_to_shrink: 34150 us, cond_resched=0
+find_first_inode_to_shrink: 33481 us, cond_resched=0
+find_first_inode_to_shrink: 30927 us, cond_resched=0
+find_first_inode_to_shrink: 35556 us, cond_resched=0
+find_first_inode_to_shrink: 37962 us, cond_resched=0
+find_first_inode_to_shrink: 35906 us, cond_resched=0
+find_first_inode_to_shrink: 25816 us, cond_resched=0
+find_first_inode_to_shrink: 30705 us, cond_resched=0
+find_first_inode_to_shrink: 30586 us, cond_resched=0
+find_first_inode_to_shrink: 29963 us, cond_resched=0
+find_first_inode_to_shrink: 39973 us, cond_resched=0
+find_first_inode_to_shrink: 26673 us, cond_resched=0
+find_first_inode_to_shrink: 25899 us, cond_resched=0
+find_first_inode_to_shrink: 31106 us, cond_resched=0
+find_first_inode_to_shrink: 34918 us, cond_resched=0
+find_first_inode_to_shrink: 41819 us, cond_resched=0
+find_first_inode_to_shrink: 31947 us, cond_resched=0
+find_first_inode_to_shrink: 26145 us, cond_resched=0
+find_first_inode_to_shrink: 33210 us, cond_resched=0
+find_first_inode_to_shrink: 43102 us, cond_resched=0
+find_first_inode_to_shrink: 27165 us, cond_resched=0
+find_first_inode_to_shrink: 35514 us, cond_resched=0
+find_first_inode_to_shrink: 32980 us, cond_resched=0
+find_first_inode_to_shrink: 27769 us, cond_resched=0
+find_first_inode_to_shrink: 42349 us, cond_resched=0
+find_first_inode_to_shrink: 36973 us, cond_resched=0
+find_first_inode_to_shrink: 38688 us, cond_resched=0
+find_first_inode_to_shrink: 28927 us, cond_resched=0
+find_first_inode_to_shrink: 33245 us, cond_resched=0
+find_first_inode_to_shrink: 38249 us, cond_resched=0
+find_first_inode_to_shrink: 39885 us, cond_resched=0
+find_first_inode_to_shrink: 32819 us, cond_resched=0
+find_first_inode_to_shrink: 29857 us, cond_resched=0
+find_first_inode_to_shrink: 174 us, cond_resched=0
+find_first_inode_to_shrink: 32631 us, cond_resched=0
+@hold_us:
+[0]                  195 |@@@@@@@@@@@@@@@@@@@@@@@@                            |
+[1]                   65 |@@@@@@@@                                            |
+[2, 4)               169 |@@@@@@@@@@@@@@@@@@@@@                               |
+[4, 8)               197 |@@@@@@@@@@@@@@@@@@@@@@@@@                           |
+[8, 16)              407 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[16, 32)              32 |@@@@                                                |
+[32, 64)               9 |@                                                   |
+[64, 128)              1 |                                                    |
+[128, 256)             9 |@                                                   |
+[256, 512)             3 |                                                    |
+[512, 1K)              1 |                                                    |
+[1K, 2K)               0 |                                                    |
+[2K, 4K)               0 |                                                    |
+[4K, 8K)               0 |                                                    |
+[8K, 16K)              0 |                                                    |
+[16K, 32K)           139 |@@@@@@@@@@@@@@@@@                                   |
+[32K, 64K)           135 |@@@@@@@@@@@@@@@@@                                   |
+[64K, 128K)            3 |                                                    |
+
+@cond_resched_calls:
+[0]                 1365 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+
+find_first_inode_to_shrink: 36829 us, cond_resched=0
+find_first_inode_to_shrink: 32338 us, cond_resched=0
+find_first_inode_to_shrink: 33308 us, cond_resched=0
+find_first_inode_to_shrink: 37602 us, cond_resched=0
+find_first_inode_to_shrink: 31386 us, cond_resched=0
+find_first_inode_to_shrink: 37176 us, cond_resched=0
+find_first_inode_to_shrink: 26375 us, cond_resched=0
+find_first_inode_to_shrink: 28845 us, cond_resched=0
+find_first_inode_to_shrink: 32967 us, cond_resched=0
+find_first_inode_to_shrink: 29781 us, cond_resched=0
+find_first_inode_to_shrink: 38656 us, cond_resched=0
+find_first_inode_to_shrink: 41427 us, cond_resched=0
+find_first_inode_to_shrink: 28715 us, cond_resched=0
+find_first_inode_to_shrink: 27659 us, cond_resched=0
+find_first_inode_to_shrink: 29789 us, cond_resched=0
+find_first_inode_to_shrink: 34707 us, cond_resched=0
+find_first_inode_to_shrink: 49160 us, cond_resched=0
+find_first_inode_to_shrink: 26899 us, cond_resched=0
+find_first_inode_to_shrink: 32435 us, cond_resched=0
+find_first_inode_to_shrink: 296 us, cond_resched=0
+find_first_inode_to_shrink: 46911 us, cond_resched=0
+find_first_inode_to_shrink: 27646 us, cond_resched=0
+find_first_inode_to_shrink: 29593 us, cond_resched=0
+find_first_inode_to_shrink: 32686 us, cond_resched=0
+find_first_inode_to_shrink: 34563 us, cond_resched=0
+find_first_inode_to_shrink: 35695 us, cond_resched=0
+find_first_inode_to_shrink: 30718 us, cond_resched=0
+find_first_inode_to_shrink: 26289 us, cond_resched=0
+find_first_inode_to_shrink: 37208 us, cond_resched=0
+find_first_inode_to_shrink: 31201 us, cond_resched=0
+find_first_inode_to_shrink: 36534 us, cond_resched=0
+find_first_inode_to_shrink: 29912 us, cond_resched=0
+find_first_inode_to_shrink: 27255 us, cond_resched=0
+find_first_inode_to_shrink: 25820 us, cond_resched=0
+find_first_inode_to_shrink: 30661 us, cond_resched=0
+find_first_inode_to_shrink: 26660 us, cond_resched=0
+find_first_inode_to_shrink: 38206 us, cond_resched=0
+find_first_inode_to_shrink: 29907 us, cond_resched=0
+find_first_inode_to_shrink: 25615 us, cond_resched=0
+find_first_inode_to_shrink: 32960 us, cond_resched=0
+find_first_inode_to_shrink: 26393 us, cond_resched=0
+find_first_inode_to_shrink: 33501 us, cond_resched=0
+find_first_inode_to_shrink: 41516 us, cond_resched=0
+find_first_inode_to_shrink: 28250 us, cond_resched=0
+find_first_inode_to_shrink: 37597 us, cond_resched=0
+find_first_inode_to_shrink: 37909 us, cond_resched=0
+find_first_inode_to_shrink: 27877 us, cond_resched=0
+find_first_inode_to_shrink: 28903 us, cond_resched=0
+find_first_inode_to_shrink: 39094 us, cond_resched=0
+find_first_inode_to_shrink: 28744 us, cond_resched=0
+find_first_inode_to_shrink: 32687 us, cond_resched=0
+find_first_inode_to_shrink: 34153 us, cond_resched=0
+find_first_inode_to_shrink: 41374 us, cond_resched=0
+find_first_inode_to_shrink: 31283 us, cond_resched=0
+find_first_inode_to_shrink: 28986 us, cond_resched=0
+find_first_inode_to_shrink: 41122 us, cond_resched=0
+find_first_inode_to_shrink: 33191 us, cond_resched=0
+find_first_inode_to_shrink: 29442 us, cond_resched=0
+find_first_inode_to_shrink: 31889 us, cond_resched=0
+find_first_inode_to_shrink: 46833 us, cond_resched=0
+find_first_inode_to_shrink: 42905 us, cond_resched=0
+find_first_inode_to_shrink: 40175 us, cond_resched=0
+find_first_inode_to_shrink: 33069 us, cond_resched=0
+find_first_inode_to_shrink: 37846 us, cond_resched=0
+find_first_inode_to_shrink: 38803 us, cond_resched=0
+find_first_inode_to_shrink: 29095 us, cond_resched=0
+find_first_inode_to_shrink: 31625 us, cond_resched=0
+find_first_inode_to_shrink: 39064 us, cond_resched=0
+find_first_inode_to_shrink: 31172 us, cond_resched=0
+find_first_inode_to_shrink: 27310 us, cond_resched=0
+find_first_inode_to_shrink: 36751 us, cond_resched=0
+find_first_inode_to_shrink: 28050 us, cond_resched=0
+find_first_inode_to_shrink: 32395 us, cond_resched=0
+find_first_inode_to_shrink: 219 us, cond_resched=0
+find_first_inode_to_shrink: 43376 us, cond_resched=0
+find_first_inode_to_shrink: 28569 us, cond_resched=0
+find_first_inode_to_shrink: 34666 us, cond_resched=0
+find_first_inode_to_shrink: 26969 us, cond_resched=0
+find_first_inode_to_shrink: 28732 us, cond_resched=0
+find_first_inode_to_shrink: 47105 us, cond_resched=0
+find_first_inode_to_shrink: 46828 us, cond_resched=0
+find_first_inode_to_shrink: 34088 us, cond_resched=0
+find_first_inode_to_shrink: 59424 us, cond_resched=0
+find_first_inode_to_shrink: 26874 us, cond_resched=0
+find_first_inode_to_shrink: 31849 us, cond_resched=0
+find_first_inode_to_shrink: 34695 us, cond_resched=0
+find_first_inode_to_shrink: 285 us, cond_resched=0
+find_first_inode_to_shrink: 36477 us, cond_resched=0
+find_first_inode_to_shrink: 30668 us, cond_resched=0
+find_first_inode_to_shrink: 31230 us, cond_resched=0
+find_first_inode_to_shrink: 31767 us, cond_resched=0
+find_first_inode_to_shrink: 41048 us, cond_resched=0
+find_first_inode_to_shrink: 31319 us, cond_resched=0
+find_first_inode_to_shrink: 26996 us, cond_resched=0
+find_first_inode_to_shrink: 26894 us, cond_resched=0
+find_first_inode_to_shrink: 32460 us, cond_resched=0
+@hold_us:
+[0]                  267 |@@@@@@@@@@@@@@@@@@@@@@@@@                           |
+[1]                   85 |@@@@@@@@                                            |
+[2, 4)               220 |@@@@@@@@@@@@@@@@@@@@@                               |
+[4, 8)               269 |@@@@@@@@@@@@@@@@@@@@@@@@@                           |
+[8, 16)              542 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[16, 32)              38 |@@@                                                 |
+[32, 64)              10 |                                                    |
+[64, 128)              2 |                                                    |
+[128, 256)            10 |                                                    |
+[256, 512)             5 |                                                    |
+[512, 1K)              1 |                                                    |
+[1K, 2K)               0 |                                                    |
+[2K, 4K)               0 |                                                    |
+[4K, 8K)               0 |                                                    |
+[8K, 16K)              0 |                                                    |
+[16K, 32K)           190 |@@@@@@@@@@@@@@@@@@                                  |
+[32K, 64K)           177 |@@@@@@@@@@@@@@@@                                    |
+[64K, 128K)            3 |                                                    |
+
+@cond_resched_calls:
+[0]                 1821 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+
+find_first_inode_to_shrink: 32055 us, cond_resched=0
+find_first_inode_to_shrink: 43482 us, cond_resched=0
+find_first_inode_to_shrink: 31769 us, cond_resched=0
+find_first_inode_to_shrink: 32802 us, cond_resched=0
+find_first_inode_to_shrink: 33863 us, cond_resched=0
+find_first_inode_to_shrink: 40889 us, cond_resched=0
+find_first_inode_to_shrink: 29106 us, cond_resched=0
+find_first_inode_to_shrink: 38150 us, cond_resched=0
+find_first_inode_to_shrink: 35546 us, cond_resched=0
+find_first_inode_to_shrink: 301 us, cond_resched=0
+find_first_inode_to_shrink: 32438 us, cond_resched=0
+find_first_inode_to_shrink: 53979 us, cond_resched=0
+find_first_inode_to_shrink: 35080 us, cond_resched=0
+find_first_inode_to_shrink: 40021 us, cond_resched=0
+find_first_inode_to_shrink: 30067 us, cond_resched=0
+find_first_inode_to_shrink: 33381 us, cond_resched=0
+find_first_inode_to_shrink: 36569 us, cond_resched=0
+find_first_inode_to_shrink: 34177 us, cond_resched=0
+find_first_inode_to_shrink: 41200 us, cond_resched=0
+find_first_inode_to_shrink: 29667 us, cond_resched=0
+find_first_inode_to_shrink: 38404 us, cond_resched=0
+find_first_inode_to_shrink: 130 us, cond_resched=0
+find_first_inode_to_shrink: 30996 us, cond_resched=0
+find_first_inode_to_shrink: 35551 us, cond_resched=0
+find_first_inode_to_shrink: 28107 us, cond_resched=0
+find_first_inode_to_shrink: 27485 us, cond_resched=0
+find_first_inode_to_shrink: 250 us, cond_resched=0
+find_first_inode_to_shrink: 40273 us, cond_resched=0
+find_first_inode_to_shrink: 27267 us, cond_resched=0
+find_first_inode_to_shrink: 229 us, cond_resched=0
+find_first_inode_to_shrink: 40712 us, cond_resched=0
+find_first_inode_to_shrink: 235 us, cond_resched=0
+find_first_inode_to_shrink: 47575 us, cond_resched=0
+find_first_inode_to_shrink: 26497 us, cond_resched=0
+find_first_inode_to_shrink: 30051 us, cond_resched=0
+find_first_inode_to_shrink: 27181 us, cond_resched=0
+find_first_inode_to_shrink: 39828 us, cond_resched=0
+find_first_inode_to_shrink: 30920 us, cond_resched=0
+find_first_inode_to_shrink: 26557 us, cond_resched=0
+find_first_inode_to_shrink: 47614 us, cond_resched=0
+find_first_inode_to_shrink: 30037 us, cond_resched=0
+find_first_inode_to_shrink: 730 us, cond_resched=0
+find_first_inode_to_shrink: 47714 us, cond_resched=0
+find_first_inode_to_shrink: 35625 us, cond_resched=0
+find_first_inode_to_shrink: 28472 us, cond_resched=0
+find_first_inode_to_shrink: 32604 us, cond_resched=0
+find_first_inode_to_shrink: 41247 us, cond_resched=0
+find_first_inode_to_shrink: 37608 us, cond_resched=0
+find_first_inode_to_shrink: 39996 us, cond_resched=0
+find_first_inode_to_shrink: 27913 us, cond_resched=0
+find_first_inode_to_shrink: 33342 us, cond_resched=0
+find_first_inode_to_shrink: 28515 us, cond_resched=0
+find_first_inode_to_shrink: 41959 us, cond_resched=0
+find_first_inode_to_shrink: 39017 us, cond_resched=0
+find_first_inode_to_shrink: 274 us, cond_resched=0
+find_first_inode_to_shrink: 34550 us, cond_resched=0
+find_first_inode_to_shrink: 34970 us, cond_resched=0
+find_first_inode_to_shrink: 30187 us, cond_resched=0
+find_first_inode_to_shrink: 451 us, cond_resched=0
+find_first_inode_to_shrink: 32167 us, cond_resched=0
+find_first_inode_to_shrink: 29569 us, cond_resched=0
+find_first_inode_to_shrink: 30398 us, cond_resched=0
+find_first_inode_to_shrink: 29882 us, cond_resched=0
+find_first_inode_to_shrink: 33628 us, cond_resched=0
+find_first_inode_to_shrink: 107016 us, cond_resched=0
+find_first_inode_to_shrink: 34131 us, cond_resched=0
+find_first_inode_to_shrink: 255 us, cond_resched=0
+find_first_inode_to_shrink: 34462 us, cond_resched=0
+find_first_inode_to_shrink: 27192 us, cond_resched=0
+find_first_inode_to_shrink: 35118 us, cond_resched=0
+find_first_inode_to_shrink: 32776 us, cond_resched=0
+find_first_inode_to_shrink: 30511 us, cond_resched=0
+find_first_inode_to_shrink: 42972 us, cond_resched=0
+find_first_inode_to_shrink: 33931 us, cond_resched=0
+find_first_inode_to_shrink: 29220 us, cond_resched=0
+find_first_inode_to_shrink: 32249 us, cond_resched=0
+find_first_inode_to_shrink: 31794 us, cond_resched=0
+find_first_inode_to_shrink: 272467 us, cond_resched=0
+find_first_inode_to_shrink: 36743 us, cond_resched=0
+find_first_inode_to_shrink: 33454 us, cond_resched=0
+find_first_inode_to_shrink: 31604 us, cond_resched=0
+find_first_inode_to_shrink: 52181 us, cond_resched=0
+find_first_inode_to_shrink: 29795 us, cond_resched=0
+find_first_inode_to_shrink: 32119 us, cond_resched=0
+find_first_inode_to_shrink: 37306 us, cond_resched=0
+find_first_inode_to_shrink: 224 us, cond_resched=0
+find_first_inode_to_shrink: 28206 us, cond_resched=0
+find_first_inode_to_shrink: 34500 us, cond_resched=0
+find_first_inode_to_shrink: 27085 us, cond_resched=0
+find_first_inode_to_shrink: 30393 us, cond_resched=0
+find_first_inode_to_shrink: 29201 us, cond_resched=0
+find_first_inode_to_shrink: 39042 us, cond_resched=0
+@hold_us:
+[0]                  324 |@@@@@@@@@@@@@@@@@@@@@@@@@                           |
+[1]                  103 |@@@@@@@@                                            |
+[2, 4)               263 |@@@@@@@@@@@@@@@@@@@@                                |
+[4, 8)               329 |@@@@@@@@@@@@@@@@@@@@@@@@@                           |
+[8, 16)              665 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[16, 32)              48 |@@@                                                 |
+[32, 64)              10 |                                                    |
+[64, 128)              2 |                                                    |
+[128, 256)            16 |@                                                   |
+[256, 512)             8 |                                                    |
+[512, 1K)              2 |                                                    |
+[1K, 2K)               0 |                                                    |
+[2K, 4K)               0 |                                                    |
+[4K, 8K)               0 |                                                    |
+[8K, 16K)              0 |                                                    |
+[16K, 32K)           227 |@@@@@@@@@@@@@@@@@                                   |
+[32K, 64K)           220 |@@@@@@@@@@@@@@@@@                                   |
+[64K, 128K)            4 |                                                    |
+[128K, 256K)           0 |                                                    |
+[256K, 512K)           1 |                                                    |
+
+@cond_resched_calls:
+[0]                 2222 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+
+find_first_inode_to_shrink: 32266 us, cond_resched=0
+find_first_inode_to_shrink: 35082 us, cond_resched=0
+find_first_inode_to_shrink: 230 us, cond_resched=0
+find_first_inode_to_shrink: 31640 us, cond_resched=0
+find_first_inode_to_shrink: 35930 us, cond_resched=0
+find_first_inode_to_shrink: 31940 us, cond_resched=0
+find_first_inode_to_shrink: 39836 us, cond_resched=0
+find_first_inode_to_shrink: 35192 us, cond_resched=0
+find_first_inode_to_shrink: 26951 us, cond_resched=0
+find_first_inode_to_shrink: 29184 us, cond_resched=0
+find_first_inode_to_shrink: 36948 us, cond_resched=0
+find_first_inode_to_shrink: 27150 us, cond_resched=0
+find_first_inode_to_shrink: 26599 us, cond_resched=0
+find_first_inode_to_shrink: 27845 us, cond_resched=0
+find_first_inode_to_shrink: 33873 us, cond_resched=0
+find_first_inode_to_shrink: 43154 us, cond_resched=0
+find_first_inode_to_shrink: 26219 us, cond_resched=0
+find_first_inode_to_shrink: 49275 us, cond_resched=0
+find_first_inode_to_shrink: 47913 us, cond_resched=0
+find_first_inode_to_shrink: 44145 us, cond_resched=0
+find_first_inode_to_shrink: 33590 us, cond_resched=0
+find_first_inode_to_shrink: 27948 us, cond_resched=0
+find_first_inode_to_shrink: 36964 us, cond_resched=0
+find_first_inode_to_shrink: 27505 us, cond_resched=0
+find_first_inode_to_shrink: 228 us, cond_resched=0
+find_first_inode_to_shrink: 29248 us, cond_resched=0
+find_first_inode_to_shrink: 27493 us, cond_resched=0
+find_first_inode_to_shrink: 32925 us, cond_resched=0
+find_first_inode_to_shrink: 39004 us, cond_resched=0
+find_first_inode_to_shrink: 39408 us, cond_resched=0
+find_first_inode_to_shrink: 36763 us, cond_resched=0
+find_first_inode_to_shrink: 36325 us, cond_resched=0
+find_first_inode_to_shrink: 34703 us, cond_resched=0
+find_first_inode_to_shrink: 30253 us, cond_resched=0
+find_first_inode_to_shrink: 40044 us, cond_resched=0
+find_first_inode_to_shrink: 34290 us, cond_resched=0
+find_first_inode_to_shrink: 29922 us, cond_resched=0
+find_first_inode_to_shrink: 26834 us, cond_resched=0
+find_first_inode_to_shrink: 26058 us, cond_resched=0
+find_first_inode_to_shrink: 26954 us, cond_resched=0
+find_first_inode_to_shrink: 30591 us, cond_resched=0
+find_first_inode_to_shrink: 38256 us, cond_resched=0
+find_first_inode_to_shrink: 29422 us, cond_resched=0
+find_first_inode_to_shrink: 30545 us, cond_resched=0
+find_first_inode_to_shrink: 34283 us, cond_resched=0
+find_first_inode_to_shrink: 30181 us, cond_resched=0
+find_first_inode_to_shrink: 33128 us, cond_resched=0
+find_first_inode_to_shrink: 31832 us, cond_resched=0
+find_first_inode_to_shrink: 32130 us, cond_resched=0
+find_first_inode_to_shrink: 29861 us, cond_resched=0
+find_first_inode_to_shrink: 52996 us, cond_resched=0
+find_first_inode_to_shrink: 29596 us, cond_resched=0
+find_first_inode_to_shrink: 40947 us, cond_resched=0
+find_first_inode_to_shrink: 34871 us, cond_resched=0
+find_first_inode_to_shrink: 38871 us, cond_resched=0
+find_first_inode_to_shrink: 40988 us, cond_resched=0
+find_first_inode_to_shrink: 31830 us, cond_resched=0
+find_first_inode_to_shrink: 29682 us, cond_resched=0
+find_first_inode_to_shrink: 26314 us, cond_resched=0
+find_first_inode_to_shrink: 35369 us, cond_resched=0
+find_first_inode_to_shrink: 33206 us, cond_resched=0
+find_first_inode_to_shrink: 25818 us, cond_resched=0
+find_first_inode_to_shrink: 43124 us, cond_resched=0
+find_first_inode_to_shrink: 26253 us, cond_resched=0
+find_first_inode_to_shrink: 27190 us, cond_resched=0
+find_first_inode_to_shrink: 31033 us, cond_resched=0
+find_first_inode_to_shrink: 26129 us, cond_resched=0
+find_first_inode_to_shrink: 27306 us, cond_resched=0
+find_first_inode_to_shrink: 31088 us, cond_resched=0
+find_first_inode_to_shrink: 26032 us, cond_resched=0
+find_first_inode_to_shrink: 26550 us, cond_resched=0
+find_first_inode_to_shrink: 33500 us, cond_resched=0
+find_first_inode_to_shrink: 31298 us, cond_resched=0
+find_first_inode_to_shrink: 25347 us, cond_resched=0
+find_first_inode_to_shrink: 28508 us, cond_resched=0
+find_first_inode_to_shrink: 32713 us, cond_resched=0
+find_first_inode_to_shrink: 31064 us, cond_resched=0
+find_first_inode_to_shrink: 31571 us, cond_resched=0
+find_first_inode_to_shrink: 150081 us, cond_resched=0
+find_first_inode_to_shrink: 229093 us, cond_resched=0
+@hold_us:
+[0]                  375 |@@@@@@@@@@@@@@@@@@@@@@@@@                           |
+[1]                  123 |@@@@@@@@                                            |
+[2, 4)               316 |@@@@@@@@@@@@@@@@@@@@@                               |
+[4, 8)               387 |@@@@@@@@@@@@@@@@@@@@@@@@@@                          |
+[8, 16)              771 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[16, 32)              62 |@@@@                                                |
+[32, 64)              13 |                                                    |
+[64, 128)              3 |                                                    |
+[128, 256)            18 |@                                                   |
+[256, 512)             8 |                                                    |
+[512, 1K)              2 |                                                    |
+[1K, 2K)               0 |                                                    |
+[2K, 4K)               0 |                                                    |
+[4K, 8K)               0 |                                                    |
+[8K, 16K)              0 |                                                    |
+[16K, 32K)           271 |@@@@@@@@@@@@@@@@@@                                  |
+[32K, 64K)           252 |@@@@@@@@@@@@@@@@                                    |
+[64K, 128K)            4 |                                                    |
+[128K, 256K)           2 |                                                    |
+[256K, 512K)           1 |                                                    |
+
+@cond_resched_calls:
+[0]                 2608 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+
+
+
+@cond_resched_calls:
+[0]                 2608 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+
+@hold_us:
+[0]                  375 |@@@@@@@@@@@@@@@@@@@@@@@@@                           |
+[1]                  123 |@@@@@@@@                                            |
+[2, 4)               316 |@@@@@@@@@@@@@@@@@@@@@                               |
+[4, 8)               387 |@@@@@@@@@@@@@@@@@@@@@@@@@@                          |
+[8, 16)              771 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[16, 32)              62 |@@@@                                                |
+[32, 64)              13 |                                                    |
+[64, 128)              3 |                                                    |
+[128, 256)            18 |@                                                   |
+[256, 512)             8 |                                                    |
+[512, 1K)              2 |                                                    |
+[1K, 2K)               0 |                                                    |
+[2K, 4K)               0 |                                                    |
+[4K, 8K)               0 |                                                    |
+[8K, 16K)              0 |                                                    |
+[16K, 32K)           271 |@@@@@@@@@@@@@@@@@@                                  |
+[32K, 64K)           252 |@@@@@@@@@@@@@@@@                                    |
+[64K, 128K)            4 |                                                    |
+[128K, 256K)           2 |                                                    |
+[256K, 512K)           1 |                                                    |
+

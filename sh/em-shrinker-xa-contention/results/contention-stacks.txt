@@ -1,0 +1,2394 @@
+=== find_first_inode_to_shrink stacks ===
+               |          
+               |--12.77%--_raw_write_trylock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--4.88%--xas_load
+               |          xas_find
+               |          xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--4.16%--bio_next_folio
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--2.03%--btrfs_folio_set_uptodate
+               |          end_folio_read
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+--
+               |          
+               |--1.55%--__raw_callee_save___pv_queued_spin_unlock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.35%--find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.29%--_raw_spin_lock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.20%--xas_find
+               |          xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.86%--folio_unlock
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.67%--process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.66%--xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.65%--btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.58%--end_folio_read
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.45%--__pv_queued_spin_lock_slowpath
+               |          _raw_spin_lock
+               |          |          
+               |          |--98.27%--find_first_inode_to_shrink
+               |          |          btrfs_extent_map_shrinker_worker
+               |          |          process_scheduled_works
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |           --1.73%--btrfs_find_delalloc_range
+               |                     find_lock_delalloc_range
+               |                     writepage_delalloc
+               |                     btrfs_writepages
+               |                     do_writepages
+               |                     __writeback_single_inode
+               |                     writeback_sb_inodes
+               |                     __writeback_inodes_wb
+               |                     wb_writeback
+               |                     wb_workfn
+               |                     process_scheduled_works
+               |                     worker_thread
+               |                     kthread
+               |                     ret_from_fork
+               |                     ret_from_fork_asm
+               |          
+               |--0.44%--finish_task_switch
+               |          __schedule
+--
+               |                     |          ret_from_fork_asm
+               |                     |          
+               |                      --14.13%--find_first_inode_to_shrink
+               |                                btrfs_extent_map_shrinker_worker
+               |                                process_scheduled_works
+               |                                worker_thread
+               |                                kthread
+               |                                ret_from_fork
+               |                                ret_from_fork_asm
+               |          
+               |--0.36%--end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.30%--__cond_resched
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.30%--kernel_fpu_begin_mask
+               |          crc32c_arch
+               |          chksum_digest_arch
+               |          crypto_shash_digest
+               |          btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+                --3.13%--[...]
+
+     2.21%  swapper          [kernel.kallsyms]     [k] idle_cpu
+            |
+            ---idle_cpu
+               |          
+               |--98.94%--sched_tick
+--
+               |          
+               |--10.36%--_raw_write_trylock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--4.59%--bio_next_folio
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--3.78%--xas_load
+               |          xas_find
+               |          xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.84%--btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.79%--btrfs_folio_set_uptodate
+               |          end_folio_read
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.65%--find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.26%--__raw_callee_save___pv_queued_spin_unlock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.16%--xas_find
+               |          xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.16%--_raw_spin_lock
+               |          |          
+               |          |--98.69%--find_first_inode_to_shrink
+               |          |          btrfs_extent_map_shrinker_worker
+               |          |          process_scheduled_works
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |          |--0.67%--btrfs_find_delalloc_range
+               |          |          find_lock_delalloc_range
+               |          |          writepage_delalloc
+               |          |          btrfs_writepages
+               |          |          do_writepages
+               |          |          __writeback_single_inode
+               |          |          writeback_sb_inodes
+               |          |          __writeback_inodes_wb
+               |          |          wb_writeback
+               |          |          wb_workfn
+               |          |          process_scheduled_works
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |           --0.65%--virtio_fs_request_complete
+               |                     virtio_fs_requests_done_work
+--
+               |          
+               |--0.60%--xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.46%--end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.45%--__pv_queued_spin_lock_slowpath
+               |          _raw_spin_lock
+               |          |          
+               |          |--94.78%--find_first_inode_to_shrink
+               |          |          btrfs_extent_map_shrinker_worker
+               |          |          process_scheduled_works
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |           --5.22%--btrfs_find_delalloc_range
+               |                     find_lock_delalloc_range
+               |                     writepage_delalloc
+               |                     btrfs_writepages
+               |                     do_writepages
+               |                     __writeback_single_inode
+               |                     writeback_sb_inodes
+               |                     __writeback_inodes_wb
+               |                     wb_writeback
+               |                     wb_workfn
+               |                     process_scheduled_works
+               |                     worker_thread
+               |                     kthread
+               |                     ret_from_fork
+               |                     ret_from_fork_asm
+               |          
+               |--0.44%--finish_task_switch
+               |          __schedule
+--
+               |                     |          ret_from_fork_asm
+               |                     |          
+               |                      --28.99%--find_first_inode_to_shrink
+               |                                btrfs_extent_map_shrinker_worker
+               |                                process_scheduled_works
+               |                                worker_thread
+               |                                kthread
+               |                                ret_from_fork
+               |                                ret_from_fork_asm
+               |          
+               |--0.39%--kernel_fpu_begin_mask
+               |          crc32c_arch
+               |          chksum_digest_arch
+               |          crypto_shash_digest
+               |          btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.36%--crypto_shash_digest
+               |          btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+--
+               |          
+               |--12.09%--_raw_write_trylock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--4.83%--bio_next_folio
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--4.53%--xas_load
+               |          xas_find
+               |          xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.89%--btrfs_folio_set_uptodate
+               |          end_folio_read
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.73%--btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.45%--find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.25%--__raw_callee_save___pv_queued_spin_unlock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.19%--folio_unlock
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.06%--xas_find
+               |          xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.04%--_raw_spin_lock
+               |          |          
+               |          |--98.65%--find_first_inode_to_shrink
+               |          |          btrfs_extent_map_shrinker_worker
+               |          |          process_scheduled_works
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |           --1.35%--find_free_extent
+               |                     btrfs_reserve_extent
+               |                     btrfs_alloc_tree_block
+               |                     split_leaf
+               |                     btrfs_search_slot
+               |                     btrfs_insert_empty_items
+               |                     __btrfs_commit_inode_delayed_items
+               |                     btrfs_async_run_delayed_root
+               |                     btrfs_work_helper
+               |                     process_scheduled_works
+               |                     worker_thread
+               |                     kthread
+               |                     ret_from_fork
+               |                     ret_from_fork_asm
+               |          
+               |--0.86%--process_scheduled_works
+               |          worker_thread
+               |          kthread
+--
+               |--0.54%--__pv_queued_spin_lock_slowpath
+               |          _raw_spin_lock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.54%--finish_task_switch
+               |          __schedule
+               |          |          
+               |          |--78.96%--schedule
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |           --21.04%--__cond_resched
+               |                     process_scheduled_works
+               |                     worker_thread
+               |                     kthread
+               |                     ret_from_fork
+               |                     ret_from_fork_asm
+               |          
+               |--0.38%--bcmp
+               |          btrfs_data_csum_ok
+--
+               |          
+               |--0.37%--xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.34%--kernel_fpu_begin_mask
+               |          crc32c_arch
+               |          chksum_digest_arch
+               |          crypto_shash_digest
+               |          btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.32%--__cond_resched
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.32%--crc32c_arch
+               |          chksum_digest_arch
+               |          crypto_shash_digest
+               |          btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+                --2.57%--[...]
+
+     1.42%  kswapd0          [kernel.kallsyms]     [k] __intel_pmu_enable_all
+            |
+            ---__intel_pmu_enable_all
+               perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+--
+               |          
+               |--10.61%--_raw_write_trylock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--4.67%--bio_next_folio
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--3.30%--xas_load
+               |          xas_find
+               |          xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.84%--btrfs_folio_set_uptodate
+               |          end_folio_read
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.84%--btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.40%--find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.29%--__raw_callee_save___pv_queued_spin_unlock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.11%--xas_find
+               |          xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.05%--_raw_spin_lock
+               |          |          
+               |          |--93.94%--find_first_inode_to_shrink
+               |          |          btrfs_extent_map_shrinker_worker
+               |          |          process_scheduled_works
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |           --6.06%--btrfs_find_delalloc_range
+               |                     find_lock_delalloc_range
+               |                     writepage_delalloc
+               |                     btrfs_writepages
+               |                     do_writepages
+               |                     __writeback_single_inode
+               |                     writeback_sb_inodes
+               |                     __writeback_inodes_wb
+               |                     wb_writeback
+               |                     wb_workfn
+               |                     process_scheduled_works
+               |                     worker_thread
+               |                     kthread
+               |                     ret_from_fork
+               |                     ret_from_fork_asm
+               |          
+               |--0.98%--folio_unlock
+               |          |          
+--
+               |          _raw_spin_lock
+               |          |          
+               |          |--96.29%--find_first_inode_to_shrink
+               |          |          btrfs_extent_map_shrinker_worker
+               |          |          process_scheduled_works
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |           --3.71%--btrfs_find_delalloc_range
+               |                     find_lock_delalloc_range
+               |                     writepage_delalloc
+               |                     btrfs_writepages
+               |                     do_writepages
+               |                     __writeback_single_inode
+               |                     writeback_sb_inodes
+               |                     __writeback_inodes_wb
+               |                     wb_writeback
+               |                     wb_workfn
+               |                     process_scheduled_works
+               |                     worker_thread
+               |                     kthread
+               |                     ret_from_fork
+               |                     ret_from_fork_asm
+               |          
+               |--0.51%--end_folio_read
+               |          end_bbio_data_read
+--
+               |          |          
+               |           --5.64%--__htab_map_lookup_elem
+               |                     bpf_prog_6e02d8039a7efa8d_kretprobe_find_first_inode_to_shrink_3
+               |                     trace_call_bpf
+               |                     kretprobe_perf_func
+               |                     kretprobe_dispatcher
+               |                     kretprobe_rethook_handler
+               |                     rethook_trampoline_handler
+               |                     arch_rethook_trampoline_callback
+               |                     arch_rethook_trampoline
+               |                     btrfs_extent_map_shrinker_worker
+               |                     process_scheduled_works
+               |                     worker_thread
+               |                     kthread
+               |                     ret_from_fork
+               |                     ret_from_fork_asm
+               |          
+               |--0.50%--__wake_up
+               |          fuse_request_end
+               |          virtio_fs_request_complete
+               |          virtio_fs_requests_done_work
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.47%--memset_orig
+--
+               |          
+               |--0.45%--xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.37%--crc32c_arch
+               |          chksum_digest_arch
+               |          crypto_shash_digest
+               |          btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.32%--crypto_shash_digest
+               |          btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+--
+               |          
+               |--9.88%--_raw_write_trylock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--4.43%--bio_next_folio
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--3.20%--xas_load
+               |          xas_find
+               |          xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--2.23%--btrfs_folio_set_uptodate
+               |          end_folio_read
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.65%--btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.22%--find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.20%--xas_find
+               |          |          
+               |          |--97.47%--xa_find
+               |          |          find_first_inode_to_shrink
+               |          |          btrfs_extent_map_shrinker_worker
+               |          |          process_scheduled_works
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |           --2.53%--xa_find_after
+               |                     btrfs_uninhibit_all_eb_writeback
+               |                     __btrfs_end_transaction.llvm.14646160944577123971
+               |                     btrfs_async_run_delayed_root
+               |                     btrfs_work_helper
+               |                     process_scheduled_works
+               |                     worker_thread
+               |                     kthread
+               |                     ret_from_fork
+               |                     ret_from_fork_asm
+               |          
+               |--1.16%--__raw_callee_save___pv_queued_spin_unlock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.91%--_raw_spin_lock
+               |          |          
+               |          |--94.89%--find_first_inode_to_shrink
+               |          |          btrfs_extent_map_shrinker_worker
+               |          |          process_scheduled_works
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |          |--2.63%--btrfs_find_delalloc_range
+               |          |          find_lock_delalloc_range
+               |          |          writepage_delalloc
+               |          |          btrfs_writepages
+               |          |          do_writepages
+               |          |          __writeback_single_inode
+               |          |          writeback_sb_inodes
+               |          |          __writeback_inodes_wb
+               |          |          wb_writeback
+               |          |          wb_workfn
+               |          |          process_scheduled_works
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |           --2.47%--virtio_fs_request_complete
+               |                     virtio_fs_requests_done_work
+--
+               |          
+               |--0.59%--xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.57%--finish_task_switch
+               |          __schedule
+               |          |          
+               |          |--73.21%--schedule
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |           --26.79%--__cond_resched
+               |                     process_scheduled_works
+               |                     worker_thread
+               |                     kthread
+               |                     ret_from_fork
+               |                     ret_from_fork_asm
+               |          
+               |--0.50%--end_bbio_data_read
+               |          btrfs_check_read_bio
+--
+               |--0.43%--__pv_queued_spin_lock_slowpath
+               |          _raw_spin_lock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.40%--bcmp
+               |          btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.39%--chksum_digest_arch
+               |          crypto_shash_digest
+               |          btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+--
+               |          
+               |--13.88%--_raw_write_trylock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--4.74%--xas_load
+               |          xas_find
+               |          xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--4.25%--bio_next_folio
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.71%--xas_find
+               |          xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.62%--__raw_callee_save___pv_queued_spin_unlock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.57%--btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.54%--btrfs_folio_set_uptodate
+               |          end_folio_read
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.32%--find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.06%--_raw_spin_lock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.96%--process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.68%--end_folio_read
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.64%--finish_task_switch
+               |          __schedule
+               |          |          
+--
+               |                     |          ret_from_fork_asm
+               |                     |          
+               |                      --44.60%--find_first_inode_to_shrink
+               |                                btrfs_extent_map_shrinker_worker
+               |                                process_scheduled_works
+               |                                worker_thread
+               |                                kthread
+               |                                ret_from_fork
+               |                                ret_from_fork_asm
+               |          
+               |--0.57%--xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.54%--btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.49%--folio_unlock
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.39%--__pv_queued_spin_lock_slowpath
+               |          _raw_spin_lock
+               |          |          
+               |          |--91.29%--find_first_inode_to_shrink
+               |          |          btrfs_extent_map_shrinker_worker
+               |          |          process_scheduled_works
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |           --8.71%--btrfs_find_delalloc_range
+               |                     find_lock_delalloc_range
+               |                     writepage_delalloc
+               |                     btrfs_writepages
+               |                     do_writepages
+               |                     __writeback_single_inode
+               |                     writeback_sb_inodes
+               |                     __writeback_inodes_wb
+               |                     wb_writeback
+               |                     wb_workfn
+               |                     process_scheduled_works
+               |                     worker_thread
+               |                     kthread
+               |                     ret_from_fork
+               |                     ret_from_fork_asm
+               |          
+               |--0.37%--__wake_up
+               |          fuse_request_end
+--
+               |          
+               |--13.92%--_raw_write_trylock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--4.30%--xas_load
+               |          xas_find
+               |          xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--4.28%--bio_next_folio
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.96%--btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.92%--btrfs_folio_set_uptodate
+--
+               |          
+               |--1.80%--__raw_callee_save___pv_queued_spin_unlock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.74%--find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.33%--xas_find
+               |          xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.83%--_raw_spin_lock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.81%--btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.79%--folio_unlock
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.71%--__pv_queued_spin_lock_slowpath
+               |          _raw_spin_lock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.69%--end_folio_read
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.54%--kernel_fpu_begin_mask
+               |          crc32c_arch
+               |          chksum_digest_arch
+               |          crypto_shash_digest
+               |          btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+--
+               |           --23.56%--__cond_resched
+               |                     |          
+               |                     |--66.52%--find_first_inode_to_shrink
+               |                     |          btrfs_extent_map_shrinker_worker
+               |                     |          process_scheduled_works
+               |                     |          worker_thread
+               |                     |          kthread
+               |                     |          ret_from_fork
+               |                     |          ret_from_fork_asm
+               |                     |          
+               |                      --33.48%--process_scheduled_works
+               |                                worker_thread
+               |                                kthread
+               |                                ret_from_fork
+               |                                ret_from_fork_asm
+               |          
+               |--0.41%--xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.34%--bcmp
+               |          btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.31%--memset_orig
+               |          crypto_shash_digest
+               |          btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+--
+               |          
+               |--11.79%--_raw_write_trylock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--4.07%--xas_load
+               |          |          
+               |          |--98.10%--xas_find
+               |          |          xa_find
+               |          |          |          
+               |          |          |--99.06%--find_first_inode_to_shrink
+               |          |          |          btrfs_extent_map_shrinker_worker
+               |          |          |          process_scheduled_works
+               |          |          |          worker_thread
+               |          |          |          kthread
+               |          |          |          ret_from_fork
+               |          |          |          ret_from_fork_asm
+               |          |          |          
+               |          |           --0.94%--btrfs_select_ref_head
+               |          |                     __btrfs_run_delayed_refs
+               |          |                     btrfs_run_delayed_refs
+               |          |                     flush_space
+               |          |                     btrfs_preempt_reclaim_metadata_space
+               |          |                     process_scheduled_works
+               |          |                     worker_thread
+               |          |                     kthread
+               |          |                     ret_from_fork
+               |          |                     ret_from_fork_asm
+               |          |          
+               |           --1.90%--filemap_get_folios_contig
+               |                     lock_delalloc_folios
+               |                     find_lock_delalloc_range
+               |                     writepage_delalloc
+               |                     btrfs_writepages
+               |                     do_writepages
+               |                     __writeback_single_inode
+--
+               |--1.94%--__raw_callee_save___pv_queued_spin_unlock
+               |          |          
+               |          |--96.27%--find_first_inode_to_shrink
+               |          |          btrfs_extent_map_shrinker_worker
+               |          |          process_scheduled_works
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |           --3.73%--btrfs_find_delalloc_range
+               |                     find_lock_delalloc_range
+               |                     writepage_delalloc
+               |                     btrfs_writepages
+               |                     do_writepages
+               |                     __writeback_single_inode
+               |                     writeback_sb_inodes
+               |                     __writeback_inodes_wb
+               |                     wb_writeback
+               |                     wb_workfn
+               |                     process_scheduled_works
+               |                     worker_thread
+               |                     kthread
+               |                     ret_from_fork
+               |                     ret_from_fork_asm
+               |          
+               |--1.70%--btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+--
+               |          ret_from_fork_asm
+               |          
+               |--1.65%--find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.44%--btrfs_folio_set_uptodate
+               |          end_folio_read
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.26%--_raw_spin_lock
+               |          |          
+               |          |--94.35%--find_first_inode_to_shrink
+               |          |          btrfs_extent_map_shrinker_worker
+               |          |          process_scheduled_works
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |           --5.65%--btrfs_find_delalloc_range
+               |                     find_lock_delalloc_range
+               |                     writepage_delalloc
+               |                     btrfs_writepages
+               |                     do_writepages
+               |                     __writeback_single_inode
+               |                     writeback_sb_inodes
+               |                     __writeback_inodes_wb
+               |                     wb_writeback
+               |                     wb_workfn
+               |                     process_scheduled_works
+               |                     worker_thread
+               |                     kthread
+               |                     ret_from_fork
+               |                     ret_from_fork_asm
+               |          
+               |--1.00%--xas_find
+               |          |          
+               |          |--95.87%--xa_find
+               |          |          find_first_inode_to_shrink
+               |          |          btrfs_extent_map_shrinker_worker
+               |          |          process_scheduled_works
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |           --4.13%--xa_find_after
+               |                     btrfs_uninhibit_all_eb_writeback
+               |                     __btrfs_end_transaction.llvm.14646160944577123971
+               |                     btrfs_async_run_delayed_root
+               |                     btrfs_work_helper
+               |                     process_scheduled_works
+               |                     worker_thread
+               |                     kthread
+               |                     ret_from_fork
+               |                     ret_from_fork_asm
+               |          
+               |--0.94%--__pv_queued_spin_lock_slowpath
+               |          _raw_spin_lock
+               |          |          
+               |          |--57.54%--find_first_inode_to_shrink
+               |          |          btrfs_extent_map_shrinker_worker
+               |          |          process_scheduled_works
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |           --42.46%--btrfs_find_delalloc_range
+               |                     find_lock_delalloc_range
+               |                     writepage_delalloc
+               |                     btrfs_writepages
+               |                     do_writepages
+               |                     __writeback_single_inode
+               |                     writeback_sb_inodes
+               |                     __writeback_inodes_wb
+               |                     wb_writeback
+               |                     wb_workfn
+               |                     process_scheduled_works
+               |                     worker_thread
+               |                     kthread
+               |                     ret_from_fork
+               |                     ret_from_fork_asm
+               |          
+               |--0.81%--folio_unlock
+               |          |          
+--
+               |          
+               |--0.66%--xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.65%--btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.61%--__folio_start_writeback
+               |          extent_writepage_io
+               |          btrfs_writepages
+               |          do_writepages
+               |          __writeback_single_inode
+               |          writeback_sb_inodes
+               |          __writeback_inodes_wb
+               |          wb_writeback
+               |          wb_workfn
+               |          process_scheduled_works
+               |          worker_thread
+--
+               |          
+               |--12.82%--_raw_write_trylock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--4.58%--xas_load
+               |          xas_find
+               |          xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--4.04%--bio_next_folio
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--2.13%--find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--2.10%--btrfs_folio_set_uptodate
+               |          end_folio_read
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.96%--btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.84%--__raw_callee_save___pv_queued_spin_unlock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.69%--xas_find
+               |          xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.30%--_raw_spin_lock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.81%--folio_unlock
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.72%--process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.67%--xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.54%--btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.52%--kernel_fpu_begin_mask
+               |          crc32c_arch
+               |          chksum_digest_arch
+               |          crypto_shash_digest
+               |          btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+--
+               |--0.49%--__pv_queued_spin_lock_slowpath
+               |          _raw_spin_lock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.39%--end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.35%--finish_task_switch
+               |          __schedule
+               |          |          
+               |          |--88.76%--schedule
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |           --11.24%--__cond_resched
+               |                     find_first_inode_to_shrink
+               |                     btrfs_extent_map_shrinker_worker
+               |                     process_scheduled_works
+               |                     worker_thread
+               |                     kthread
+               |                     ret_from_fork
+               |                     ret_from_fork_asm
+               |          
+               |--0.31%--__cond_resched
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.31%--bcmp
+               |          btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+                --3.25%--[...]
+
+     0.43%  kworker/u32:2    [kernel.kallsyms]     [k] __intel_pmu_enable_all
+            |
+            ---__intel_pmu_enable_all
+               perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+--
+               |          
+               |--11.59%--_raw_write_trylock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--4.27%--xas_load
+               |          xas_find
+               |          xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--3.90%--bio_next_folio
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--2.13%--find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.71%--btrfs_folio_set_uptodate
+               |          end_folio_read
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.45%--xas_find
+               |          xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.31%--btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.18%--_raw_spin_lock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.07%--process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.06%--__raw_callee_save___pv_queued_spin_unlock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.79%--folio_unlock
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.75%--end_folio_read
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+--
+               |                     |          ret_from_fork_asm
+               |                     |          
+               |                      --25.35%--find_first_inode_to_shrink
+               |                                btrfs_extent_map_shrinker_worker
+               |                                process_scheduled_works
+               |                                worker_thread
+               |                                kthread
+               |                                ret_from_fork
+               |                                ret_from_fork_asm
+               |          
+               |--0.66%--btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.58%--xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.41%--kernel_fpu_begin_mask
+               |          crc32c_arch
+               |          chksum_digest_arch
+               |          crypto_shash_digest
+               |          btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.41%--__pv_queued_spin_lock_slowpath
+               |          _raw_spin_lock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.39%--crc32c_arch
+               |          chksum_digest_arch
+               |          crypto_shash_digest
+               |          btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.39%--end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+--
+               |          
+               |--10.91%--_raw_write_trylock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--5.15%--bio_next_folio
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--3.78%--xas_load
+               |          xas_find
+               |          xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.97%--btrfs_folio_set_uptodate
+               |          end_folio_read
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.81%--btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.54%--__raw_callee_save___pv_queued_spin_unlock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.47%--find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.23%--xas_find
+               |          xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.89%--process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.85%--_raw_spin_lock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.78%--folio_unlock
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.67%--btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.59%--__pv_queued_spin_lock_slowpath
+               |          _raw_spin_lock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.50%--finish_task_switch
+               |          __schedule
+               |          |          
+               |          |--90.50%--schedule
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |           --9.50%--__cond_resched
+               |                     process_scheduled_works
+               |                     worker_thread
+               |                     kthread
+               |                     ret_from_fork
+               |                     ret_from_fork_asm
+               |          
+               |--0.49%--end_folio_read
+               |          end_bbio_data_read
+--
+               |          
+               |--0.32%--xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+                --3.06%--[...]
+
+     0.41%  kworker/u32:0-e  [kernel.kallsyms]     [k] __intel_pmu_enable_all
+            |
+            ---__intel_pmu_enable_all
+               perf_adjust_freq_unthr_context
+               perf_event_task_tick
+               sched_tick
+               update_process_times
+               tick_nohz_handler
+               __hrtimer_run_queues
+               hrtimer_interrupt
+               __sysvec_apic_timer_interrupt
+               sysvec_apic_timer_interrupt
+               asm_sysvec_apic_timer_interrupt
+               |          
+               |--61.55%--crc32c_x86_3way
+               |          crc32c_arch
+               |          |          
+--
+               |          
+               |--8.94%--_raw_write_trylock
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--4.08%--bio_next_folio
+               |          end_bbio_data_read
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--3.01%--xas_load
+               |          |          
+               |          |--97.01%--xas_find
+               |          |          xa_find
+               |          |          find_first_inode_to_shrink
+               |          |          btrfs_extent_map_shrinker_worker
+               |          |          process_scheduled_works
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |           --2.99%--filemap_get_folios_contig
+               |                     __process_folios_contig
+               |                     cow_file_range
+               |                     writepage_delalloc
+               |                     btrfs_writepages
+               |                     do_writepages
+               |                     __writeback_single_inode
+               |                     writeback_sb_inodes
+               |                     __writeback_inodes_wb
+               |                     wb_writeback
+               |                     wb_workfn
+               |                     process_scheduled_works
+               |                     worker_thread
+               |                     kthread
+               |                     ret_from_fork
+               |                     ret_from_fork_asm
+               |          
+               |--1.86%--btrfs_folio_set_uptodate
+--
+               |--1.59%--__raw_callee_save___pv_queued_spin_unlock
+               |          |          
+               |          |--97.86%--find_first_inode_to_shrink
+               |          |          btrfs_extent_map_shrinker_worker
+               |          |          process_scheduled_works
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |           --2.14%--btrfs_find_delalloc_range
+               |                     find_lock_delalloc_range
+               |                     writepage_delalloc
+               |                     btrfs_writepages
+               |                     do_writepages
+               |                     __writeback_single_inode
+               |                     writeback_sb_inodes
+               |                     __writeback_inodes_wb
+               |                     wb_writeback
+               |                     wb_workfn
+               |                     process_scheduled_works
+               |                     worker_thread
+               |                     kthread
+               |                     ret_from_fork
+               |                     ret_from_fork_asm
+               |          
+               |--1.40%--find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.16%--btrfs_data_csum_ok
+               |          btrfs_check_read_bio
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--1.15%--folio_unlock
+               |          |          
+               |          |--88.85%--end_bbio_data_read
+               |          |          btrfs_check_read_bio
+               |          |          process_scheduled_works
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+--
+               |          _raw_spin_lock
+               |          |          
+               |          |--52.16%--find_first_inode_to_shrink
+               |          |          btrfs_extent_map_shrinker_worker
+               |          |          process_scheduled_works
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |           --47.84%--btrfs_find_delalloc_range
+               |                     find_lock_delalloc_range
+               |                     writepage_delalloc
+               |                     btrfs_writepages
+               |                     do_writepages
+               |                     __writeback_single_inode
+               |                     writeback_sb_inodes
+               |                     __writeback_inodes_wb
+               |                     wb_writeback
+               |                     wb_workfn
+               |                     process_scheduled_works
+               |                     worker_thread
+               |                     kthread
+               |                     ret_from_fork
+               |                     ret_from_fork_asm
+               |          
+               |--0.83%--xas_find
+               |          xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.71%--_raw_spin_lock
+               |          |          
+               |          |--69.36%--find_first_inode_to_shrink
+               |          |          btrfs_extent_map_shrinker_worker
+               |          |          process_scheduled_works
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |          |--24.88%--btrfs_find_delalloc_range
+               |          |          find_lock_delalloc_range
+               |          |          writepage_delalloc
+               |          |          btrfs_writepages
+               |          |          do_writepages
+               |          |          __writeback_single_inode
+               |          |          writeback_sb_inodes
+               |          |          __writeback_inodes_wb
+               |          |          wb_writeback
+               |          |          wb_workfn
+               |          |          process_scheduled_works
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |           --5.76%--join_transaction
+               |                     start_transaction.llvm.14646160944577123971
+--
+               |          
+               |--0.36%--xa_find
+               |          find_first_inode_to_shrink
+               |          btrfs_extent_map_shrinker_worker
+               |          process_scheduled_works
+               |          worker_thread
+               |          kthread
+               |          ret_from_fork
+               |          ret_from_fork_asm
+               |          
+               |--0.31%--kernel_fpu_end
+               |          crc32c_arch
+               |          chksum_digest_arch
+               |          crypto_shash_digest
+               |          |          
+               |          |--86.42%--btrfs_data_csum_ok
+               |          |          btrfs_check_read_bio
+               |          |          process_scheduled_works
+               |          |          worker_thread
+               |          |          kthread
+               |          |          ret_from_fork
+               |          |          ret_from_fork_asm
+               |          |          
+               |           --13.58%--btrfs_csum_one_bio
+               |                     btrfs_submit_bbio
+               |                     submit_extent_folio
+               |                     extent_writepage_io
+               |                     btrfs_writepages
+
+=== spinlock slowpath stacks ===
+               |           --100.00%--0
+               |          
+               |--5.53%--__pv_queued_spin_lock_slowpath
+               |          |          
+               |          |--99.64%--_raw_spin_lock
+               |          |          |          
+               |          |          |--94.21%--__remove_mapping
+               |          |          |          shrink_folio_list
+               |          |          |          shrink_lruvec
+               |          |          |          shrink_node
+               |          |          |          do_try_to_free_pages
+               |          |          |          try_to_free_pages
+               |          |          |          __alloc_pages_slowpath
+               |          |          |          __alloc_frozen_pages_noprof
+               |          |          |          |          
+               |          |          |          |--99.96%--alloc_pages_mpol
+               |          |          |          |          |          
+               |          |          |          |          |--99.50%--folio_alloc_noprof
+               |          |          |          |          |          page_cache_ra_unbounded
+               |          |          |          |          |          filemap_get_pages
+               |          |          |          |          |          filemap_read
+               |          |          |          |          |          vfs_read
+               |          |          |          |          |          ksys_read
+--
+               |           --100.00%--0
+               |          
+               |--8.58%--__pv_queued_spin_lock_slowpath
+               |          |          
+               |          |--99.65%--_raw_spin_lock
+               |          |          |          
+               |          |          |--94.66%--__remove_mapping
+               |          |          |          shrink_folio_list
+               |          |          |          shrink_lruvec
+               |          |          |          shrink_node
+               |          |          |          do_try_to_free_pages
+               |          |          |          try_to_free_pages
+               |          |          |          __alloc_pages_slowpath
+               |          |          |          __alloc_frozen_pages_noprof
+               |          |          |          alloc_pages_mpol
+               |          |          |          |          
+               |          |          |          |--99.79%--folio_alloc_noprof
+               |          |          |          |          page_cache_ra_unbounded
+               |          |          |          |          filemap_get_pages
+               |          |          |          |          filemap_read
+               |          |          |          |          vfs_read
+               |          |          |          |          ksys_read
+               |          |          |          |          do_syscall_64
+--
+               |          0
+               |          
+               |--4.68%--__pv_queued_spin_lock_slowpath
+               |          |          
+               |          |--99.63%--_raw_spin_lock
+               |          |          |          
+               |          |          |--93.84%--__remove_mapping
+               |          |          |          shrink_folio_list
+               |          |          |          shrink_lruvec
+               |          |          |          shrink_node
+               |          |          |          do_try_to_free_pages
+               |          |          |          try_to_free_pages
+               |          |          |          __alloc_pages_slowpath
+               |          |          |          __alloc_frozen_pages_noprof
+               |          |          |          alloc_pages_mpol
+               |          |          |          |          
+               |          |          |          |--99.66%--folio_alloc_noprof
+               |          |          |          |          page_cache_ra_unbounded
+               |          |          |          |          filemap_get_pages
+               |          |          |          |          filemap_read
+               |          |          |          |          vfs_read
+               |          |          |          |          ksys_read
+               |          |          |          |          do_syscall_64
+--
+               |                                __munmap
+               |          
+               |--4.78%--__pv_queued_spin_lock_slowpath
+               |          |          
+               |          |--99.64%--_raw_spin_lock
+               |          |          |          
+               |          |          |--94.22%--__remove_mapping
+               |          |          |          shrink_folio_list
+               |          |          |          shrink_lruvec
+               |          |          |          shrink_node
+               |          |          |          do_try_to_free_pages
+               |          |          |          try_to_free_pages
+               |          |          |          __alloc_pages_slowpath
+               |          |          |          __alloc_frozen_pages_noprof
+               |          |          |          alloc_pages_mpol
+               |          |          |          |          
+               |          |          |          |--99.60%--folio_alloc_noprof
+               |          |          |          |          |          
+               |          |          |          |          |--99.89%--page_cache_ra_unbounded
+               |          |          |          |          |          filemap_get_pages
+               |          |          |          |          |          filemap_read
+               |          |          |          |          |          vfs_read
+               |          |          |          |          |          ksys_read
+--
+               |          0
+               |          
+               |--8.12%--__pv_queued_spin_lock_slowpath
+               |          |          
+               |          |--99.55%--_raw_spin_lock
+               |          |          |          
+               |          |          |--94.62%--__remove_mapping
+               |          |          |          shrink_folio_list
+               |          |          |          shrink_lruvec
+               |          |          |          shrink_node
+               |          |          |          do_try_to_free_pages
+               |          |          |          try_to_free_pages
+               |          |          |          __alloc_pages_slowpath
+               |          |          |          __alloc_frozen_pages_noprof
+               |          |          |          alloc_pages_mpol
+               |          |          |          |          
+               |          |          |          |--99.94%--folio_alloc_noprof
+               |          |          |          |          |          
+               |          |          |          |          |--99.95%--page_cache_ra_unbounded
+               |          |          |          |          |          filemap_get_pages
+               |          |          |          |          |          filemap_read
+               |          |          |          |          |          vfs_read
+               |          |          |          |          |          ksys_read
+--
+               |          0
+               |          
+               |--9.30%--__pv_queued_spin_lock_slowpath
+               |          |          
+               |          |--99.63%--_raw_spin_lock
+               |          |          |          
+               |          |          |--93.75%--__remove_mapping
+               |          |          |          shrink_folio_list
+               |          |          |          shrink_lruvec
+               |          |          |          shrink_node
+               |          |          |          do_try_to_free_pages
+               |          |          |          try_to_free_pages
+               |          |          |          __alloc_pages_slowpath
+               |          |          |          __alloc_frozen_pages_noprof
+               |          |          |          alloc_pages_mpol
+               |          |          |          |          
+               |          |          |          |--99.95%--folio_alloc_noprof
+               |          |          |          |          page_cache_ra_unbounded
+               |          |          |          |          filemap_get_pages
+               |          |          |          |          filemap_read
+               |          |          |          |          vfs_read
+               |          |          |          |          ksys_read
+               |          |          |          |          do_syscall_64
+--
+               |          ret_from_fork_asm
+               |          
+               |--11.05%--__pv_queued_spin_lock_slowpath
+               |          |          
+               |          |--99.56%--_raw_spin_lock
+               |          |          |          
+               |          |          |--95.77%--__remove_mapping
+               |          |          |          shrink_folio_list
+               |          |          |          shrink_lruvec
+               |          |          |          shrink_node
+               |          |          |          kswapd
+               |          |          |          kthread
+               |          |          |          ret_from_fork
+               |          |          |          ret_from_fork_asm
+               |          |          |          
+               |          |          |--3.43%--btrfs_get_range_bits
+               |          |          |          try_release_extent_mapping
+               |          |          |          btrfs_release_folio
+               |          |          |          shrink_folio_list
+               |          |          |          shrink_lruvec
+               |          |          |          shrink_node
+               |          |          |          kswapd
+               |          |          |          kthread
+--
+               asm_sysvec_apic_timer_interrupt
+               |          
+               |--9.36%--__pv_queued_spin_lock_slowpath
+               |          |          
+               |          |--99.70%--_raw_spin_lock
+               |          |          |          
+               |          |          |--79.94%--__remove_mapping
+               |          |          |          shrink_folio_list
+               |          |          |          shrink_lruvec
+               |          |          |          shrink_node
+               |          |          |          do_try_to_free_pages
+               |          |          |          try_to_free_pages
+               |          |          |          __alloc_pages_slowpath
+               |          |          |          __alloc_frozen_pages_noprof
+               |          |          |          alloc_pages_mpol
+               |          |          |          |          
+               |          |          |          |--98.69%--folio_alloc_noprof
+               |          |          |          |          __filemap_get_folio
+               |          |          |          |          prepare_one_folio
+               |          |          |          |          btrfs_buffered_write
+               |          |          |          |          btrfs_do_write_iter
+               |          |          |          |          vfs_write
+               |          |          |          |          ksys_write
+--
+               asm_sysvec_apic_timer_interrupt
+               |          
+               |--8.58%--__pv_queued_spin_lock_slowpath
+               |          |          
+               |          |--99.74%--_raw_spin_lock
+               |          |          |          
+               |          |          |--79.55%--__remove_mapping
+               |          |          |          shrink_folio_list
+(none)

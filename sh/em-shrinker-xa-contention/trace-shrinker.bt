@@ -1,0 +1,41 @@
+/*
+ * Trace how long find_first_inode_to_shrink() holds xa_lock.
+ * The function acquires xa_lock at entry and releases at exit.
+ * This measures the total wall time of each call.
+ *
+ * Also tracks whether cond_resched_lock was hit (implying the lock
+ * was dropped and reacquired mid-iteration).
+ *
+ * Usage: bpftrace trace-shrinker.bt
+ */
+
+kprobe:find_first_inode_to_shrink
+{
+	@start[tid] = nsecs;
+	@calls[tid] = 0;
+}
+
+kprobe:__cond_resched_lock /@start[tid]/
+{
+	@calls[tid]++;
+}
+
+kretprobe:find_first_inode_to_shrink /@start[tid]/
+{
+	$dur = nsecs - @start[tid];
+	$us = $dur / 1000;
+	@hold_us = hist($us);
+	@cond_resched_calls = hist(@calls[tid]);
+	if ($us > 100) {
+		printf("find_first_inode_to_shrink: %d us, cond_resched=%d\n",
+		       $us, @calls[tid]);
+	}
+	delete(@start[tid]);
+	delete(@calls[tid]);
+}
+
+interval:s:10
+{
+	print(@hold_us);
+	print(@cond_resched_calls);
+}
