@@ -1,0 +1,69 @@
+#!/usr/bin/env bpftrace
+/*
+ * lock_alloc_trace.bt — Trace allocations made while holding sleeping locks.
+ *
+ * Tracks rwsem/mutex depth (like runnable_lock_monitor) and logs every
+ * page allocation that happens at depth > 0, with kstack and gfp flags.
+ *
+ * Output: histogram of allocation counts by kstack (aggregated),
+ * plus gfp flag distribution.
+ */
+
+config = {
+	max_map_keys = 65536;
+}
+
+/* Track lock depth per task */
+kretprobe:mutex_lock     { @depth[tid] = @depth[tid] + 1; }
+kretprobe:down_read      { @depth[tid] = @depth[tid] + 1; }
+kretprobe:down_write     { @depth[tid] = @depth[tid] + 1; }
+/* down_read_nested / down_write_nested may be inlined — skip them */
+
+kprobe:mutex_unlock { if (@depth[tid] > 0) { @depth[tid] = @depth[tid] - 1; } }
+kprobe:up_read      { if (@depth[tid] > 0) { @depth[tid] = @depth[tid] - 1; } }
+kprobe:up_write     { if (@depth[tid] > 0) { @depth[tid] = @depth[tid] - 1; } }
+
+/* Trace page allocations while holding locks */
+tracepoint:kmem:mm_page_alloc
+{
+	if (@depth[tid] > 0) {
+		@alloc_stacks[kstack(5)] = count();
+		@alloc_gfp[args->gfp_flags] = count();
+		@alloc_order[args->order] = count();
+		@alloc_total = count();
+	}
+}
+
+/* Also trace try_to_free_pages entry while holding locks */
+kprobe:try_to_free_pages
+{
+	if (@depth[tid] > 0) {
+		@reclaim_stacks[kstack(8)] = count();
+		@reclaim_total = count();
+	}
+}
+
+tracepoint:sched:sched_process_exit
+{
+	delete(@depth, tid);
+}
+
+END
+{
+	printf("\n=== ALLOCATIONS WHILE HOLDING SLEEPING LOCKS ===\n");
+	printf("Total allocations: ");
+	print(@alloc_total);
+	printf("\nTop allocation stacks:\n");
+	print(@alloc_stacks, 20);
+	printf("\nGFP flags:\n");
+	print(@alloc_gfp);
+	printf("\nPage orders:\n");
+	print(@alloc_order);
+	printf("\n=== RECLAIM ENTRIES WHILE HOLDING SLEEPING LOCKS ===\n");
+	printf("Total reclaim entries: ");
+	print(@reclaim_total);
+	printf("\nTop reclaim stacks:\n");
+	print(@reclaim_stacks, 15);
+
+	clear(@depth);
+}

@@ -1,0 +1,432 @@
+#!/usr/bin/env bpftrace
+/*
+ * runnable_lock_monitor.bt - Monitor sleeping locks held during CPU wait
+ *
+ * Tracks mutex and rw_semaphore acquisitions/releases system-wide.
+ * Uses sched_switch to detect when a lock holder enters RUNNABLE state
+ * (on the run queue but not executing) due to preemption, CPU contention,
+ * or CPU throttling.
+ *
+ * On unlock of a lock that was held while the holder was RUNNABLE:
+ *   - Prints accumulated RUNNABLE time while holding the lock
+ *   - Checks for waiters (MUTEX_FLAG_WAITERS / RWSEM_FLAG_WAITERS)
+ *   - Prints lock hold time (acquire to release) and release kstack
+ *
+ * Lock nesting: tracks up to 8 nested sleeping locks per task, handles
+ * non-LIFO unlock order via search-and-swap.
+ *
+ * Usage:
+ *   bpftrace runnable_lock_monitor.bt                       # structured output via emit_sl
+ *   bpftrace runnable_lock_monitor.bt --human=true          # human-readable output
+ *   bpftrace runnable_lock_monitor.bt --waiters_only=true   # print just contended
+ *   bpftrace runnable_lock_monitor.bt --min_runnable_us=500 # only report >= 500 us
+ *
+ * WARNING: sched_switch fires very frequently. Significant overhead.
+ *
+ * Requires: CONFIG_DEBUG_INFO_BTF=y
+ */
+
+config = {
+	max_map_keys = 262144;
+	missing_probes = warn;
+}
+
+let @lock_depth = lruhash(262144);
+
+macro human() {
+	true
+}
+
+macro waiters_only() {
+	false
+}
+
+macro min_runnable_us() {
+	(uint64)10000
+}
+
+/*
+ * pend_acquire - record a pending lock acquisition at kprobe entry.
+ */
+macro pend_acquire(@pend, type) {
+	@pend[tid] = (lock = arg0, type = (uint64)type);
+}
+
+/*
+ * commit_acquire - commit pending lock at kretprobe return.
+ * Uses find() to check @pend existence, then pushes onto the held stack.
+ * Pass `true` for void-return locks, `retval == 0` for failable ones.
+ */
+macro commit_acquire(@pend, @held, @lock_depth, cond) {
+	let $pend;
+	if (find(@pend, tid, $pend) && cond) {
+		$d = (int64)@lock_depth[tid];
+		if ($d < 8) {
+			@held[tid, $d] = (lock = $pend.lock,
+					  type = $pend.type,
+					  time = nsecs);
+			@lock_depth[tid] = $d + 1;
+		}
+	}
+	_ = delete(@pend, tid);
+}
+
+/*
+ * taint_held_locks - mark all currently held locks as tainted.
+ * Called when a lock holder enters RUNNABLE state.
+ * target_tid allows tainting a different task (e.g. woken task).
+ */
+macro taint_held_locks(@held, @lock_depth, @tainted, target_tid) {
+	let $td;
+	if (find(@lock_depth, target_tid, $td)) {
+		$depth = (int64)$td;
+		$i = (int64)0;
+		unroll(8) {
+			if ($i < $depth) {
+				$lk = @held[target_tid, $i].lock;
+				@tainted[target_tid, $lk] =
+					@tainted[target_tid, $lk] | 1;
+			}
+			$i++;
+		}
+	}
+}
+
+/*
+ * emit_sl - structured output for strobelight ingestion.
+ */
+macro emit_sl(lock_type, hold_us, runnable_us, waiters, sched_type, max_runnable_us) {
+	print((
+		"_sl_pid", pid,
+		"_sl_tid", tid,
+		"_sl_comm", comm,
+		"_sl_ustack", ustack(raw),
+		"_sl_kstack", kstack(raw),
+		lock_type,
+		hold_us,
+		runnable_us,
+		waiters,
+		sched_type,
+		max_runnable_us
+	));
+}
+
+/*
+ * release_lock - handle lock release.
+ *
+ * Searches the held-lock array for the lock being released (handles
+ * non-LIFO unlock order).  If the lock was "tainted" (held while
+ * the holder was in RUNNABLE state):
+ *   - Compute total RUNNABLE time (accumulated + current partial)
+ *   - Check for waiters via flag bits
+ *   - Print hold time, runnable time, waiter status, release kstack
+ *
+ * After reporting, remove the entry by swapping with the last slot.
+ *
+ * waiter_mask is the bit mask to check for waiters.
+ * For mutex: 0x01 (MUTEX_FLAG_WAITERS in owner.counter)
+ * For rwsem: 0x02 (RWSEM_FLAG_WAITERS in count.counter)
+ *
+ * The macro reads the lock type from @held to determine which struct
+ * field to check.
+ */
+macro release_lock(@held, @lock_depth, @tainted, @runnable_accum,
+		   @runnable_max, @runnable_start, lock_type_str, waiter_mask) {
+	$lock = arg0;
+	$depth = (int64)@lock_depth[tid];
+
+	$found = (int64)-1;
+	$i = (int64)0;
+	unroll(8) {
+		if ($i < $depth && @held[tid, $i].lock == $lock) {
+			$found = $i;
+		}
+		$i++;
+	}
+
+	if ($found >= 0) {
+		if (has_key(@tainted, (tid, $lock))) {
+			$runnable_ns = (uint64)@runnable_accum[tid, $lock];
+			$max_ns = (uint64)@runnable_max[tid, $lock];
+			if (@runnable_start[tid]) {
+				$partial = nsecs - @runnable_start[tid];
+				$runnable_ns = $runnable_ns + $partial;
+				if ($partial > $max_ns) {
+					$max_ns = $partial;
+				}
+			}
+			$runnable_us = $runnable_ns / (uint64)1000;
+			$max_runnable_us = $max_ns / (uint64)1000;
+			$hold_us = (nsecs - @held[tid, $found].time) / (uint64)1000;
+			$waiters = @held[tid, $found].type == 1
+				? (bool)(((struct mutex *)$lock)->owner.counter & waiter_mask)
+				: (bool)(((struct rw_semaphore *)$lock)->count.counter & waiter_mask);
+			$rtype = "preempt";
+			if ($runnable_us >= min_runnable_us() &&
+			    ($waiters || !waiters_only())) {
+				if (human()) {
+					printf(">>> RUNNABLE_LOCK: %s %p  hold=%llu us  runnable=%llu us  max_runnable=%llu us%s\n",
+						lock_type_str, $lock, $hold_us, $runnable_us, $max_runnable_us,
+						$waiters ? " [WAITERS]" : "");
+					printf("    pid=%-8d tid=%-8d comm=%s\n", pid, tid, comm);
+					print(kstack);
+				} else {
+					emit_sl(lock_type_str, $hold_us, $runnable_us,
+						$waiters, $rtype, $max_runnable_us);
+				}
+			}
+			_ = delete(@tainted, (tid, $lock));
+			_ = delete(@runnable_accum, (tid, $lock));
+			_ = delete(@runnable_max, (tid, $lock));
+		}
+
+		$last = $depth - 1;
+		if ($found != $last) {
+			@held[tid, $found] = @held[tid, $last];
+		}
+		_ = delete(@held, (tid, $last));
+		@lock_depth[tid] = $last;
+	}
+}
+
+/*
+ * =====================================================================
+ * LOCK ACQUISITION
+ *
+ * Strategy: save lock address at kprobe entry into @pend, then commit
+ * the record (with timestamp) at kretprobe return (where we know the
+ * lock is actually held).
+ *
+ * Types: 1 = mutex, 2 = rwsem read, 3 = rwsem write
+ * =====================================================================
+ */
+
+/* --- mutex_lock (void return, always succeeds) --- */
+
+kprobe:mutex_lock
+{
+	pend_acquire(@pend, 1);
+}
+
+kretprobe:mutex_lock
+{
+	commit_acquire(@pend, @held, @lock_depth, true);
+}
+
+/* --- mutex_lock_interruptible / mutex_lock_killable (return 0 on success) --- */
+
+kprobe:mutex_lock_interruptible,
+kprobe:mutex_lock_killable
+{
+	pend_acquire(@pend, 1);
+}
+
+kretprobe:mutex_lock_interruptible,
+kretprobe:mutex_lock_killable
+{
+	commit_acquire(@pend, @held, @lock_depth, retval == 0);
+}
+
+/* --- down_read (void return) --- */
+
+kprobe:down_read
+{
+	pend_acquire(@pend, 2);
+}
+
+kretprobe:down_read
+{
+	commit_acquire(@pend, @held, @lock_depth, true);
+}
+
+/* --- down_read_interruptible / down_read_killable (return 0 on success) --- */
+
+kprobe:down_read_interruptible,
+kprobe:down_read_killable
+{
+	pend_acquire(@pend, 2);
+}
+
+kretprobe:down_read_interruptible,
+kretprobe:down_read_killable
+{
+	commit_acquire(@pend, @held, @lock_depth, retval == 0);
+}
+
+/* --- down_write (void return) --- */
+
+kprobe:down_write
+{
+	pend_acquire(@pend, 3);
+}
+
+kretprobe:down_write
+{
+	commit_acquire(@pend, @held, @lock_depth, true);
+}
+
+/* --- down_write_killable (return 0 on success) --- */
+
+kprobe:down_write_killable
+{
+	pend_acquire(@pend, 3);
+}
+
+kretprobe:down_write_killable
+{
+	commit_acquire(@pend, @held, @lock_depth, retval == 0);
+}
+
+/*
+ * =====================================================================
+ * RUNNABLE STATE TRACKING (sched_switch + sched_wakeup)
+ *
+ * A lock holder enters RUNNABLE state (on the run queue but not
+ * executing) in two ways:
+ *
+ *   1. Preempted: sched_switch with prev_state == TASK_RUNNING (0).
+ *      The task was running and lost the CPU involuntarily.
+ *
+ *   2. Woken up: sched_wakeup fires for a sleeping task.  The task
+ *      transitions from INTERRUPTIBLE/UNINTERRUPTIBLE to RUNNABLE
+ *      and is placed on the run queue.
+ *
+ * In both cases we record the start time and taint the held locks.
+ *
+ * A lock holder leaves RUNNABLE state when it is switched IN
+ * (appears as next_pid in sched_switch).  We accumulate the elapsed
+ * RUNNABLE time into its tainted locks.
+ * =====================================================================
+ */
+
+/*
+ * sched_wakeup: sleeping task woken up → enters RUNNABLE.
+ * tid here is the WAKER, not the woken task.  Use args->pid.
+ */
+tracepoint:sched:sched_wakeup
+{
+	$woken_tid = (uint32)args->pid;
+	let $wd;
+	if (find(@lock_depth, $woken_tid, $wd) && $wd > 0 &&
+	    !@runnable_start[$woken_tid]) {
+		@runnable_start[$woken_tid] = nsecs;
+		taint_held_locks(@held, @lock_depth, @tainted, $woken_tid);
+	}
+}
+
+tracepoint:sched:sched_switch
+{
+	/*
+	 * Incoming task: leaves RUNNABLE state.
+	 * Use args->next_pid since tid refers to the outgoing task.
+	 */
+	$next_tid = (uint32)args->next_pid;
+	let $rs;
+	if (find(@runnable_start, $next_tid, $rs)) {
+		$elapsed = nsecs - $rs;
+		let $nd;
+		if (find(@lock_depth, $next_tid, $nd)) {
+			$depth = (int64)$nd;
+			$i = (int64)0;
+			unroll(8) {
+				if ($i < $depth) {
+					$lk = @held[$next_tid, $i].lock;
+					if (@tainted[$next_tid, $lk]) {
+						@runnable_accum[$next_tid, $lk] =
+							@runnable_accum[$next_tid, $lk] + (int64)$elapsed;
+						if ($elapsed > (int64)@runnable_max[$next_tid, $lk]) {
+							@runnable_max[$next_tid, $lk] = $elapsed;
+						}
+					}
+				}
+				$i++;
+			}
+		}
+		_ = delete(@runnable_start, $next_tid);
+	}
+
+	/*
+	 * Outgoing task: enters RUNNABLE state if preempted.
+	 * prev_state == 0 (TASK_RUNNING) means the task was preempted
+	 * and is still runnable.  Only process if it holds locks and
+	 * isn't already tracked (shouldn't happen, but guard anyway).
+	 */
+	if (args->prev_state == 0 && @lock_depth[tid] > 0 &&
+	    !@runnable_start[tid]) {
+		@runnable_start[tid] = nsecs;
+		taint_held_locks(@held, @lock_depth, @tainted, tid);
+	}
+}
+
+/*
+ * =====================================================================
+ * LOCK RELEASE
+ *
+ * Each unlock handler delegates to release_lock() which handles
+ * searching, taint reporting, and array compaction.
+ *
+ * Waiter detection:
+ *   mutex:  MUTEX_FLAG_WAITERS  = bit 0 of owner.counter  (0x01)
+ *   rwsem:  RWSEM_FLAG_WAITERS  = bit 1 of count.counter  (0x02)
+ * =====================================================================
+ */
+
+kprobe:mutex_unlock
+{
+	release_lock(@held, @lock_depth, @tainted, @runnable_accum,
+		@runnable_max, @runnable_start, "mutex", 0x01);
+}
+
+kprobe:up_read
+{
+	release_lock(@held, @lock_depth, @tainted, @runnable_accum,
+		@runnable_max, @runnable_start, "rwsem read", 0x02);
+}
+
+kprobe:up_write
+{
+	release_lock(@held, @lock_depth, @tainted, @runnable_accum,
+		@runnable_max, @runnable_start, "rwsem write", 0x02);
+}
+
+/*
+ * =====================================================================
+ * CLEANUP ON THREAD EXIT
+ *
+ * Residual map entries accumulate from:
+ *   - @lock_depth[tid] left at 0 after the last unlock
+ *   - @pend if a thread is killed between kprobe and kretprobe
+ *   - @held / @tainted / @runnable_accum if lock or unlock calls were
+ *     inlined and we missed the kprobe
+ * =====================================================================
+ */
+
+tracepoint:sched:sched_process_exit
+{
+	$depth = (int64)@lock_depth[tid];
+	$i = (int64)0;
+	unroll(8) {
+		if ($i < $depth) {
+			$lock = @held[tid, $i].lock;
+			_ = delete(@tainted, (tid, $lock));
+			_ = delete(@runnable_accum, (tid, $lock));
+			_ = delete(@runnable_max, (tid, $lock));
+			_ = delete(@held, (tid, $i));
+		}
+		$i++;
+	}
+	_ = delete(@lock_depth, tid);
+	_ = delete(@pend, tid);
+	_ = delete(@runnable_start, tid);
+}
+
+END
+{
+	clear(@pend);
+	clear(@held);
+	clear(@lock_depth);
+	clear(@tainted);
+	clear(@runnable_accum);
+	clear(@runnable_max);
+	clear(@runnable_start);
+}

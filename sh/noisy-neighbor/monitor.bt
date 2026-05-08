@@ -1,0 +1,44 @@
+/*
+ * Prove CPU starvation causes btrfs lock stalls.
+ *
+ * Compares wall-clock time vs actual CPU time for btrfs_search_slot.
+ * If wall >> cpu, the task was preempted and couldn't get scheduled back.
+ * Also counts concurrent direct reclaim entries to show what's consuming CPU.
+ *
+ * Usage: bpftrace monitor.bt
+ */
+
+#include <linux/sched.h>
+
+kprobe:btrfs_search_slot {
+	@wall_start[tid] = nsecs;
+	@cpu_start[tid] = curtask->se.sum_exec_runtime;
+}
+
+kretprobe:btrfs_search_slot /@wall_start[tid]/ {
+	$wall = nsecs - @wall_start[tid];
+	$cpu = curtask->se.sum_exec_runtime - @cpu_start[tid];
+	$offcpu = $wall - $cpu;
+
+	@wall_us = hist($wall / 1000);
+	@cpu_us = hist($cpu / 1000);
+
+	if ($wall > 10000000) {
+		printf("STALL: tid=%d wall=%dms cpu=%dms offcpu=%dms\n",
+		       tid, $wall / 1000000, $cpu / 1000000, $offcpu / 1000000);
+	}
+
+	delete(@wall_start[tid]);
+	delete(@cpu_start[tid]);
+}
+
+kprobe:try_to_free_pages {
+	@direct_reclaim++;
+}
+
+END {
+	printf("\n=== summary ===\n");
+	printf("direct reclaim entries: %lld\n", @direct_reclaim);
+	printf("\nbtrfs_search_slot WALL time (us):\n"); print(@wall_us);
+	printf("\nbtrfs_search_slot CPU time (us):\n"); print(@cpu_us);
+}

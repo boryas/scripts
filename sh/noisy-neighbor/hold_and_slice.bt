@@ -1,0 +1,92 @@
+#!/usr/bin/env bpftrace
+/*
+ * hold_and_slice.bt — Measure two things:
+ *
+ * 1. Timeslice utilization: how long tasks stay on-CPU per scheduling
+ *    quantum (sched_switch in → sched_switch out).
+ *
+ * 2. Lock hold duration: wall-clock time between rwsem down_read and
+ *    up_read (the dominant btrfs btree lock pattern).
+ *
+ * Output: histograms of both, split by whether the task entered
+ * reclaim during the lock hold.
+ */
+
+config = {
+	max_map_keys = 262144;
+}
+
+/* Track on-CPU start for timeslice measurement */
+tracepoint:sched:sched_switch
+{
+	/* outgoing task: record timeslice if we tracked it */
+	if (@oncpu_start[tid]) {
+		$dur = nsecs - @oncpu_start[tid];
+		@timeslice_us = hist($dur / 1000);
+		if (args->prev_state == 0) {
+			@preempted_slice_us = hist($dur / 1000);
+		} else {
+			@voluntary_slice_us = hist($dur / 1000);
+		}
+		delete(@oncpu_start, tid);
+	}
+
+	/* incoming task: start tracking */
+	$next = (uint32)args->next_pid;
+	if ($next > 0) {
+		@oncpu_start[$next] = nsecs;
+	}
+}
+
+/* Track rwsem read lock hold time (dominant btrfs pattern) */
+kprobe:down_read
+{
+	@rwsem_start[tid] = nsecs;
+}
+
+kprobe:up_read
+{
+	if (@rwsem_start[tid]) {
+		$hold = nsecs - @rwsem_start[tid];
+		@rwsem_hold_us = hist($hold / 1000);
+		delete(@rwsem_start, tid);
+	}
+}
+
+/* Track entry into direct reclaim while holding rwsem */
+kprobe:try_to_free_pages
+{
+	if (@rwsem_start[tid]) {
+		@reclaim_in_lock[tid] = 1;
+	}
+	@reclaim_entry[tid] = nsecs;
+}
+
+kretprobe:try_to_free_pages
+{
+	if (@reclaim_entry[tid]) {
+		$dur = nsecs - @reclaim_entry[tid];
+		@reclaim_dur_us = hist($dur / 1000);
+		if (@reclaim_in_lock[tid]) {
+			@reclaim_in_lock_dur_us = hist($dur / 1000);
+			delete(@reclaim_in_lock, tid);
+		}
+		delete(@reclaim_entry, tid);
+	}
+}
+
+tracepoint:sched:sched_process_exit
+{
+	delete(@oncpu_start, tid);
+	delete(@rwsem_start, tid);
+	delete(@reclaim_entry, tid);
+	delete(@reclaim_in_lock, tid);
+}
+
+END
+{
+	clear(@oncpu_start);
+	clear(@rwsem_start);
+	clear(@reclaim_entry);
+	clear(@reclaim_in_lock);
+}

@@ -1,0 +1,80 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 136K of event 'cpu/cycles/P'
+# Event count (approx.): 10252793946
+#
+# Overhead  Symbol                                         
+# ........  ...............................................
+#
+     8.63%  [k] queued_spin_lock_slowpath
+     2.25%  [k] pvclock_clocksource_read_nowd
+     2.00%  [k] _raw_spin_lock
+     1.95%  [k] rep_movs_alternative
+     1.93%  [k] crc32c_x86_3way
+     1.44%  [.] do_lookup_x
+     1.12%  [k] memset_orig
+     0.99%  [k] kmem_cache_free
+     0.90%  [k] __schedule
+     0.75%  [k] rep_stos_alternative
+     0.71%  [k] copy_mc_enhanced_fast_string
+     0.70%  [k] kmem_cache_alloc_noprof
+     0.68%  [k] kvm_clock_get_cycles
+     0.63%  [k] asm_exc_page_fault
+     0.63%  [k] next_uptodate_folio
+     0.63%  [k] unmap_page_range
+     0.59%  [k] asm_sysvec_apic_timer_interrupt
+     0.59%  [k] prep_new_page
+     0.57%  [.] _dl_lookup_symbol_x
+     0.57%  [k] kfree
+     0.55%  [.] _dl_relocate_object_no_relro
+     0.54%  [k] virtio_fs_requests_done_work
+     0.53%  [k] __fuse_simple_request
+     0.53%  [k] perf_adjust_freq_unthr_context
+     0.52%  [k] _raw_spin_lock_irqsave
+     0.51%  [k] asm_sysvec_call_function_single
+     0.48%  [k] pv_native_safe_halt
+     0.47%  [k] x2apic_send_IPI
+     0.47%  [k] fuse_put_request
+     0.46%  [k] filemap_get_folios_contig
+     0.46%  [k] xas_load
+     0.46%  [k] handle_mm_fault
+     0.44%  [k] native_flush_tlb_one_user
+     0.43%  [k] syscall_return_via_sysret
+     0.42%  [k] entry_SYSCALL_64
+     0.42%  [k] virtio_fs_request_complete
+     0.42%  [k] ktime_get
+     0.42%  [k] __rcu_read_unlock
+     0.40%  [k] perf_adjust_freq_unthr_events
+     0.38%  [k] link_path_walk
+     0.38%  [.] strcmp
+     0.37%  [k] virtqueue_add_split
+     0.36%  [k] do_idle
+     0.36%  [k] lockref_put_return
+     0.36%  [k] __switch_to_asm
+     0.36%  [k] try_to_wake_up
+     0.35%  [k] __rcu_read_lock
+     0.34%  [k] irqentry_enter
+     0.34%  [k] enqueue_task_fair
+     0.34%  [k] fuse_dentry_revalidate
+     0.33%  [k] isolate_lru_folios
+     0.33%  [k] native_apic_msr_eoi
+     0.33%  [k] folio_unlock
+     0.33%  [k] pick_next_task_fair
+     0.33%  [k] rcu_sched_clock_irq
+     0.32%  [k] __free_frozen_pages
+     0.32%  [k] sched_clock_cpu
+     0.32%  [k] __alloc_frozen_pages_noprof
+     0.31%  [k] its_return_thunk
+     0.31%  [k] memcpy_orig
+     0.31%  [k] sched_balance_rq
+     0.31%  [k] __kmalloc_noprof
+     0.30%  [k] __update_load_avg_se
+     0.30%  [k] __switch_to
+
+
+#
+# (Tip: Print event counts in machine readable CSV format with: perf stat -x\;)
+#

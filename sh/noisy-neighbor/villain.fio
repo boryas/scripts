@@ -1,0 +1,11 @@
+[global]
+ioengine=psync
+direct=0
+bs=128k
+rw=randread
+group_reporting
+
+[villain]
+filename=/mnt/bigfile
+numjobs=512
+size=3g
