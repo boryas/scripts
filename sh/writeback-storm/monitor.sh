@@ -38,6 +38,7 @@ FLUSH_BT=""
 for p in \
 	"$(dirname "$(readlink -f "$0")")/../../../local/scripts/bt/flush_effectiveness.bt" \
 	"/work/src/scripts/bt/flush_effectiveness.bt" \
+	"/mnt/repos/scripts/bt/flush_effectiveness.bt" \
 	"$HOME/local/scripts/bt/flush_effectiveness.bt"; do
 	if [ -f "$p" ]; then
 		FLUSH_BT="$p"

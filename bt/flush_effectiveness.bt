@@ -39,6 +39,8 @@ BEGIN
 fentry:flush_space
 {
 	$si = args->space_info;
+	$fsi = $si->fs_info;
+
 	if ($si->flags & 0x4) {
 		@pre_may_use[tid] = $si->bytes_may_use;
 		@pre_pinned[tid] = $si->bytes_pinned;
@@ -49,7 +51,7 @@ fentry:flush_space
 		@reclaim_sz[tid] = $si->reclaim_size;
 
 		/* Snapshot delayed ref heads count */
-		$trans = args->fs_info->running_transaction;
+		$trans = $fsi->running_transaction;
 		@pre_heads[tid] = ($trans != 0)
 			? $trans->delayed_refs.num_heads_ready : 0;
 	}
@@ -60,6 +62,7 @@ fexit:flush_space
 	if (@start[tid] == 0) { return; }
 
 	$si = args->space_info;
+	$fsi = $si->fs_info;
 	$st = @state[tid];
 	$src = @preempt[tid] ? "preempt" : "async";
 
@@ -72,7 +75,7 @@ fexit:flush_space
 	$dur_ms = $dur_us / 1000;
 
 	/* Heads delta (signed) */
-	$trans = args->fs_info->running_transaction;
+	$trans = $fsi->running_transaction;
 	$heads_now = ($trans != 0)
 		? $trans->delayed_refs.num_heads_ready : 0;
 	$heads_d = (int64)$heads_now - (int64)@pre_heads[tid];
