@@ -2,7 +2,7 @@
 /*
  * extent_lock_cost.bt — Extent range lock profiler (villain-only)
  *
- * Emits per-event tuples in StrobeLight format with two event types:
+ * Emits per-event tuples in StrobeLight format with three event types:
  *
  *   extent_lock_acquire — time to acquire a range lock on the extent
  *                         I/O tree.  Includes any time sleeping in
@@ -13,32 +13,48 @@
  *                         to btrfs_clear_extent_bit (unlock).
  *                         "Who holds extent locks for a long time?"
  *
- * Both event types carry the holder's (villain's) stacks.
+ *   extent_lock_hold_overlap — same as extent_lock_hold but emitted
+ *                         when the unlock range's start didn't match
+ *                         the lock range's start.  Found via slow-path
+ *                         iteration over held ranges.
+ *                         "Where do partial-range unlocks happen?"
+ *
+ * All event types carry the holder's (villain's) stacks.
+ *
+ * Range-aware design:
+ *   Held ranges are keyed by (tid, ino, rootid, start) and the end
+ *   offset is stored separately.  This properly handles:
+ *
+ *     - The same tid locking ranges in different inodes
+ *     - Multiple concurrent held ranges by the same tid
+ *     - Partial-range unlocks (via map iteration fallback)
  *
  * Mechanism:
  *   kprobe/kretprobe on lock_extent measures acquisition delay.
- *   The kretprobe also records the acquisition timestamp keyed by
- *   (tid, range_start).
+ *   The kprobe extracts ino and rootid from the extent_io_tree's
+ *   btrfs_inode via BTF, matching what the tracepoint reports.
  *
  *   tracepoint:btrfs:btrfs_clear_extent_bit fires at unlock time.
- *   If clearing EXTENT_LOCKED or EXTENT_DIO_LOCKED (bits & 0x6) and
- *   we have a recorded acquisition for (tid, start), emit the hold
- *   duration.
+ *   If clearing EXTENT_LOCKED or EXTENT_DIO_LOCKED (bits & 0x6):
+ *     Fast path: look up (tid, ino, rootid, start) directly — O(1).
+ *     Slow path: iterate @el_acq to find overlapping held ranges
+ *                for this (tid, ino, rootid) with different start.
+ *                Saves the match timestamp to a per-tid map, then
+ *                emits after the loop (BPF verifier rejects complex
+ *                operations inside for-loop bodies on some kernels).
  *
  *   Rollback clears inside the lock_extent retry loop also fire the
- *   tracepoint, but they occur before the kretprobe sets @el_acquired,
+ *   tracepoint, but they occur before the kretprobe sets @el_acq,
  *   so the lookup returns 0 and they're skipped.
- *
- * Notes:
- *   - All delays are in nanoseconds.
- *   - Hold tracking uses (tid, start) as key.  Partial-range unlocks
- *     with a different start value will miss; this is uncommon for
- *     EXTENT_LOCKED operations.
  *
  * Bit values (from ENUM_BIT macro):
  *   EXTENT_LOCKED     = 0x2
  *   EXTENT_DIO_LOCKED = 0x4
  *   EXTENT_LOCK_BITS  = 0x6
+ *
+ * IO tree owner types with valid inode pointers:
+ *   IO_TREE_INODE_IO           = 3
+ *   IO_TREE_INODE_FILE_EXTENT  = 7
  *
  * Probe target:
  *   lock_extent(struct extent_io_tree *, u64 start, u64 end,
@@ -46,34 +62,59 @@
  *   btrfs_lock_extent_bits() is inlined into this symbol.
  */
 
-/* ── Lock entry: save args for kretprobe ───────────────────────── */
+/* ── StrobeLight tuple helper ──────────────────────────────────── */
+
+macro emit_sl(tag, delay) {
+	$tup = (nsecs, tag, delay,
+		cgroup_path(cgroup),
+		"_sl_pid", pid, "_sl_comm", comm,
+		"_sl_ustack", ustack(raw),
+		"_sl_kstack", kstack(raw));
+	print($tup);
+}
+
+/* ── Lock entry: save args + extract ino/rootid via BTF ────────── */
 
 kprobe:lock_extent
 {
-	@el_entry[tid] = nsecs;
-	@el_start[tid] = arg1;
+	$tree  = (struct extent_io_tree *)arg0;
+	$owner = $tree->owner;
+
+	@_ts[tid]    = nsecs;
+	@_start[tid] = arg1;
+	@_end[tid]   = arg2;
+
+	if ($owner == 3 || $owner == 7) {
+		@_ino[tid]    = $tree->inode->vfs_inode.i_ino;
+		@_rootid[tid] = $tree->inode->root->root_key.objectid;
+	} else {
+		@_ino[tid]    = 0;
+		@_rootid[tid] = 0;
+	}
 }
 
 /* ── Lock acquired: emit acquire tuple, record for hold tracking ── */
 
 kretprobe:lock_extent
 {
-	$entry = @el_entry[tid];
+	$entry = @_ts[tid];
 	if ($entry) {
-		$now = nsecs;
-		$start = @el_start[tid];
+		$now    = nsecs;
+		$start  = @_start[tid];
+		$end    = @_end[tid];
+		$ino    = @_ino[tid];
+		$rootid = @_rootid[tid];
 
-		$tup = ($now, "extent_lock_acquire", $now - $entry,
-			cgroup_path(cgroup),
-			"_sl_pid", pid, "_sl_comm", comm,
-			"_sl_ustack", ustack(raw),
-			"_sl_kstack", kstack(raw));
-		print($tup);
+		emit_sl("extent_lock_acquire", $now - $entry);
 
-		@el_acquired[tid, $start] = $now;
+		@el_acq[tid, $ino, $rootid, $start] = $now;
+		@el_end[tid, $ino, $rootid, $start] = $end;
 
-		_ = delete(@el_entry[tid]);
-		_ = delete(@el_start[tid]);
+		_ = delete(@_ts[tid]);
+		_ = delete(@_start[tid]);
+		_ = delete(@_end[tid]);
+		_ = delete(@_ino[tid]);
+		_ = delete(@_rootid[tid]);
 	}
 }
 
@@ -82,22 +123,64 @@ kretprobe:lock_extent
 tracepoint:btrfs:btrfs_clear_extent_bit
 / args->clear_bits & 6 /
 {
-	$acq = @el_acquired[tid, args->start];
-	if ($acq) {
-		$tup = (nsecs, "extent_lock_hold", nsecs - $acq,
-			cgroup_path(cgroup),
-			"_sl_pid", pid, "_sl_comm", comm,
-			"_sl_ustack", ustack(raw),
-			"_sl_kstack", kstack(raw));
-		print($tup);
+	$ino        = args->ino;
+	$rootid     = args->rootid;
+	$start      = args->start;
+	$unlock_end = $start + args->len - 1;
 
-		_ = delete(@el_acquired[tid, args->start]);
+	/*
+	 * Fast path: exact start match — covers 99%+ of cases since
+	 * btrfs almost always unlocks the same [start, end] it locked.
+	 */
+	$acq = @el_acq[tid, $ino, $rootid, $start];
+	if ($acq) {
+		emit_sl("extent_lock_hold", nsecs - $acq);
+
+		_ = delete(@el_acq[tid, $ino, $rootid, $start]);
+		_ = delete(@el_end[tid, $ino, $rootid, $start]);
+	} else {
+		/*
+		 * Slow path: unlock start doesn't match any held start.
+		 * Scan all held ranges for this (tid, ino, rootid) to
+		 * find an overlapping entry.  Save the match timestamp
+		 * to @_slow_ts, then emit after the loop — the BPF
+		 * verifier rejects complex operations (print, delete,
+		 * saving $kv fields to locals) inside for-loop bodies
+		 * on some kernels.
+		 */
+		$found = 0;
+		for ($kv : @el_acq) {
+			if ($found == 0 &&
+			    $kv.0.0 == tid &&
+			    $kv.0.1 == $ino &&
+			    $kv.0.2 == $rootid) {
+				$h_start = $kv.0.3;
+				$h_end   = @el_end[$kv.0.0, $kv.0.1,
+						   $kv.0.2, $h_start];
+				if ($start <= $h_end &&
+				    $unlock_end >= $h_start) {
+					@_slow_ts[tid] = $kv.1;
+					$found = 1;
+				}
+			}
+		}
+
+		if ($found) {
+			emit_sl("extent_lock_hold_subrange",
+				nsecs - @_slow_ts[tid]);
+			_ = delete(@_slow_ts[tid]);
+		}
 	}
 }
 
 END
 {
-	clear(@el_entry);
-	clear(@el_start);
-	clear(@el_acquired);
+	clear(@_ts);
+	clear(@_start);
+	clear(@_end);
+	clear(@_ino);
+	clear(@_rootid);
+	clear(@_slow_ts);
+	clear(@el_acq);
+	clear(@el_end);
 }

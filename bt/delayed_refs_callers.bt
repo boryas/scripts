@@ -1,0 +1,223 @@
+#!/usr/bin/env bpftrace
+/*
+ * delayed_refs_callers.bt — Who calls btrfs_update_delayed_refs_rsv?
+ *
+ * Captures kstack for every call to btrfs_update_delayed_refs_rsv
+ * and counts by stack trace. Also tracks how many calls occur
+ * inside vs outside btrfs_finish_one_ordered. Separately tracks
+ * calls with delayed_ref_csum_deletions > 0.
+ *
+ * Also tracks inode delayed_rsv shortfalls: after
+ * btrfs_delalloc_release_metadata recalculates inode block RSV size,
+ * checks if delayed_rsv.reserved < delayed_rsv.size (underfunded).
+ *
+ * Usage: sudo bpftrace delayed_refs_callers.bt
+ */
+
+BEGIN
+{
+	printf("Tracing btrfs_update_delayed_refs_rsv callers... Ctrl-C for summary.\n");
+}
+
+fentry:btrfs_finish_one_ordered
+{
+	@in_finish[tid] = 1;
+	@oe_completions = count();
+}
+
+fexit:btrfs_finish_one_ordered
+{
+	delete(@in_finish[tid]);
+}
+
+fentry:btrfs_update_delayed_refs_rsv
+{
+	$trans = args.trans;
+	$csum_dels = $trans->delayed_ref_csum_deletions;
+
+	@callers[kstack] = count();
+
+	if (@in_finish[tid]) {
+		@inside_finish = count();
+	} else {
+		@outside_finish = count();
+	}
+
+	if ($csum_dels > 0) {
+		@csum_del_callers[kstack] = count();
+		@csum_del_count = count();
+		@csum_del_leaves = sum($csum_dels);
+		if (@in_finish[tid]) {
+			@csum_del_inside = count();
+		} else {
+			@csum_del_outside = count();
+		}
+	}
+}
+
+/*
+ * Track inode delayed_rsv state around btrfs_delalloc_release_metadata.
+ * This is called from btrfs_remove_ordered_extent (after OE completion)
+ * and from btrfs_clear_delalloc_extent (error paths).
+ * After it runs, btrfs_calculate_inode_block_rsv_size recalculates
+ * delayed_rsv.size and btrfs_inode_rsv_release releases the excess.
+ * We check the result at fexit.
+ */
+fentry:btrfs_delalloc_release_metadata
+{
+	$inode = args.inode;
+	@drm_pre_rsv[tid] = $inode->delayed_rsv.reserved;
+	@drm_pre_sz[tid] = $inode->delayed_rsv.size;
+}
+
+fexit:btrfs_delalloc_release_metadata
+{
+	$inode = args.inode;
+	$post_rsv = $inode->delayed_rsv.reserved;
+	$post_sz = $inode->delayed_rsv.size;
+	$pre_rsv = @drm_pre_rsv[tid];
+	$pre_sz = @drm_pre_sz[tid];
+
+	@drm_calls = count();
+
+	/* How much was released from the delayed_rsv */
+	if ($pre_rsv > $post_rsv) {
+		$released = $pre_rsv - $post_rsv;
+		@drm_released_total = sum($released);
+		@drm_released_count = count();
+		@drm_released_kb = hist($released / 1024);
+	}
+
+	/* Shortfall: after recalc, reserved < size (underfunded) */
+	if ($post_rsv < $post_sz) {
+		$gap = $post_sz - $post_rsv;
+		@drm_shortfall_count = count();
+		@drm_shortfall_total = sum($gap);
+		@drm_shortfall_kb = hist($gap / 1024);
+		@drm_shortfall_callers[kstack] = count();
+	}
+
+	delete(@drm_pre_rsv[tid]);
+	delete(@drm_pre_sz[tid]);
+}
+
+/*
+ * Also track btrfs_delalloc_release_extents — called at end of each
+ * buffered write. Also recalculates inode block RSV and releases excess.
+ */
+fentry:btrfs_delalloc_release_extents
+{
+	$inode = args.inode;
+	@dre_pre_rsv[tid] = $inode->delayed_rsv.reserved;
+	@dre_pre_sz[tid] = $inode->delayed_rsv.size;
+}
+
+fexit:btrfs_delalloc_release_extents
+{
+	$inode = args.inode;
+	$post_rsv = $inode->delayed_rsv.reserved;
+	$post_sz = $inode->delayed_rsv.size;
+	$pre_rsv = @dre_pre_rsv[tid];
+
+	@dre_calls = count();
+
+	if ($pre_rsv > $post_rsv) {
+		$released = $pre_rsv - $post_rsv;
+		@dre_released_total = sum($released);
+		@dre_released_count = count();
+	}
+
+	if ($post_rsv < $post_sz) {
+		$gap = $post_sz - $post_rsv;
+		@dre_shortfall_count = count();
+		@dre_shortfall_total = sum($gap);
+	}
+
+	delete(@dre_pre_rsv[tid]);
+	delete(@dre_pre_sz[tid]);
+}
+
+END
+{
+	printf("\n\n==================== SUMMARY ====================\n\n");
+	printf("Calls inside btrfs_finish_one_ordered:  ");
+	print(@inside_finish);
+	printf("Calls outside btrfs_finish_one_ordered: ");
+	print(@outside_finish);
+	printf("OE completions:                         ");
+	print(@oe_completions);
+
+	printf("\n--- Csum deletion summary ---\n");
+	printf("Calls with csum_deletions > 0:  ");
+	print(@csum_del_count);
+	printf("  inside finish_one_ordered:    ");
+	print(@csum_del_inside);
+	printf("  outside finish_one_ordered:   ");
+	print(@csum_del_outside);
+	printf("Total csum_deletion leaves:     ");
+	print(@csum_del_leaves);
+
+	printf("\n--- Csum deletion stacks ---\n");
+	print(@csum_del_callers);
+
+	printf("\n--- inode delayed_rsv release (btrfs_delalloc_release_metadata) ---\n");
+	printf("Calls:                ");
+	print(@drm_calls);
+	printf("Released count:       ");
+	print(@drm_released_count);
+	printf("Released total bytes: ");
+	print(@drm_released_total);
+	printf("Released distribution (KB):\n");
+	print(@drm_released_kb);
+	printf("Shortfall count:      ");
+	print(@drm_shortfall_count);
+	printf("Shortfall total bytes:");
+	print(@drm_shortfall_total);
+	printf("Shortfall distribution (KB):\n");
+	print(@drm_shortfall_kb);
+	printf("Shortfall callers:\n");
+	print(@drm_shortfall_callers);
+
+	printf("\n--- inode delayed_rsv release (btrfs_delalloc_release_extents) ---\n");
+	printf("Calls:                ");
+	print(@dre_calls);
+	printf("Released count:       ");
+	print(@dre_released_count);
+	printf("Released total bytes: ");
+	print(@dre_released_total);
+	printf("Shortfall count:      ");
+	print(@dre_shortfall_count);
+	printf("Shortfall total bytes:");
+	print(@dre_shortfall_total);
+
+	printf("\n--- All call stacks (top contributors) ---\n");
+	print(@callers);
+
+	clear(@callers);
+	clear(@csum_del_callers);
+	clear(@inside_finish);
+	clear(@outside_finish);
+	clear(@oe_completions);
+	clear(@csum_del_count);
+	clear(@csum_del_inside);
+	clear(@csum_del_outside);
+	clear(@csum_del_leaves);
+	clear(@in_finish);
+	clear(@drm_calls);
+	clear(@drm_released_count);
+	clear(@drm_released_total);
+	clear(@drm_released_kb);
+	clear(@drm_shortfall_count);
+	clear(@drm_shortfall_total);
+	clear(@drm_shortfall_kb);
+	clear(@drm_shortfall_callers);
+	clear(@drm_pre_rsv);
+	clear(@drm_pre_sz);
+	clear(@dre_calls);
+	clear(@dre_released_count);
+	clear(@dre_released_total);
+	clear(@dre_shortfall_count);
+	clear(@dre_shortfall_total);
+	clear(@dre_pre_rsv);
+	clear(@dre_pre_sz);
+}

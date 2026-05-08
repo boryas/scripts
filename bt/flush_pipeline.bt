@@ -1,0 +1,411 @@
+#!/usr/bin/env bpftrace
+/*
+ * flush_pipeline.bt — Track btrfs metadata reclaim pipeline dynamics
+ *
+ * Tracks:
+ *   1. Per-action flush_space effectiveness (bytes_may_use delta, ref heads)
+ *   2. Inode RSV exhaustion during ordered extent completion
+ *   3. Ordered extent creation counts (total vs compressed)
+ *   4. Per-action rates of benefit (via interval summaries)
+ *
+ * Usage: sudo bpftrace flush_pipeline.bt
+ *
+ * Notes:
+ *   flush_space is static — check /proc/kallsyms if fentry fails.
+ *   On some kernels it may appear as flush_space.isra.0.
+ */
+
+BEGIN
+{
+	printf("Tracing btrfs flush pipeline... Ctrl-C for summary.\n\n");
+	printf("%-10s %-22s %10s %10s %8s %8s\n",
+	       "SOURCE", "ACTION", "FREED_MB", "HEADS_D", "DUR_MS", "CLAMP");
+	printf("%-10s %-22s %10s %10s %8s %8s\n",
+	       "------", "------", "--------", "-------", "------", "-----");
+}
+
+/* ============================================================
+ * 1. flush_space effectiveness
+ * ============================================================ */
+
+fentry:flush_space
+{
+	$si = args->space_info;
+	if ($si->flags & 0x4) {
+		@fs_pre_may_use[tid] = $si->bytes_may_use;
+		@fs_state[tid] = (uint64)args->state;
+		@fs_preempt[tid] = args->for_preempt ? 1 : 0;
+		@fs_start[tid] = nsecs;
+		@fs_clamp[tid] = $si->clamp;
+
+		$fi = $si->fs_info;
+		$trans = $fi->running_transaction;
+		@fs_pre_heads[tid] = ($trans != 0)
+			? $trans->delayed_refs.num_heads_ready : 0;
+	}
+}
+
+fexit:flush_space
+{
+	if (@fs_start[tid] == 0) { return; }
+
+	$si = args->space_info;
+	$st = @fs_state[tid];
+	$src = @fs_preempt[tid] ? "preempt" : "async";
+
+	/*
+	 * Compute freed bytes and MB, avoiding signed division.
+	 * Compare the raw uint64 pre/post values to determine sign,
+	 * then compute magnitude in the correct direction.
+	 * bpftrace's (int64) cast does NOT affect >= comparison
+	 * semantics — the BPF verifier still treats it as unsigned.
+	 *
+	 * Variables must be declared before if/else — bpftrace
+	 * scopes variables to the block they're first assigned in.
+	 */
+	$pre = @fs_pre_may_use[tid];
+	$post = $si->bytes_may_use;
+	$freed_mb = (int64)0;
+	$freed_bytes = (int64)0;
+	$grew = 0;
+	if ($pre >= $post) {
+		$freed_mb = (int64)(($pre - $post) / (1024 * 1024));
+		$freed_bytes = (int64)($pre - $post);
+	} else {
+		$freed_mb = -(int64)(($post - $pre) / (1024 * 1024));
+		$freed_bytes = -(int64)($post - $pre);
+		$grew = 1;
+	}
+	$dur_ms = (nsecs - @fs_start[tid]) / 1000 / 1000;
+
+	$fi = $si->fs_info;
+	$trans = $fi->running_transaction;
+	$heads_now = ($trans != 0)
+		? $trans->delayed_refs.num_heads_ready : 0;
+	$pre_heads = @fs_pre_heads[tid];
+	$heads_d = (int64)0;
+	if ($heads_now >= $pre_heads) {
+		$heads_d = (int64)($heads_now - $pre_heads);
+	} else {
+		$heads_d = -(int64)($pre_heads - $heads_now);
+	}
+
+	$name = "?";
+	if ($st == 1)  { $name = "DELAYED_ITEMS_NR"; }
+	if ($st == 2)  { $name = "DELAYED_ITEMS"; }
+	if ($st == 3)  { $name = "DELAYED_REFS_NR"; }
+	if ($st == 4)  { $name = "DELAYED_REFS"; }
+	if ($st == 5)  { $name = "DELALLOC"; }
+	if ($st == 6)  { $name = "DELALLOC_WAIT"; }
+	if ($st == 7)  { $name = "DELALLOC_FULL"; }
+	if ($st == 8)  { $name = "ALLOC_CHUNK"; }
+	if ($st == 9)  { $name = "ALLOC_CHUNK_FORCE"; }
+	if ($st == 10) { $name = "RUN_DELAYED_IPUTS"; }
+	if ($st == 11) { $name = "COMMIT_TRANS"; }
+
+	/* Per-event output */
+	printf("%-10s %-22s %10lld %10lld %8llu %8d\n",
+	       $src, $name, $freed_mb, $heads_d, $dur_ms,
+	       @fs_clamp[tid]);
+
+	/* Aggregate totals — use freed_bytes for precise sums */
+	@total_freed[$src, $name] = sum($freed_bytes);
+	@total_calls[$src, $name] = count();
+
+	/* Split histograms by sign */
+	if ($grew == 0 && $freed_mb > 0) {
+		@freed_pos[$src, $name] = hist($freed_mb);
+	}
+	if ($grew == 1 && $freed_mb != 0) {
+		@freed_neg[$src, $name] = hist(-$freed_mb);
+	}
+
+	/* Feedback loop: DELALLOC that made things worse */
+	if ($st == 5 || $st == 6 || $st == 7) {
+		if ($grew) {
+			@feedback_grew_may_use = count();
+			@feedback_may_use_bytes = sum(-$freed_bytes);
+		}
+		if ($heads_now > $pre_heads) {
+			@feedback_grew_heads = count();
+			@feedback_heads_total = sum($heads_d);
+		}
+	}
+
+	delete(@fs_pre_may_use[tid]);
+	delete(@fs_state[tid]);
+	delete(@fs_preempt[tid]);
+	delete(@fs_start[tid]);
+	delete(@fs_clamp[tid]);
+	delete(@fs_pre_heads[tid]);
+}
+
+/* ============================================================
+ * 1b. Ordered extent wait tracing
+ * ============================================================ */
+
+fentry:btrfs_wait_ordered_roots
+{
+	@wor_nr[tid] = args->nr;
+	@wor_start[tid] = nsecs;
+}
+
+fexit:btrfs_wait_ordered_roots
+{
+	$nr = @wor_nr[tid];
+	$dur = (nsecs - @wor_start[tid]) / 1000 / 1000;
+	printf("  wait_ordered_roots             nr=%llu dur=%llums\n", $nr, $dur);
+	delete(@wor_nr[tid]);
+	delete(@wor_start[tid]);
+}
+
+fentry:btrfs_wait_ordered_extents
+{
+	@woe_nr[tid] = args->nr;
+}
+
+fexit:btrfs_wait_ordered_extents
+{
+	$nr = @woe_nr[tid];
+	$done = retval;
+	if ($done > 0) {
+		printf("  wait_ordered_extents           nr=%llu done=%llu\n", $nr, $done);
+	}
+	delete(@woe_nr[tid]);
+}
+
+/* ============================================================
+ * 2. Inode RSV exhaustion
+ *
+ * btrfs_block_rsv_use_bytes is called by btrfs_use_block_rsv
+ * to decrement a RSV. When it fails (returns non-zero), the
+ * RSV is exhausted and btrfs_use_block_rsv falls through to
+ * NO_FLUSH reserve or global RSV.
+ *
+ * We track failures for DELALLOC type RSVs (type == 2).
+ * ============================================================ */
+
+fexit:btrfs_block_rsv_use_bytes
+{
+	$rsv = args->block_rsv;
+	$type = $rsv->type;
+	$ret = retval;
+
+	/* BTRFS_BLOCK_RSV_DELALLOC = 2 */
+	if ($type == 2) {
+		@inode_rsv_attempts = count();
+		if ($ret != 0) {
+			@inode_rsv_exhausted = count();
+		}
+	}
+
+	/* BTRFS_BLOCK_RSV_DELREFS = 5 */
+	if ($type == 5) {
+		@delrefs_rsv_attempts = count();
+		if ($ret != 0) {
+			@delrefs_rsv_exhausted = count();
+		}
+	}
+}
+
+/* ============================================================
+ * 3. Ordered extent creation
+ * ============================================================ */
+
+fentry:btrfs_alloc_ordered_extent
+{
+	$ino = args->inode->vfs_inode.i_ino;
+	/* BTRFS_ORDERED_COMPRESSED = bit 3 → 1 << 3 = 8 */
+	$compressed = args->flags & 8;
+	$num_bytes = args->file_extent->num_bytes;
+
+	@oe_total = count();
+	@oe_per_inode[$ino] = count();
+	@oe_size_kb = hist($num_bytes / 1024);
+	if ($compressed) {
+		@oe_compressed = count();
+		@oe_compr_size_kb = hist($num_bytes / 1024);
+	} else {
+		@oe_uncompr_size_kb = hist($num_bytes / 1024);
+	}
+}
+
+/* ============================================================
+ * 4. Delayed refs RSV funding tracking
+ *
+ * btrfs_update_delayed_refs_rsv transfers from the per-transaction
+ * local delayed_rsv to the global delayed_refs_rsv.
+ * Measure the delta in global delayed_refs_rsv.size vs .reserved
+ * across the call to detect underfunding.
+ * ============================================================ */
+
+fentry:btrfs_update_delayed_refs_rsv
+{
+	$fi = args->trans->fs_info;
+	@drsv_pre_size[tid] = $fi->delayed_refs_rsv.size;
+	@drsv_pre_rsv[tid] = $fi->delayed_refs_rsv.reserved;
+}
+
+fexit:btrfs_update_delayed_refs_rsv
+{
+	if (@drsv_pre_size[tid] == 0 && @drsv_pre_rsv[tid] == 0) {
+		return;
+	}
+
+	$fi = args->trans->fs_info;
+	$d_size = $fi->delayed_refs_rsv.size - @drsv_pre_size[tid];
+	$d_rsv = $fi->delayed_refs_rsv.reserved - @drsv_pre_rsv[tid];
+
+	if ($d_size > 0) {
+		@drsv_calls = count();
+		@drsv_total_need = sum($d_size);
+		@drsv_total_got = sum($d_rsv);
+		@drsv_size_delta_kb = hist($d_size / 1024);
+
+		$shortfall = (int64)0;
+		if ($d_size > $d_rsv) {
+			$shortfall = (int64)($d_size - $d_rsv);
+		}
+		if ($shortfall > 0) {
+			@drsv_underfunded = count();
+			@drsv_total_shortfall = sum($shortfall);
+			@drsv_shortfall_kb = hist($shortfall / 1024);
+		}
+	}
+
+	delete(@drsv_pre_size[tid]);
+	delete(@drsv_pre_rsv[tid]);
+}
+
+/* ============================================================
+ * 4b. Delalloc reserve metadata — what count_max_extents predicts
+ * ============================================================ */
+
+fentry:btrfs_delalloc_reserve_metadata
+{
+	$num_bytes = args->num_bytes;
+	/* max_extent_size = 128M = 134217728 */
+	$nr_extents = ($num_bytes + 134217727) / 134217728;
+	@reserve_nr_extents = hist($nr_extents);
+	@reserve_num_bytes_kb = hist($num_bytes / 1024);
+	@reserve_calls = count();
+}
+
+/* ============================================================
+ * 5. Interval summary with rates
+ * ============================================================ */
+
+interval:s:10
+{
+	printf("\n--- %llu seconds elapsed ---\n", elapsed / 1000000000);
+}
+
+END
+{
+	printf("\n\n==================== SUMMARY ====================\n\n");
+
+	printf("--- Flush call counts ---\n");
+	print(@total_calls);
+
+	printf("\n--- Total bytes_may_use change (bytes, signed) ---\n");
+	printf("    positive = freed, negative = GREW\n");
+	print(@total_freed);
+
+	printf("\n--- bytes_may_use FREED histogram (MB) ---\n");
+	print(@freed_pos);
+
+	printf("\n--- bytes_may_use GREW histogram (MB) ---\n");
+	print(@freed_neg);
+
+	printf("\n--- FLUSH_DELALLOC feedback loop ---\n");
+	printf("  Times DELALLOC grew bytes_may_use:  ");
+	print(@feedback_grew_may_use);
+	printf("  Total growth (bytes):               ");
+	print(@feedback_may_use_bytes);
+	printf("  Times DELALLOC grew ref heads:      ");
+	print(@feedback_grew_heads);
+	printf("  Total heads growth:                 ");
+	print(@feedback_heads_total);
+
+	printf("\n--- Inode RSV (DELALLOC) exhaustion ---\n");
+	printf("  btrfs_block_rsv_use_bytes attempts: ");
+	print(@inode_rsv_attempts);
+	printf("  Exhausted (failed):                 ");
+	print(@inode_rsv_exhausted);
+
+	printf("\n--- Delayed refs RSV exhaustion ---\n");
+	printf("  btrfs_block_rsv_use_bytes attempts: ");
+	print(@delrefs_rsv_attempts);
+	printf("  Exhausted (failed):                 ");
+	print(@delrefs_rsv_exhausted);
+
+	printf("\n--- Delayed refs RSV funding ---\n");
+	printf("  btrfs_update_delayed_refs_rsv calls: ");
+	print(@drsv_calls);
+	printf("  Total size delta (bytes needed):     ");
+	print(@drsv_total_need);
+	printf("  Total rsv delta (bytes funded):      ");
+	print(@drsv_total_got);
+	printf("  Total shortfall (bytes):             ");
+	print(@drsv_total_shortfall);
+	printf("  Times underfunded (shortfall > 0):   ");
+	print(@drsv_underfunded);
+	printf("  Size delta distribution (KB):\n");
+	print(@drsv_size_delta_kb);
+	printf("  Shortfall distribution (KB):\n");
+	print(@drsv_shortfall_kb);
+
+	printf("\n--- Delalloc reserve metadata ---\n");
+	printf("  Reserve calls:   ");
+	print(@reserve_calls);
+	printf("  nr_extents per call:\n");
+	print(@reserve_nr_extents);
+	printf("  num_bytes per call (KB):\n");
+	print(@reserve_num_bytes_kb);
+
+	printf("\n--- Ordered extent creation ---\n");
+	printf("  Total:      ");
+	print(@oe_total);
+	printf("  Compressed: ");
+	print(@oe_compressed);
+	printf("\n--- Ordered extent sizes (KB) ---\n");
+	printf("  All:\n");
+	print(@oe_size_kb);
+	printf("  Compressed:\n");
+	print(@oe_compr_size_kb);
+	printf("  Uncompressed:\n");
+	print(@oe_uncompr_size_kb);
+	printf("  Per-inode (top contributors):\n");
+	print(@oe_per_inode);
+
+	clear(@total_calls);
+	clear(@total_freed);
+	clear(@freed_pos);
+	clear(@freed_neg);
+	clear(@feedback_grew_may_use);
+	clear(@feedback_may_use_bytes);
+	clear(@feedback_grew_heads);
+	clear(@feedback_heads_total);
+	clear(@inode_rsv_attempts);
+	clear(@inode_rsv_exhausted);
+	clear(@delrefs_rsv_attempts);
+	clear(@delrefs_rsv_exhausted);
+	clear(@oe_total);
+	clear(@oe_compressed);
+	clear(@oe_size_kb);
+	clear(@oe_compr_size_kb);
+	clear(@oe_uncompr_size_kb);
+	clear(@oe_per_inode);
+	clear(@drsv_calls);
+	clear(@drsv_total_need);
+	clear(@drsv_total_got);
+	clear(@drsv_total_shortfall);
+	clear(@drsv_underfunded);
+	clear(@drsv_size_delta_kb);
+	clear(@drsv_shortfall_kb);
+	clear(@drsv_pre_size);
+	clear(@drsv_pre_rsv);
+	clear(@reserve_calls);
+	clear(@reserve_nr_extents);
+	clear(@reserve_num_bytes_kb);
+}
