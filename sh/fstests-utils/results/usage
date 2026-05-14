@@ -1,1 +1,4 @@
-fstests-utils results [-a] <test-name>
+fstests-utils results <branch>                       diff verdicts vs for-next baseline
+fstests-utils results -a <branch>                    cat raw result file
+fstests-utils results json <branch>                  print latest <sha>.json digest
+fstests-utils results history <test> [<branch>] [N]  print test verdict timeline (default branch for-next, N=20)

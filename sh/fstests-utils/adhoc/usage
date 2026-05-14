@@ -1,0 +1,14 @@
+fstests-utils adhoc <test> [test...]
+
+Run the listed tests in parallel across whatever workers are currently
+up.  No build, no provision, no teardown, no digest -- just dispatch and
+print the results.  Use this to:
+  - reproduce a flake on the existing fleet
+  - re-check a specific fix against the same kernel
+  - validate the parallel retry path on idle hosts during a serial run
+
+Env:
+  WORKERS   worker backend (default local-vm)
+  TIMEOUT   per-test timeout (default 30m)
+  HOSTS     explicit comma-separated subset of hosts (default: $B/list)
+            e.g. HOSTS=fstests@1.2.3.4,fstests@5.6.7.8

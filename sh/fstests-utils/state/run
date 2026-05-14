@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+"""
+fstests-utils state <branch>
+
+Fold every <sha>.json digest under ~/fstests-results/<branch>/ into a per-test
+verdict history at ~/fstests-results/<branch>/history.json.  Idempotent: each
+sha is recorded at most once.  No alerts, no classifications -- just an
+append-only history (newest first per test) that human queries can analyze.
+
+Schema:
+
+    {
+      "version": 1,
+      "branch": "for-next",
+      "updated_at": "<iso8601>",
+      "last_sha": "<sha>",
+      "tests": {
+        "<test name>": {
+          "history": [
+            {"sha": "...", "verdict": "...", "ts": "..."},
+            ...newest first
+          ]
+        }
+      }
+    }
+"""
+
+import json
+import os
+import sys
+from datetime import datetime, timezone
+
+USAGE = "usage: fstests-utils state <branch>"
+
+
+def load_state(path):
+    if not os.path.isfile(path):
+        return None
+    with open(path) as f:
+        return json.load(f)
+
+
+def main():
+    if len(sys.argv) != 2:
+        print(USAGE, file=sys.stderr)
+        sys.exit(22)
+
+    branch = sys.argv[1]
+    results_dir = os.path.expanduser(f"~/fstests-results/{branch}")
+    history_path = os.path.join(results_dir, "history.json")
+
+    if not os.path.isdir(results_dir):
+        print(f"FAIL: no results dir for branch: {results_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    state = load_state(history_path) or {
+        "version": 1,
+        "branch": branch,
+        "updated_at": None,
+        "last_sha": None,
+        "folded_shas": [],
+        "tests": {},
+    }
+    # Older state files don't have folded_shas explicitly.  Bootstrap it
+    # from existing per-test history so we don't re-fold those.
+    if "folded_shas" not in state:
+        state["folded_shas"] = []
+    if not state["folded_shas"]:
+        seen_in_tests = set()
+        for tentry in state["tests"].values():
+            for entry in tentry.get("history", []):
+                seen_in_tests.add(entry["sha"])
+        state["folded_shas"] = sorted(seen_in_tests)
+
+    # Find every digest in the branch dir.  Use mtime order so we fold older
+    # runs in first; newer runs get prepended to the history later.
+    digests = []
+    for name in os.listdir(results_dir):
+        if not name.endswith(".json") or name == "history.json":
+            continue
+        path = os.path.join(results_dir, name)
+        digests.append((os.path.getmtime(path), path))
+    digests.sort()  # ascending by mtime: oldest first
+
+    seen_shas = set(state["folded_shas"])
+    folded = 0
+    last_sha = state.get("last_sha")
+    last_ts = state.get("updated_at")
+    for _, path in digests:
+        with open(path) as f:
+            d = json.load(f)
+        sha = d.get("sha")
+        if not sha or sha in seen_shas:
+            continue
+        ts = d.get("ended") or datetime.now(timezone.utc).astimezone().isoformat()
+        for tname, tentry in d.get("tests", {}).items():
+            verdict = tentry.get("verdict")
+            if not verdict:
+                continue
+            te = state["tests"].setdefault(tname, {"history": []})
+            # Prepend newest-first.  Since we're folding in mtime order
+            # (oldest first), each prepend stacks correctly so the final
+            # array has the most recent run at index 0.
+            te["history"].insert(0, {"sha": sha, "verdict": verdict, "ts": ts})
+        seen_shas.add(sha)
+        last_sha = sha
+        last_ts = ts
+        folded += 1
+
+    if folded == 0:
+        print(f"no new digests for {branch}; history unchanged")
+        return
+
+    state["updated_at"] = datetime.now(timezone.utc).astimezone().isoformat()
+    state["last_sha"] = last_sha
+    state["folded_shas"] = sorted(seen_shas)
+
+    # Atomic write.
+    tmp = history_path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(state, f, indent=2, sort_keys=True)
+        f.write("\n")
+    os.replace(tmp, history_path)
+    print(f"folded {folded} digest(s) into {history_path}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# workers/local-vm/list: print the hostnames of the configured workers,
+# one per line.  Hostnames must be ssh-resolvable (see ~/.ssh/config).
+# Callers are expected to invoke `ready` per host to block until each is
+# actually reachable; `list` deliberately doesn't filter on status.
+set -eu
+rcli vm list | awk '{print $1}'

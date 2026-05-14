@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# workers/local-vm/up: bring up all local VMs (v0..v4) using the current
+# host's KERNEL_SRC.  Idempotent: if VMs are already up, rcli vm up is a
+# no-op per VM.
+set -eu
+exec rcli vm up all

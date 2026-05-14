@@ -1,0 +1,550 @@
+#!/usr/bin/env python3
+"""
+fstests-utils html [branch]
+
+Generate static HTML dashboards from the JSON digests in
+~/fstests-results/<branch>/.  Pages produced under ~/fstests-results/html/:
+
+    index.html                          branch picker
+    <branch>/index.html                 latest run + breakages-in-last-N
+    <branch>/tests/<group>/<num>.html   per-test verdict timeline
+
+If $HTML_RSYNC_TARGET is set (e.g. "s1:/usr/local/share/site/static/fstests/"),
+also rsyncs the html dir there at the end.
+"""
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+from jinja2 import Environment, BaseLoader, select_autoescape
+
+HOME = Path.home()
+RESULTS_DIR = HOME / "fstests-results"
+HTML_DIR = RESULTS_DIR / "html"
+LAST_N_RUNS = 10  # for the "breakages in last N runs" section
+HISTORY_LIMIT = 30  # rows on per-test history page
+
+# Verdicts we care about for "broken" status.  flake & flake-from-timeout
+# are reported separately -- worth surfacing but not a clean fail.
+BAD_VERDICTS = {"persistent-fail", "persistent-hang", "fail", "hang"}
+FLAKE_VERDICTS = {"flake", "flake-from-timeout"}
+
+CSS = """\
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+       max-width: 1100px; margin: 2em auto; padding: 0 1em; color: #222;
+       line-height: 1.4; }
+h1 { margin: 0.2em 0 0.4em; font-size: 1.5em; }
+h2 { margin: 1.4em 0 0.5em; font-size: 1.15em; color: #444;
+     border-bottom: 1px solid #eee; padding-bottom: 0.3em; }
+table { border-collapse: collapse; width: 100%; margin: 0.5em 0; font-size: 0.92em; }
+th, td { text-align: left; padding: 0.35em 0.7em; border-bottom: 1px solid #eee; }
+th { background: #fafafa; font-weight: 600; color: #555; }
+tr:hover { background: #fbfbfb; }
+.summary { display: flex; gap: 0.8em; margin: 1em 0; flex-wrap: wrap; }
+.summary a.card { background: #fafafa; padding: 0.6em 1em; border-radius: 6px;
+                 border: 1px solid #e8e8e8; min-width: 90px; text-align: center;
+                 display: block; color: inherit; text-decoration: none; }
+.summary a.card:hover { background: #f0f0f0; border-color: #ccc; }
+.summary .card .num { font-size: 1.7em; font-weight: 600; }
+.summary .card .label { font-size: 0.8em; color: #777; }
+.summary .card.bad .num { color: #c0392b; }
+.summary .card.flake .num { color: #d68910; }
+.summary .card.ok .num { color: #27ae60; }
+.verdict { font-size: 0.78em; padding: 0.08em 0.5em; border-radius: 3px;
+           background: #eee; color: #444; display: inline-block;
+           font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.verdict.pass { background: #2ecc71; color: white; }
+.verdict.skip { background: #95a5a6; color: white; }
+.verdict.flake, .verdict.flake-from-timeout { background: #f39c12; color: white; }
+.verdict.fail, .verdict.persistent-fail { background: #e74c3c; color: white; }
+.verdict.hang, .verdict.persistent-hang { background: #8e44ad; color: white; }
+.meta { color: #777; font-size: 0.85em; }
+a { color: #2c5aa0; text-decoration: none; }
+a:hover { text-decoration: underline; }
+nav { font-size: 0.88em; margin: 0.5em 0 1em; color: #777; }
+nav a + a::before { content: " / "; color: #ccc; margin: 0 0.2em; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+       font-size: 0.9em; }
+.sha { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+       font-size: 0.85em; color: #555; }
+details { margin: 0.4em 0; }
+details > summary { cursor: pointer; padding: 0.3em 0; font-weight: 600;
+                    color: #444; user-select: none; }
+details > summary:hover { color: #000; }
+details > summary::marker { color: #999; }
+/* Modern browsers auto-open <details> when their id is the URL fragment. */
+details[id]:target { background: #fffbe6; }
+.test-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+             gap: 0.2em 1em; margin: 0.4em 0 0.6em; font-size: 0.85em; }
+.test-grid a { white-space: nowrap; }
+"""
+
+# Templates ------------------------------------------------------------
+
+INDEX_TMPL = """\
+<!doctype html>
+<html><head>
+<meta charset="utf-8">
+<title>fstests dashboards</title>
+<style>{{ css }}</style>
+<script>
+// Open a <details> when its id is the URL fragment (e.g. clicked from
+// a summary card).  Modern browsers do this for the initial load in
+// some configurations, but not consistently for hashchange.
+function _ftOpenTargetDetails() {
+  var t = document.getElementById(location.hash.slice(1));
+  if (t && t.tagName === 'DETAILS') t.open = true;
+}
+window.addEventListener('hashchange', _ftOpenTargetDetails);
+window.addEventListener('load', _ftOpenTargetDetails);
+</script>
+</head><body>
+<h1>fstests dashboards</h1>
+<p class="meta">Last regenerated: {{ now }}</p>
+<table>
+  <tr><th>Branch</th><th>Last run</th><th>Last sha</th></tr>
+  {% for b in branches %}
+  <tr>
+    <td><a href="{{ b.name }}/">{{ b.name }}</a></td>
+    <td class="meta">{{ b.last_run or "(no runs)" }}</td>
+    <td class="sha">{{ b.last_sha or "" }}</td>
+  </tr>
+  {% endfor %}
+</table>
+</body></html>
+"""
+
+BRANCH_TMPL = """\
+<!doctype html>
+<html><head>
+<meta charset="utf-8">
+<title>fstests {{ branch }}</title>
+<style>{{ css }}</style>
+<script>
+// Open a <details> when its id is the URL fragment (e.g. clicked from
+// a summary card).  Modern browsers do this for the initial load in
+// some configurations, but not consistently for hashchange.
+function _ftOpenTargetDetails() {
+  var t = document.getElementById(location.hash.slice(1));
+  if (t && t.tagName === 'DETAILS') t.open = true;
+}
+window.addEventListener('hashchange', _ftOpenTargetDetails);
+window.addEventListener('load', _ftOpenTargetDetails);
+</script>
+</head><body>
+<nav><a href="../">all branches</a><a>{{ branch }}</a></nav>
+<h1>{{ branch }}</h1>
+<p class="meta">Latest run: <span class="sha">{{ latest_sha }}</span> &middot;
+  finished {{ latest_ts }}</p>
+
+<h2 id="latest-run">Latest run breakdown</h2>
+<p class="meta">Counts and groupings below refer to <em>this run only</em>.
+  Click a card to jump to its test list.</p>
+<div class="summary">
+  <a class="card ok"   href="#g-pass"><div class="num">{{ summary.pass or 0 }}</div><div class="label">pass</div></a>
+  <a class="card"      href="#g-skip"><div class="num">{{ summary.skip or 0 }}</div><div class="label">skip</div></a>
+  <a class="card flake" href="#g-flake"><div class="num">{{ (summary.flake or 0) + (summary['flake-from-timeout'] or 0) }}</div><div class="label">flake</div></a>
+  <a class="card bad"  href="#g-fail"><div class="num">{{ (summary.fail or 0) + (summary['persistent-fail'] or 0) }}</div><div class="label">fail</div></a>
+  <a class="card bad"  href="#g-hang"><div class="num">{{ (summary.hang or 0) + (summary['persistent-hang'] or 0) }}</div><div class="label">hang</div></a>
+</div>
+
+{% for g in groups %}
+<details id="g-{{ g.key }}" {% if g.open %}open{% endif %}>
+  <summary>{{ g.tests|length }} {{ g.label }}</summary>
+  {% if g.tests %}
+  <div class="test-grid">
+    {% for t in g.tests %}
+      <a href="tests/{{ t }}.html"><code>{{ t }}</code></a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="meta">(none)</p>
+  {% endif %}
+</details>
+{% endfor %}
+
+<h2 id="global">Last {{ last_n }} runs (global)</h2>
+<p class="meta">Cross-run signal &mdash; counts here are <em>test names</em> with at least
+  one occurrence of that verdict in the window of {{ run_count }} runs
+  ({{ window_oldest }} &rarr; {{ window_newest }}).
+  Useful for spotting persistent issues vs one-off failures.</p>
+<div class="summary">
+  <div class="card bad"><div class="num">{{ global_counts.fail }}</div><div class="label">ever-failed</div></div>
+  <div class="card bad"><div class="num">{{ global_counts.hang }}</div><div class="label">ever-hung</div></div>
+  <div class="card flake"><div class="num">{{ global_counts.flake }}</div><div class="label">ever-flaked</div></div>
+</div>
+{% if breakages %}
+<table>
+  <tr><th>Test</th><th>Fails</th><th>Flakes</th><th>Most recent verdicts (newest left)</th></tr>
+  {% for tname, info in breakages %}
+  <tr>
+    <td><a href="tests/{{ tname }}.html"><code>{{ tname }}</code></a></td>
+    <td>{{ info.bad }}</td>
+    <td>{{ info.flake }}</td>
+    <td>
+      {% for sha, v in info.verdicts %}
+        <a href="runs/{{ sha }}.html" class="verdict {{ v }}" title="{{ sha }}">{{ verdict_short(v) }}</a>
+      {% endfor %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="meta">No breakages in the last {{ last_n }} runs.</p>
+{% endif %}
+
+<h2>Recent runs</h2>
+<table>
+  <tr><th>sha</th><th>finished</th><th>fail</th><th>flake</th><th>hang</th></tr>
+  {% for r in recent_runs %}
+  <tr>
+    <td><a class="sha" href="runs/{{ r.sha }}.html">{{ r.sha }}</a></td>
+    <td class="meta">{{ r.ended }}</td>
+    <td>{{ (r.summary.fail or 0) + (r.summary['persistent-fail'] or 0) }}</td>
+    <td>{{ (r.summary.flake or 0) + (r.summary['flake-from-timeout'] or 0) }}</td>
+    <td>{{ (r.summary.hang or 0) + (r.summary['persistent-hang'] or 0) }}</td>
+  </tr>
+  {% endfor %}
+</table>
+</body></html>
+"""
+
+TEST_TMPL = """\
+<!doctype html>
+<html><head>
+<meta charset="utf-8">
+<title>{{ test_name }} on {{ branch }}</title>
+<style>{{ css }}</style>
+<script>
+// Open a <details> when its id is the URL fragment (e.g. clicked from
+// a summary card).  Modern browsers do this for the initial load in
+// some configurations, but not consistently for hashchange.
+function _ftOpenTargetDetails() {
+  var t = document.getElementById(location.hash.slice(1));
+  if (t && t.tagName === 'DETAILS') t.open = true;
+}
+window.addEventListener('hashchange', _ftOpenTargetDetails);
+window.addEventListener('load', _ftOpenTargetDetails);
+</script>
+</head><body>
+<nav>
+  <a href="../../../">all branches</a>
+  <a href="../../">{{ branch }}</a>
+  <a><code>{{ test_name }}</code></a>
+</nav>
+<h1><code>{{ test_name }}</code></h1>
+<p class="meta">{{ entries|length }} entries on {{ branch }} (newest first; capped at {{ limit }})</p>
+<table>
+  <tr><th>sha</th><th>verdict</th><th>finished</th></tr>
+  {% for e in entries %}
+  <tr>
+    <td><a class="sha" href="../../runs/{{ e.sha }}.html">{{ e.sha }}</a></td>
+    <td><span class="verdict {{ e.verdict }}">{{ e.verdict }}</span></td>
+    <td class="meta">{{ e.ts }}</td>
+  </tr>
+  {% endfor %}
+</table>
+</body></html>
+"""
+
+
+RUN_TMPL = """\
+<!doctype html>
+<html><head>
+<meta charset="utf-8">
+<title>{{ sha }} on {{ branch }}</title>
+<style>{{ css }}</style>
+<script>
+// Open a <details> when its id is the URL fragment (e.g. clicked from
+// a summary card).  Modern browsers do this for the initial load in
+// some configurations, but not consistently for hashchange.
+function _ftOpenTargetDetails() {
+  var t = document.getElementById(location.hash.slice(1));
+  if (t && t.tagName === 'DETAILS') t.open = true;
+}
+window.addEventListener('hashchange', _ftOpenTargetDetails);
+window.addEventListener('load', _ftOpenTargetDetails);
+</script>
+</head><body>
+<nav>
+  <a href="../../">all branches</a>
+  <a href="../">{{ branch }}</a>
+  <a><span class="sha">{{ sha }}</span></a>
+</nav>
+<h1>{{ branch }} @ <span class="sha">{{ sha }}</span></h1>
+<p class="meta">finished {{ ts }}</p>
+
+<div class="summary">
+  <a class="card ok"   href="#g-pass"><div class="num">{{ summary.pass or 0 }}</div><div class="label">pass</div></a>
+  <a class="card"      href="#g-skip"><div class="num">{{ summary.skip or 0 }}</div><div class="label">skip</div></a>
+  <a class="card flake" href="#g-flake"><div class="num">{{ (summary.flake or 0) + (summary['flake-from-timeout'] or 0) }}</div><div class="label">flake</div></a>
+  <a class="card bad"  href="#g-fail"><div class="num">{{ (summary.fail or 0) + (summary['persistent-fail'] or 0) }}</div><div class="label">fail</div></a>
+  <a class="card bad"  href="#g-hang"><div class="num">{{ (summary.hang or 0) + (summary['persistent-hang'] or 0) }}</div><div class="label">hang</div></a>
+</div>
+
+{% for g in groups %}
+<details id="g-{{ g.key }}" {% if g.open %}open{% endif %}>
+  <summary>{{ g.tests|length }} {{ g.label }}</summary>
+  {% if g.tests %}
+  <div class="test-grid">
+    {% for t in g.tests %}
+      <a href="../tests/{{ t }}.html"><code>{{ t }}</code></a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="meta">(none)</p>
+  {% endif %}
+</details>
+{% endfor %}
+</body></html>
+"""
+
+
+# Helpers --------------------------------------------------------------
+
+def verdict_short(v):
+    return {
+        "pass": "P", "skip": "S",
+        "flake": "f", "flake-from-timeout": "f",
+        "fail": "F", "persistent-fail": "F",
+        "hang": "H", "persistent-hang": "H",
+    }.get(v, v[:1])
+
+
+def load_digests(branch_dir):
+    digests = []
+    for p in branch_dir.glob("*.json"):
+        if p.name == "history.json":
+            continue
+        try:
+            with open(p) as f:
+                d = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+        digests.append(d)
+    digests.sort(key=lambda d: d.get("ended") or "", reverse=True)
+    return digests
+
+
+def load_history(branch_dir):
+    p = branch_dir / "history.json"
+    if not p.exists():
+        return None
+    with open(p) as f:
+        return json.load(f)
+
+
+def breakages_in_window(history, sha_window):
+    last_n_set = set(sha_window)
+    sha_index = {s: i for i, s in enumerate(sha_window)}  # for ordering
+    out = {}
+    for tname, tentry in history.get("tests", {}).items():
+        bad = 0
+        flake = 0
+        verdicts_in_window = []
+        for entry in tentry.get("history", []):
+            sha = entry["sha"]
+            if sha in last_n_set:
+                v = entry["verdict"]
+                verdicts_in_window.append((sha_index[sha], sha, v))
+                if v in BAD_VERDICTS:
+                    bad += 1
+                elif v in FLAKE_VERDICTS:
+                    flake += 1
+        if bad > 0 or flake > 0:
+            verdicts_in_window.sort()  # newest first since sha_window is newest first
+            out[tname] = {
+                "bad": bad,
+                "flake": flake,
+                "verdicts": [(sha, v) for _, sha, v in verdicts_in_window],
+            }
+    return out
+
+
+def write_file(path, content):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+
+
+def group_latest_tests(latest):
+    """Group the latest run's tests by verdict.  Returns a list of dicts
+    suitable for the BRANCH_TMPL `groups` variable, ordered worst→best."""
+    by_verdict = {}
+    for tname, t in latest.get("tests", {}).items():
+        by_verdict.setdefault(t.get("verdict", "?"), []).append(tname)
+    for v in by_verdict:
+        by_verdict[v].sort()
+
+    # Merge flake/flake-from-timeout into a single bucket; same for hang
+    # variants and fail variants.  Keeps the page tidy.
+    def pool(*verdicts):
+        out = []
+        for v in verdicts:
+            out += by_verdict.get(v, [])
+        return sorted(out)
+
+    return [
+        {"key": "fail",  "label": "fail",       "open": True,
+         "tests": pool("fail", "persistent-fail")},
+        {"key": "hang",  "label": "hang",       "open": True,
+         "tests": pool("hang", "persistent-hang")},
+        {"key": "flake", "label": "flake",      "open": True,
+         "tests": pool("flake", "flake-from-timeout")},
+        {"key": "skip",  "label": "skip",       "open": False,
+         "tests": pool("skip")},
+        {"key": "pass",  "label": "pass",       "open": False,
+         "tests": pool("pass")},
+    ]
+
+
+def render_branch(env, branch, branch_dir, out_dir):
+    digests = load_digests(branch_dir)
+    history = load_history(branch_dir)
+    if not digests or not history:
+        return None
+
+    latest = digests[0]
+    sha_window = [d["sha"] for d in digests[:LAST_N_RUNS]]
+    breakages = breakages_in_window(history, sha_window)
+    # Sort alphabetically by test id so scanning is predictable (the
+    # breakage counts are in the row, so the matrix isn't the search key).
+    sorted_breakages = sorted(breakages.items(), key=lambda kv: kv[0])
+
+    recent_runs = [
+        {"sha": d["sha"], "ended": d.get("ended", ""),
+         "summary": d.get("summary", {})}
+        for d in digests[:LAST_N_RUNS]
+    ]
+
+    branch_out = out_dir / branch
+    branch_out.mkdir(parents=True, exist_ok=True)
+
+    # Window date range for clearer labelling: oldest .. newest of the
+    # actual digests we have in hand (not just history.json shas, which
+    # can include pre-digest legacy entries).
+    window_newest = digests[0].get("ended", "?")
+    window_oldest = digests[min(len(digests), LAST_N_RUNS) - 1].get("ended", "?")
+
+    groups = group_latest_tests(latest)
+
+    # Global counts: # test names with at least one of that verdict
+    # in the window.  (vs per-run counts which double-count across runs.)
+    global_counts = {
+        "fail":  sum(1 for _, info in breakages.items() if info["bad"]),
+        "hang":  sum(1 for _, info in breakages.items()
+                     if any(v in ("hang", "persistent-hang")
+                            for _, v in info["verdicts"])),
+        "flake": sum(1 for _, info in breakages.items() if info["flake"]),
+    }
+
+    branch_html = env.get_template("branch").render(
+        css=CSS, branch=branch,
+        latest_sha=latest["sha"],
+        latest_ts=latest.get("ended", "?"),
+        run_count=len(sha_window),
+        window_oldest=window_oldest,
+        window_newest=window_newest,
+        summary=latest.get("summary", {}),
+        groups=groups,
+        last_n=LAST_N_RUNS,
+        breakages=sorted_breakages,
+        global_counts=global_counts,
+        recent_runs=recent_runs,
+        verdict_short=verdict_short,
+    )
+    write_file(branch_out / "index.html", branch_html)
+
+    # Per-test history pages for *every* test in the branch's history.
+    # Cheap (a few MB of static HTML) and lets every test name in the
+    # grouped lists / breakages table be a working link.  Sort by `ts`
+    # descending so newest is always on top (state/run.py's insert-at-0
+    # is mtime-sorted, which can be wrong if digests were backfilled).
+    for tname, tentry in history.get("tests", {}).items():
+        history_entries = sorted(
+            tentry["history"], key=lambda e: e.get("ts", ""), reverse=True
+        )[:HISTORY_LIMIT]
+        page = env.get_template("test").render(
+            css=CSS, branch=branch, test_name=tname,
+            entries=history_entries, limit=HISTORY_LIMIT,
+        )
+        write_file(branch_out / "tests" / f"{tname}.html", page)
+
+    # Per-run pages: one page per <sha>.json, showing all tests for that
+    # run grouped by verdict.  Linked from the recent-runs table on the
+    # branch page and from per-test history rows (sha column).
+    for d in digests:
+        page = env.get_template("run").render(
+            css=CSS, branch=branch,
+            sha=d["sha"],
+            ts=d.get("ended", "?"),
+            summary=d.get("summary", {}),
+            groups=group_latest_tests(d),
+        )
+        write_file(branch_out / "runs" / f"{d['sha']}.html", page)
+
+    return {
+        "name": branch,
+        "last_run": latest.get("ended", "?"),
+        "last_sha": latest["sha"],
+    }
+
+
+def main():
+    import datetime
+    branches = sys.argv[1:] or None
+    if not RESULTS_DIR.is_dir():
+        print(f"no results dir: {RESULTS_DIR}", file=sys.stderr)
+        sys.exit(1)
+
+    if branches is None:
+        branches = [p.name for p in RESULTS_DIR.iterdir()
+                    if p.is_dir() and p.name != "html"
+                    and (p / "history.json").exists()]
+    if not branches:
+        print("no branches with history.json found", file=sys.stderr)
+        sys.exit(1)
+
+    HTML_DIR.mkdir(parents=True, exist_ok=True)
+    env = Environment(
+        loader=BaseLoader(),
+        autoescape=select_autoescape(["html"]),
+    )
+    env.loader = type("L", (BaseLoader,), {
+        "get_source": lambda self, env, name: ({
+            "index": INDEX_TMPL, "branch": BRANCH_TMPL,
+            "test": TEST_TMPL, "run": RUN_TMPL,
+        }[name], name, lambda: True)
+    })()
+
+    rendered = []
+    for b in branches:
+        info = render_branch(env, b, RESULTS_DIR / b, HTML_DIR)
+        if info:
+            rendered.append(info)
+            print(f"wrote {HTML_DIR}/{b}/")
+
+    rendered.sort(key=lambda i: i["last_run"], reverse=True)
+    index_html = env.get_template("index").render(
+        css=CSS,
+        now=datetime.datetime.now(datetime.timezone.utc).astimezone()
+            .strftime("%Y-%m-%d %H:%M %Z"),
+        branches=rendered,
+    )
+    write_file(HTML_DIR / "index.html", index_html)
+    print(f"wrote {HTML_DIR}/index.html")
+
+    target = os.environ.get("HTML_RSYNC_TARGET")
+    if target:
+        print(f"rsync to {target} ...")
+        subprocess.run(
+            ["rsync", "-az", "--delete",
+             f"{HTML_DIR}/", target],
+            check=True,
+        )
+
+
+if __name__ == "__main__":
+    main()

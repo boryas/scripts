@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Periodic for-next runner: fetch upstream btrfs/for-next, run fstests
+# against it in the dedicated worktree, fold the digest into history.
+#
+# Intended to be invoked by ~/.config/systemd/user/fstests-for-next.service.
+# The service sets KERNEL_SRC=~/repos/linux-fnext so the existing VM run
+# scripts boot from the worktree's bzImage and fstests-utils/test/run
+# builds in the worktree, leaving ~/repos/linux untouched.
+
+SCRIPT=$(readlink -f "$0")
+DIR=$(dirname "$SCRIPT")
+CMD_ROOT=$(dirname "$DIR")
+SH_ROOT=$(dirname "$CMD_ROOT")
+source "$SH_ROOT/boilerplate.sh"
+
+set -eu
+set -o pipefail
+
+KERNEL_SRC="${KERNEL_SRC:-$HOME/repos/linux-fnext}"
+export KERNEL_SRC
+
+results_dir="$HOME/fstests-results/for-next"
+lock_file="$results_dir/.cron.lock"
+mkdir -p "$results_dir"
+
+# Single-flight: refuse to run if another for-next cron is already going.
+exec 9>"$lock_file"
+if ! flock -n 9; then
+	echo "fstests-utils cron/for-next: another run already holds $lock_file; exiting"
+	exit 0
+fi
+
+cd "$KERNEL_SRC"
+
+echo "fetching btrfs remote..."
+git fetch btrfs 2>&1 | tail -5
+
+prev_sha=$(git rev-parse HEAD)
+git checkout --detach btrfs/for-next
+new_sha=$(git rev-parse HEAD)
+short_sha=$(git rev-parse --short HEAD)
+
+echo "for-next prev=$prev_sha new=$new_sha (short=$short_sha)"
+
+# Idempotency: skip if we already have a digest for this sha.  Note the
+# digest is named after the *short* sha (fstests-utils/test/run uses
+# `git log -1 --pretty=format:%h`), so check that filename.
+if [ -f "$results_dir/$short_sha.json" ]; then
+	echo "for-next at $short_sha already tested ($results_dir/$short_sha.json); skipping"
+	exit 0
+fi
+
+# Run the test pipeline.  test/run handles git checkout (no-op since we
+# already checked out btrfs/for-next), build, parallel + retry, digest,
+# and state fold.
+rcli fstests-utils test for-next
+
+# Regenerate the static HTML dashboards and push them to s1.  The
+# rsync target is read from $HTML_RSYNC_TARGET; on success the new
+# digest from this run is visible at https://bur.io/fstests/.
+HTML_RSYNC_TARGET="${HTML_RSYNC_TARGET:-s1:/usr/local/share/site/static/html/fstests/}" \
+	rcli fstests-utils html for-next
+
+echo "cron/for-next: done"

@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# fstests-utils adhoc <test> [test...]
+#
+# Run a specific list of tests in parallel across whatever workers are
+# currently up.  No build, no up/down, no digest -- just dispatch and
+# show results.  Useful for:
+#   - reproducing a flake quickly
+#   - validating a single fix
+#   - running the new para-fstests retry logic against an existing fleet
+#
+# Honors:
+#   $WORKERS  worker backend (default local-vm)
+#   $TIMEOUT  per-test timeout (default 30m -- closer to retry semantics
+#             than parallel-phase 8m; assumes you're targeting flakes or
+#             specific tests, not a full sweep)
+#   $HOSTS    explicit comma-separated subset of hosts to use, e.g.
+#             HOSTS=fstests@1.2.3.4,fstests@5.6.7.8 for the "run on the
+#             idle workers while a serial run uses one of them" case.
+#             Defaults to "$B/list".
+
+SCRIPT=$(readlink -f "$0")
+DIR=$(dirname "$SCRIPT")
+CMD_ROOT=$(dirname "$DIR")
+SH_ROOT=$(dirname "$CMD_ROOT")
+source "$SH_ROOT/boilerplate.sh"
+
+if [ $# -lt 1 ]; then
+	_usage
+fi
+
+timeout="${TIMEOUT:-30m}"
+workers="${WORKERS:-local-vm}"
+B="$CMD_ROOT/workers/$workers"
+if [ ! -x "$B/list" ]; then
+	echo "no such worker backend: $workers ($B)" >&2
+	exit 1
+fi
+
+# Resolve host list: explicit $HOSTS wins, otherwise $B/list.
+if [ -n "${HOSTS:-}" ]; then
+	hosts=$(echo "$HOSTS" | tr ',' ' ')
+else
+	hosts=$("$B/list" | tr '\n' ' ')
+fi
+
+if [ -z "$hosts" ]; then
+	echo "no workers available.  start them first: $B/up" >&2
+	exit 1
+fi
+
+tests="$*"
+nhosts=$(echo "$hosts" | wc -w)
+echo "adhoc: $tests"
+echo "       across $nhosts workers (per-test timeout: $timeout)"
+echo "       hosts: $hosts"
+echo
+
+cd ~/repos/para-fstests
+FST_DIR=/mnt/repos/fstests EXCLUDE_FILE=EXCLUDE \
+	./para-fstests.sh -T "$timeout" -t "$tests" $hosts

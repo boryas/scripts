@@ -14,23 +14,199 @@ fi
 patch_name=$1
 shift
 
-cd ~/repos/linux
-git co $patch_name
+# Phase timing: capture wall-clock at each major boundary so the run
+# reports build / provision / parallel / retry elapsed at the end.
+# Useful for "is the slow part the build or the tests" diagnostics.
+run_start_s=$(date +%s)
+phase_start_s=$run_start_s
+phase_log=()
+phase_end() {
+	local name=$1
+	local now=$(date +%s)
+	local elapsed=$((now - phase_start_s))
+	phase_log+=("$name:$elapsed")
+	phase_start_s=$now
+	printf '[%s] phase done: %-10s %4dm %02ds\n' \
+		"$(date +%H:%M:%S)" "$name" "$((elapsed/60))" "$((elapsed%60))" >&2
+}
+
+# Per-test timeout in the parallel phase; tests that exceed this are killed
+# and re-dispatched in the retry phase with the longer retry_timeout.
+para_timeout="${PARA_TIMEOUT:-8m}"
+# Longer ceiling for the retry phase; if a test still doesn't finish here
+# it's a real hang.
+retry_timeout="${RETRY_TIMEOUT:-30m}"
+
+# Source kernel tree to build / boot from.  Defaults to the user's main
+# repo.  The for-next cron sets this to ~/repos/linux-fnext so the
+# automation runs against a dedicated worktree without touching the
+# user's checkout.
+kernel_src="${KERNEL_SRC:-$HOME/repos/linux}"
+export KERNEL_SRC="$kernel_src"
+
+# Worker backend.  `local-vm` drives the v0..v4 qemu fleet on this host;
+# `cloud` drives instances under a systemd-managed scope.  Each backend
+# is a directory of one-script-per-verb under workers/<name>/.
+workers="${WORKERS:-local-vm}"
+B="$CMD_ROOT/workers/$workers"
+if [ ! -x "$B/up" ]; then
+	echo "no such worker backend: $workers ($B)" >&2
+	exit 1
+fi
+
+cd "$kernel_src"
+# Check out the requested branch, but fall back to detached HEAD if the
+# branch is already checked out in another worktree (the cron uses the
+# linux-fnext worktree alongside the user's main linux repo; the local
+# `for-next` branch can only be held in one place at a time).
+if ! git checkout "$patch_name" 2>/dev/null; then
+	echo "branch $patch_name is claimed by another worktree; detaching at it instead"
+	git checkout --detach "$patch_name"
+fi
 make olddefconfig
-make -j$(nproc)
+# tarzst-pkg builds the kernel and packages it into
+# $KERNEL_SRC/linux-<release>-<arch>.tar.zst.  Local-vm boots from
+# arch/x86/boot/bzImage and ignores the tarball; cloud workers/cloud/up
+# globs the tarball and ships it onto each droplet.  Always producing it
+# avoids "wrong build target" footguns when switching backends.
+make -j$(nproc) tarzst-pkg
 hash=$(git log -1 --pretty=format:"%h")
+phase_end build
 
 out_dir=~/fstests-results/$patch_name
 mkdir -p $out_dir
+out_file="$out_dir/$hash"
+retry_file="$out_dir/$hash.retry"
 
 cd ~/repos/para-fstests
-rcli vm down all
-rcli vm up all
-vms=($(rcli vm list | awk '{print $1}'))
-all_vms=${vms[*]}
-echo "running fstests on: $all_vms"
-for vm in $vms; do
-	rcli vm ready $vm;
-done
 
-FST_DIR=/mnt/repos/fstests EXCLUDE_FILE=EXCLUDE ./para-fstests.sh -t "-g auto" $all_vms | tee $out_dir/$hash
+# Each fstests phase runs inside its own transient systemd scope, i.e.
+# its own cgroup.  On any exit -- clean completion, error, external
+# SIGTERM/SIGINT -- the trap stops both scopes; the kernel kills the
+# entire cgroup atomically via cgroup.kill, so no descendant (e.g. a
+# para-fstests worker subshell, an in-flight ssh) survives as an
+# orphan.  Then the backend's `down` tears down workers.
+#
+# This is the strong teardown guarantee for cloud (where leaked
+# droplets cost money); local-vm benefits too.  The scope-kill is
+# what prevents the "zombie para-fstests pounding deleted IPs for
+# an hour" failure mode that bit us earlier.
+para_scope="fstests-para-$$"
+retry_scope="fstests-retry-$$"
+trap '
+	systemctl --user stop "$para_scope.scope"  2>/dev/null || true
+	systemctl --user stop "$retry_scope.scope" 2>/dev/null || true
+	"$B/down"
+' EXIT INT TERM
+
+"$B/down"
+"$B/up"
+vms=($("$B/list"))
+all_vms=${vms[*]}
+echo "running fstests on: $all_vms (per-test timeout: $para_timeout)"
+for vm in $vms; do
+	"$B/ready" "$vm"
+done
+phase_end provision
+
+# Parallel phase: -g auto across all workers, in a cgroup.
+systemd-run --user --scope --unit="$para_scope" \
+	--property=TimeoutStopSec=10s \
+	--description="fstests parallel ($patch_name @ $hash)" \
+	--setenv=PARA_TIMEOUT="$para_timeout" \
+	--setenv=ALL_VMS="$all_vms" \
+	-- bash -c '
+		cd ~/repos/para-fstests
+		FST_DIR=/mnt/repos/fstests EXCLUDE_FILE=EXCLUDE \
+			./para-fstests.sh -T "$PARA_TIMEOUT" -t "-g auto" $ALL_VMS
+	' | tee "$out_file"
+phase_end parallel
+
+# Build the retry list from the parallel-run output:
+#   - tests that failed: 'Failures: <test>' on its own line (from ./check)
+#   - tests that timed out: 'vm tst Timeout: tst' inline (from ssh-one.sh)
+retry=$(
+	{
+		grep -E '^Failures: ' "$out_file" | awk '{print $2}'
+		grep -E ' Timeout: '  "$out_file" | awk '{
+			for (i=1; i<=NF; i++) if ($i == "Timeout:") { print $(i+1); break }
+		}'
+	} | sort -u
+)
+
+if [ -z "$retry" ]; then
+	echo "no failures or timeouts; nothing to re-run"
+	phase_end retry
+	echo
+	echo "=== run timing ==="
+	for entry in "${phase_log[@]}"; do
+		printf '  %-12s %4dm %02ds\n' "${entry%:*}" "$((${entry#*:}/60))" "$((${entry#*:}%60))"
+	done
+	total=$(( $(date +%s) - run_start_s ))
+	printf '  %-12s %4dm %02ds\n' "TOTAL" "$((total/60))" "$((total%60))"
+	exit 0
+fi
+
+echo "re-running across all workers (per-test timeout: $retry_timeout):"
+echo "$retry" | sed 's/^/    /'
+
+# Retry phase: dispatch the retry list across the same workers in a
+# fresh cgroup with the longer per-test timeout.  Previously this was
+# a serial loop on one host (made sense for local-vm where v0 had
+# extra RAM); for cloud every worker is identical and the 9 idle
+# workers were just burning money, so parallelizing is a ~Nx speedup
+# at no extra cost.
+retry_tests=$(echo "$retry" | tr '\n' ' ')
+systemd-run --user --scope --unit="$retry_scope" \
+	--property=TimeoutStopSec=10s \
+	--description="fstests retry ($patch_name @ $hash)" \
+	--setenv=RETRY_TIMEOUT="$retry_timeout" \
+	--setenv=RETRY_TESTS="$retry_tests" \
+	--setenv=ALL_VMS="$all_vms" \
+	-- bash -c '
+		cd ~/repos/para-fstests
+		FST_DIR=/mnt/repos/fstests EXCLUDE_FILE=EXCLUDE \
+			./para-fstests.sh -T "$RETRY_TIMEOUT" -t "$RETRY_TESTS" $ALL_VMS
+	' | tee "$retry_file"
+phase_end retry
+
+# Final summary: pass / flake / persistent-fail / persistent-hang
+echo
+echo "=== retry summary ==="
+{
+	for tst in $retry; do
+		# Was the test originally a failure, a timeout, or both?
+		grep -qE "Failures: $tst($|[^0-9])" "$out_file"            && orig_fail=1   || orig_fail=0
+		grep -qE "Timeout: $tst($|[^0-9])"  "$out_file"            && orig_to=1     || orig_to=0
+		# Retry outcome.
+		grep -qE "Failures: $tst($|[^0-9])" "$retry_file"          && retry_fail=1  || retry_fail=0
+		grep -qE "Timeout: $tst($|[^0-9])"  "$retry_file"          && retry_to=1    || retry_to=0
+
+		if   [ "$retry_to"   = 1 ]; then verdict="persistent-hang"
+		elif [ "$retry_fail" = 1 ]; then verdict="persistent-fail"
+		else                             verdict="flake (passed on retry)"
+		fi
+
+		if   [ "$orig_to"   = 1 ]; then orig="timeout"
+		elif [ "$orig_fail" = 1 ]; then orig="failure"
+		else                            orig="unknown"
+		fi
+
+		printf '  %-20s  orig=%s  retry=%s\n' "$tst" "$orig" "$verdict"
+	done
+} | sort
+
+# Produce the structured digest for long-term tracking.  Fold into the
+# branch's history.json so cross-run queries see this run.
+echo
+echo "=== writing structured digest ==="
+rcli fstests-utils digest "$patch_name" "$hash"
+rcli fstests-utils state "$patch_name"
+
+echo
+echo "=== run timing ==="
+for entry in "${phase_log[@]}"; do
+	printf '  %-12s %4dm %02ds\n' "${entry%:*}" "$((${entry#*:}/60))" "$((${entry#*:}%60))"
+done
+total=$(( $(date +%s) - run_start_s ))
+printf '  %-12s %4dm %02ds\n' "TOTAL" "$((total/60))" "$((total%60))"

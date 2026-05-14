@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# fstests-utils backfill
+#
+# Walk every ~/fstests-results/<branch>/<sha> result file and run `digest`
+# on any that doesn't yet have a sibling <sha>.json.  Useful for one-time
+# bootstrap after introducing the digest format, and for repair if a digest
+# is ever lost.
+
+SCRIPT=$(readlink -f "$0")
+DIR=$(dirname "$SCRIPT")
+CMD_ROOT=$(dirname "$DIR")
+SH_ROOT=$(dirname "$CMD_ROOT")
+source "$SH_ROOT/boilerplate.sh"
+
+set -eu
+
+# ~/fstests-results may be a symlink (it is on the dev host).  Resolve so
+# we operate on the real path.
+results_root=$(readlink -f "$HOME/fstests-results")
+[ -d "$results_root" ] || _fail "no $results_root"
+
+n_generated=0
+n_skipped=0
+n_skipped_special=0
+
+for branch_dir in "$results_root"/*/; do
+	branch=$(basename "$branch_dir")
+	for f in "$branch_dir"*; do
+		name=$(basename "$f")
+		# Skip non-result files (json, retry, history, .out files,
+		# directories, hidden files).
+		case "$name" in
+			*.json|*.retry|history.json|*.out|.*)
+				continue
+				;;
+		esac
+		[ -f "$f" ] || continue
+		# A result file should be a >= ~12 char hex sha or a similarly
+		# alphanumeric name.  Skip anything that looks like a stray
+		# text file (very small, contains spaces, etc).  Conservative
+		# heuristic: if there are no 'Ran:' lines, skip.
+		if ! grep -q 'Ran: ' "$f"; then
+			n_skipped_special=$((n_skipped_special + 1))
+			continue
+		fi
+		if [ -f "$branch_dir$name.json" ]; then
+			n_skipped=$((n_skipped + 1))
+			continue
+		fi
+		echo "  $branch/$name -> .json"
+		rcli fstests-utils digest "$branch" "$name" > /dev/null
+		n_generated=$((n_generated + 1))
+	done
+done
+
+printf 'generated %d  skipped (already had .json) %d  skipped (non-result) %d\n' \
+	"$n_generated" "$n_skipped" "$n_skipped_special"

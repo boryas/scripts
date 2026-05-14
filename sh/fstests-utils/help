@@ -1,3 +1,25 @@
-short help
+fstests-utils — drive parallel fstests runs across the VM fleet,
+track results long-term, and detect regressions vs the for-next baseline.
 
-longer more detailed help
+Subcommands:
+  test     <branch>                build kernel, run -g auto in parallel
+                                   across all workers, parallel retry of
+                                   failures/timeouts with longer per-test
+                                   ceiling, write structured digest + fold
+                                   into history.
+  adhoc    <test> [test...]        run specific tests in parallel on the
+                                   currently-up workers.  No build, no
+                                   provision, no digest.  Honors $TIMEOUT
+                                   (default 30m), $HOSTS for an explicit
+                                   subset, $WORKERS for backend.
+  results  <branch>                diff verdicts vs latest for-next.
+  results  -a <branch>             cat the raw result file (legacy).
+  results  json <branch>           emit the latest <sha>.json digest.
+  results  history <test> [b] [n]  per-test verdict timeline.
+  digest   <branch> <sha>          build <sha>.json from <sha> + <sha>.retry.
+  state    <branch>                fold new digests into history.json.
+  backfill                         one-time bootstrap: generate missing digests.
+
+The for-next cron (~/.config/systemd/user/fstests-for-next.{timer,service})
+invokes cron/for-next directly to do a daily fetch + test + fold against
+the linux-fnext worktree.

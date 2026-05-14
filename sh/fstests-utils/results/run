@@ -6,29 +6,99 @@ SH_ROOT=$(dirname $CMD_ROOT)
 
 source "$SH_ROOT/boilerplate.sh"
 
+set -u
+
 PATCH_DIR=~/fstests-results
-ALL=0
 
-_latest_patch() {
-	local patch_name=$1
-	local d="$PATCH_DIR/$patch_name"
-
-	f=$(ls -t "$d" | head -1)
-	echo "$d/$f"
+# Pick the most-recently-modified RAW result file (no extension) for a branch.
+# Has to skip .json / .retry / .out / history.json that share the same dir.
+_latest_raw() {
+	local branch=$1
+	local d="$PATCH_DIR/$branch"
+	[ -d "$d" ] || { echo ""; return 1; }
+	# List entries in newest-first mtime order, skip anything with a dot in
+	# the name; pick the first that's a regular file.
+	local f
+	for f in $(ls -t "$d" 2>/dev/null); do
+		case "$f" in
+			*.*|history) continue ;;
+		esac
+		if [ -f "$d/$f" ]; then
+			echo "$d/$f"
+			return 0
+		fi
+	done
+	return 1
 }
 
-while getopts "a" opt; do
-	case $opt in
-		a)
-			ALL=1
-			;;
-		\?)
-			_usage
-			;;
+# Pick the .json digest corresponding to the most-recently-run RAW result
+# file (NOT the most-recently-created .json -- backfill can create many
+# .json files with similar mtimes).
+_latest_json() {
+	local branch=$1
+	local raw
+	raw=$(_latest_raw "$branch") || return 1
+	local json="$raw.json"
+	[ -f "$json" ] || { echo ""; return 1; }
+	echo "$json"
+}
+
+ALL=0
+
+# Sub-command: `results json <branch>` -- emit the latest <sha>.json digest.
+# (Not a -j/--json flag because rcli intercepts leading short/long flags.)
+if [ $# -ge 1 ] && [ "$1" = "json" ]; then
+	shift
+	if [ $# -ne 1 ]; then
+		_usage
+	fi
+	json=$(_latest_json "$1") || _fail "no .json digest for $1"
+	cat "$json"
+	exit 0
+fi
+
+# Sub-command: `results history <test> [<branch>] [<count>]`.
+# Positional args (no flags) because rcli intercepts leading short flags.
+if [ $# -ge 1 ] && [ "$1" = "history" ]; then
+	shift
+	test_name="${1:-}"
+	branch="${2:-for-next}"
+	n="${3:-20}"
+	if [ -z "$test_name" ]; then
+		_usage
+	fi
+	hist_file="$PATCH_DIR/$branch/history.json"
+	if [ ! -f "$hist_file" ]; then
+		_fail "no history.json for branch $branch (run fstests-utils state $branch first)"
+	fi
+	python3 - "$hist_file" "$test_name" "$n" <<'EOF'
+import json, sys
+hist_file, test_name, n_str = sys.argv[1:]
+n = int(n_str)
+with open(hist_file) as f:
+    d = json.load(f)
+entry = d.get("tests", {}).get(test_name)
+if not entry:
+    print(f"{test_name}: no history in {hist_file}", file=sys.stderr)
+    sys.exit(1)
+history = entry["history"][:n]
+print(f"{test_name}  (last {len(history)} runs in {d['branch']}, newest first):")
+print()
+print(f"  {'sha':<14} {'verdict':<22} ts")
+for e in history:
+    print(f"  {e['sha']:<14} {e['verdict']:<22} {e['ts']}")
+EOF
+	exit 0
+fi
+
+# Default flow: <branch> with flags -a / --json.
+while [ $# -gt 0 ]; do
+	case "$1" in
+		-a)      ALL=1; shift ;;
+		-*)      _usage ;;
+		*)       break ;;
 	esac
 done
-
-shift $((OPTIND-1))
 
 if [ $# -ne 1 ]; then
 	_usage
@@ -36,11 +106,72 @@ fi
 
 patch_name=$1
 
-latest_for_next=$(_latest_patch "for-next")
-latest=$(_latest_patch "$patch_name")
-
 if [ $ALL -eq 1 ]; then
-	cat $latest
-else
-	diff <(grep Failures $latest_for_next | sort) <(grep Failures $latest | sort) | grep '>' | cut -d: -f2 | sed 's/^ //'
+	raw=$(_latest_raw "$patch_name") || _fail "no raw result for $patch_name"
+	cat "$raw"
+	exit 0
 fi
+
+# Default: structured diff vs for-next baseline using <sha>.json digests.
+branch_json=$(_latest_json "$patch_name") || _fail "no .json digest for $patch_name"
+baseline_json=$(_latest_json "for-next") || _fail "no .json digest for for-next baseline"
+
+python3 - "$branch_json" "$baseline_json" "$patch_name" <<'EOF'
+import json, sys
+branch_path, baseline_path, branch_name = sys.argv[1:]
+with open(branch_path) as f: br = json.load(f)
+with open(baseline_path) as f: ba = json.load(f)
+
+br_tests = br.get("tests", {})
+ba_tests = ba.get("tests", {})
+
+# Categorize tests where this branch's verdict differs from baseline's.
+def cls(v):
+    return v   # raw verdict; could collapse later
+
+new_fail, new_flake, new_hang, fixed, new_skip = [], [], [], [], []
+
+bad = {"fail", "hang"}
+flaky = {"flake", "flake-from-timeout"}
+good = {"pass", "skip"}
+
+for tname, bentry in br_tests.items():
+    bv = bentry.get("verdict")
+    aentry = ba_tests.get(tname)
+    av = aentry.get("verdict") if aentry else None
+    if bv == av:
+        continue
+    # Branch worse?
+    if bv == "fail" and av in good | flaky | {None}:
+        new_fail.append((tname, av, bv))
+    elif bv == "hang" and av in good | flaky | {None}:
+        new_hang.append((tname, av, bv))
+    elif bv in flaky and av in good | {None}:
+        new_flake.append((tname, av, bv))
+    elif bv in good and av in bad | flaky:
+        fixed.append((tname, av, bv))
+    elif bv == "skip" and av not in (None, "skip"):
+        new_skip.append((tname, av, bv))
+
+def emit(label, entries):
+    if not entries:
+        return
+    print(f"=== {label} ({len(entries)}) ===")
+    for n, a, b in sorted(entries):
+        a = a or "absent"
+        print(f"  {n:<22}  {a:>10}  ->  {b}")
+    print()
+
+print(f"branch: {br['branch']} @ {br['sha']}")
+print(f"baseline: {ba['branch']} @ {ba['sha']}")
+print()
+
+emit("NEW FAIL",  new_fail)
+emit("NEW HANG",  new_hang)
+emit("NEW FLAKE", new_flake)
+emit("NEW SKIP",  new_skip)
+emit("FIXED",     fixed)
+
+if not (new_fail or new_hang or new_flake or new_skip or fixed):
+    print("no changes vs baseline")
+EOF

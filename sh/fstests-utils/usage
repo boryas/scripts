@@ -2,5 +2,10 @@ fstests-utils <sub-cmd>
 
 sub-cmds:
 ------------------
-results     show results for fstests runs
-test        run the test suite on a branch
+test        run -g auto in parallel + parallel retry; write digest + fold history
+adhoc       run specific tests in parallel on the currently-up workers (no build / digest)
+results     show diffs vs for-next baseline / verdict history (see `results usage`)
+digest      build a structured <sha>.json from a raw result file
+state       fold per-test verdict history (history.json) for a branch
+backfill    one-time bootstrap: generate missing <sha>.json digests
+cron        wrappers for systemd-user timer (cron/for-next runs daily)

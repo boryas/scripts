@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""
+fstests-utils digest <branch> <sha>
+
+Parses ~/fstests-results/<branch>/<sha> [+ .retry] into <sha>.json with
+the schema documented in the long-term-tracking plan.
+
+Per-run line grammar produced by para-fstests/ssh-one.sh and the retry
+block in fstests-utils/test/run:
+
+    "vm test"                      -- worker started the test
+    "vm test Ran: test"            -- ./check completed; provisionally pass
+    "Failures: test"               -- on a following line, refines to fail
+    "Not run: test"                -- on a following line, refines to skip
+    "vm test Timeout: test"        -- ssh-one.sh's timeout branch (no Ran:)
+
+"Failures:"/"Not run:" lines are matched to the most recent pending
+Ran: line by test name (robust against unlikely interleaving).
+"""
+
+import json
+import os
+import re
+import sys
+from datetime import datetime, timezone
+
+USAGE = "usage: fstests-utils digest <branch> <sha>"
+
+# VM identifier is whatever ssh target para-fstests was given: v0..v4 for
+# local-vm, fstests@<ip> for cloud, anything else.  We just require non-
+# whitespace.  The ordering below (RAN/TIMEOUT/FAIL/NOTRUN before START)
+# ensures the permissive START_RE doesn't capture "Failures: t/N" /
+# "Not run: t/N" by mistake -- those match their specific regex first.
+RAN_RE      = re.compile(r"^(\S+) (\S+/\d+) Ran: (\S+/\d+)$")
+TIMEOUT_RE  = re.compile(r"^(\S+) (\S+/\d+) Timeout: (\S+/\d+)$")
+START_RE    = re.compile(r"^(\S+) (\S+/\d+)$")
+FAIL_RE     = re.compile(r"^Failures: (\S+/\d+)$")
+NOTRUN_RE   = re.compile(r"^Not run: (\S+/\d+)$")
+
+
+def extract(path):
+    """Return {test_name: {"result": str, "vm": str}}.  result ∈ {pass, fail, skip, timeout}."""
+    out = {}
+    pending = None  # (vm, test, result) -- the most recent Ran: awaiting refinement
+    with open(path) as f:
+        for line in f:
+            line = line.rstrip("\n")
+
+            m = RAN_RE.match(line)
+            if m:
+                if pending is not None:
+                    out[pending[1]] = {"result": pending[2], "vm": pending[0]}
+                vm, test, _ = m.groups()
+                pending = (vm, test, "pass")
+                continue
+
+            m = TIMEOUT_RE.match(line)
+            if m:
+                if pending is not None:
+                    out[pending[1]] = {"result": pending[2], "vm": pending[0]}
+                vm, test, _ = m.groups()
+                out[test] = {"result": "timeout", "vm": vm}
+                pending = None
+                continue
+
+            m = FAIL_RE.match(line)
+            if m and pending is not None and m.group(1) == pending[1]:
+                pending = (pending[0], pending[1], "fail")
+                continue
+
+            m = NOTRUN_RE.match(line)
+            if m and pending is not None and m.group(1) == pending[1]:
+                pending = (pending[0], pending[1], "skip")
+                continue
+
+            m = START_RE.match(line)
+            if m:
+                # Bare "vm test" start line; flush prior pending if it exists.
+                if pending is not None:
+                    out[pending[1]] = {"result": pending[2], "vm": pending[0]}
+                    pending = None
+                continue
+    if pending is not None:
+        out[pending[1]] = {"result": pending[2], "vm": pending[0]}
+    return out
+
+
+def verdict(p, r):
+    """Combine parallel result `p` and retry result `r` (may be None) into a verdict."""
+    if p == "pass":
+        return "pass"
+    if p == "skip":
+        return "skip"
+    if p == "fail":
+        return "flake" if r == "pass" else "fail"
+    if p == "timeout":
+        if r == "pass":
+            return "flake-from-timeout"
+        if r == "timeout":
+            return "hang"
+        if r == "fail":
+            return "fail"
+        return "hang"  # no retry data -> assume worst
+    return p
+
+
+def main():
+    if len(sys.argv) != 3:
+        print(USAGE, file=sys.stderr)
+        sys.exit(22)
+
+    branch, sha = sys.argv[1], sys.argv[2]
+    results_dir = os.path.expanduser(f"~/fstests-results/{branch}")
+    para_file = os.path.join(results_dir, sha)
+    retry_file = os.path.join(results_dir, f"{sha}.retry")
+    out_file = os.path.join(results_dir, f"{sha}.json")
+
+    if not os.path.isfile(para_file):
+        print(f"FAIL: no parallel result file: {para_file}", file=sys.stderr)
+        sys.exit(1)
+
+    parallel = extract(para_file)
+    retry = extract(retry_file) if os.path.isfile(retry_file) else {}
+
+    tests = {}
+    for name, p_entry in parallel.items():
+        r_entry = retry.get(name)
+        entry = {"parallel": p_entry}
+        if r_entry is not None:
+            entry["retry"] = r_entry
+        entry["verdict"] = verdict(p_entry["result"],
+                                   r_entry["result"] if r_entry else None)
+        tests[name] = entry
+
+    # Summary counts.
+    counts = {k: 0 for k in
+              ("pass", "skip", "fail", "flake", "flake-from-timeout", "hang")}
+    for t in tests.values():
+        counts[t["verdict"]] = counts.get(t["verdict"], 0) + 1
+    counts["total"] = len(tests)
+
+    ended_ts = os.stat(para_file).st_mtime
+    ended_iso = datetime.fromtimestamp(ended_ts, tz=timezone.utc).astimezone().isoformat()
+
+    doc = {
+        "version": 1,
+        "sha": sha,
+        "branch": branch,
+        "ended": ended_iso,
+        "summary": counts,
+        "tests": tests,
+    }
+
+    with open(out_file, "w") as f:
+        json.dump(doc, f, indent=2, sort_keys=True)
+        f.write("\n")
+    print(f"wrote {out_file}")
+
+
+if __name__ == "__main__":
+    main()

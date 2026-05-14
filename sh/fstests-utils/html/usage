@@ -1,0 +1,15 @@
+fstests-utils html [branch...]
+
+Generate static HTML dashboards from the JSON digests in
+~/fstests-results/<branch>/.  Output under ~/fstests-results/html/.
+
+Pages produced:
+  index.html                          branch picker
+  <branch>/index.html                 latest run + breakages-in-last-N
+  <branch>/tests/<group>/<num>.html   per-test verdict timeline
+
+If no branches given, all branches with a history.json are rendered.
+
+Env:
+  HTML_RSYNC_TARGET   rsync target to push the html dir to, e.g.
+                      s1:/usr/local/share/site/static/fstests/

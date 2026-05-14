@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# workers/local-vm/down: shut down all local VMs.  Idempotent; safe to
+# call when nothing is running.
+set -eu
+exec rcli vm down all
