@@ -82,6 +82,12 @@ out_dir=~/fstests-results/$patch_name
 mkdir -p $out_dir
 out_file="$out_dir/$run_id"
 retry_file="$out_dir/$run_id.retry"
+# Per-run dir where ssh-one.sh rsyncs failure artifacts (.out.bad, .full,
+# .dmesg) off the workers.  Sub-dirs parallel/ and retry/ keep the two
+# phases' attempts of the same test separate (a parallel-phase fail with
+# a kernel splat is more interesting than the same test passing on
+# retry, but we want to keep both).
+details_dir="$out_dir/$run_id.details"
 
 cd ~/repos/para-fstests
 
@@ -143,6 +149,7 @@ systemd-run --user --scope --unit="$para_scope" \
 	--setenv=ALL_VMS="$all_vms" \
 	--setenv=PARA_TESTS="$para_tests_csv" \
 	--setenv=SLOW_TESTS_FILE="${SLOW_TESTS_FILE:-}" \
+	--setenv=DETAILS_DIR="$details_dir/parallel" \
 	-- bash -c '
 		cd ~/repos/para-fstests
 		FST_DIR=/mnt/repos/fstests EXCLUDE_FILE=EXCLUDE \
@@ -221,6 +228,7 @@ systemd-run --user --scope --unit="$retry_scope" \
 	--setenv=RETRY_TESTS="$retry_tests" \
 	--setenv=ALL_VMS="$all_vms" \
 	--setenv=SLOW_TESTS_FILE="${SLOW_TESTS_FILE:-}" \
+	--setenv=DETAILS_DIR="$details_dir/retry" \
 	-- bash -c '
 		cd ~/repos/para-fstests
 		FST_DIR=/mnt/repos/fstests EXCLUDE_FILE=EXCLUDE \
