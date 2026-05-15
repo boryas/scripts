@@ -71,12 +71,17 @@ make olddefconfig
 # avoids "wrong build target" footguns when switching backends.
 make -j$(nproc) tarzst-pkg
 hash=$(git log -1 --pretty=format:"%h")
+# Per-run unique id: kernel sha + start timestamp.  Lets the nightly
+# cron run repeatedly against the same for-next sha (when upstream
+# hasn't moved) without overwriting prior digests; flake/regression
+# detection wants distinct data points, not "latest result for sha".
+run_id="${hash}-$(date -u +%Y%m%dT%H%M%SZ)"
 phase_end build
 
 out_dir=~/fstests-results/$patch_name
 mkdir -p $out_dir
-out_file="$out_dir/$hash"
-retry_file="$out_dir/$hash.retry"
+out_file="$out_dir/$run_id"
+retry_file="$out_dir/$run_id.retry"
 
 cd ~/repos/para-fstests
 
@@ -109,22 +114,64 @@ for vm in $vms; do
 done
 phase_end provision
 
-# Parallel phase: -g auto across all workers, in a cgroup.
+# Compute the explicit parallel-phase test list on the controller.
+# Ask the first worker for the full -g auto list, then drop any tests
+# named in PARA_SKIP_FILE / PERSISTENT_HANGS_FILE.  Pass the resulting
+# list explicitly to para-fstests via -t so para-fstests stays a dumb
+# dispatcher and doesn't need to know about our quarantine policy.
+para_tests=$(ssh "${vms[0]}" 'cd /mnt/repos/fstests; sudo ./check -E EXCLUDE -n -g auto' \
+	| grep -oE '^[a-zA-Z]+/[0-9]+' | grep -v expunged | sort -u)
+# (grep -oE strips trailing whitespace; check -n pads test names with
+#  spaces for column-alignment, which breaks naive ^...$ regex matches.)
+nbefore=$(echo "$para_tests" | wc -l)
+for skipfile in "${PARA_SKIP_FILE:-}" "${PERSISTENT_HANGS_FILE:-}"; do
+	[ -n "$skipfile" ] && [ -r "$skipfile" ] || continue
+	skip=$(grep -E '^[a-zA-Z]+/[0-9]+$' "$skipfile" | sort -u)
+	[ -n "$skip" ] || continue
+	para_tests=$(comm -23 <(echo "$para_tests") <(echo "$skip"))
+	echo "filter: dropped $(echo "$skip" | wc -l) tests via $(basename "$skipfile")"
+done
+nafter=$(echo "$para_tests" | wc -l)
+echo "parallel-phase test list: $nbefore -> $nafter tests after filtering"
+para_tests_csv=$(echo "$para_tests" | tr '\n' ' ')
+
+# Parallel phase: explicit test list dispatched across all workers, in a cgroup.
 systemd-run --user --scope --unit="$para_scope" \
 	--property=TimeoutStopSec=10s \
 	--description="fstests parallel ($patch_name @ $hash)" \
 	--setenv=PARA_TIMEOUT="$para_timeout" \
 	--setenv=ALL_VMS="$all_vms" \
+	--setenv=PARA_TESTS="$para_tests_csv" \
+	--setenv=SLOW_TESTS_FILE="${SLOW_TESTS_FILE:-}" \
 	-- bash -c '
 		cd ~/repos/para-fstests
 		FST_DIR=/mnt/repos/fstests EXCLUDE_FILE=EXCLUDE \
-			./para-fstests.sh -T "$PARA_TIMEOUT" -t "-g auto" $ALL_VMS
+			./para-fstests.sh -T "$PARA_TIMEOUT" -t "$PARA_TESTS" $ALL_VMS
 	' | tee "$out_file"
 phase_end parallel
+
+# Synthesize "parallel-phase timeout" entries in the out_file for both
+# quarantine lists.  This is how the digest learns about these tests:
+#   PARA_SKIP        -> parallel=timeout + retry runs them -> verdict
+#                       computed normally (flake-from-timeout / hang).
+#   PERSISTENT_HANGS -> parallel=timeout + retry skipped -> digest's
+#                       fallback verdict("timeout", None) gives "hang".
+# Stub host = "preknown" so the line shape matches what digest's regex
+# expects, but it's clearly not a real worker in the per-test history.
+for skipfile in "${PARA_SKIP_FILE:-}" "${PERSISTENT_HANGS_FILE:-}"; do
+	[ -n "$skipfile" ] && [ -r "$skipfile" ] || continue
+	while IFS= read -r tst; do
+		case "$tst" in ''|\#*) continue;; esac
+		printf 'preknown %s\npreknown %s Timeout: %s dur=0s\n' \
+			"$tst" "$tst" "$tst" >> "$out_file"
+	done < "$skipfile"
+done
 
 # Build the retry list from the parallel-run output:
 #   - tests that failed: 'Failures: <test>' on its own line (from ./check)
 #   - tests that timed out: 'vm tst Timeout: tst' inline (from ssh-one.sh)
+#   - PARA_SKIP and PERSISTENT_HANGS tests are picked up here via the
+#     synthetic Timeout lines we just appended.
 retry=$(
 	{
 		grep -E '^Failures: ' "$out_file" | awk '{print $2}'
@@ -133,6 +180,16 @@ retry=$(
 		}'
 	} | sort -u
 )
+
+# Don't actually run PERSISTENT_HANGS tests in retry.  The digest will
+# verdict them as "hang" via the no-retry-data fallback.
+if [ -n "${PERSISTENT_HANGS_FILE:-}" ] && [ -r "$PERSISTENT_HANGS_FILE" ]; then
+	hangs=$(grep -E '^[a-zA-Z]+/[0-9]+$' "$PERSISTENT_HANGS_FILE" | sort -u)
+	if [ -n "$hangs" ]; then
+		retry=$(comm -23 <(echo "$retry" | sort -u) <(echo "$hangs"))
+		echo "skipping retry for $(echo "$hangs" | wc -l) PERSISTENT_HANGS tests"
+	fi
+fi
 
 if [ -z "$retry" ]; then
 	echo "no failures or timeouts; nothing to re-run"
@@ -163,6 +220,7 @@ systemd-run --user --scope --unit="$retry_scope" \
 	--setenv=RETRY_TIMEOUT="$retry_timeout" \
 	--setenv=RETRY_TESTS="$retry_tests" \
 	--setenv=ALL_VMS="$all_vms" \
+	--setenv=SLOW_TESTS_FILE="${SLOW_TESTS_FILE:-}" \
 	-- bash -c '
 		cd ~/repos/para-fstests
 		FST_DIR=/mnt/repos/fstests EXCLUDE_FILE=EXCLUDE \
@@ -200,7 +258,7 @@ echo "=== retry summary ==="
 # branch's history.json so cross-run queries see this run.
 echo
 echo "=== writing structured digest ==="
-rcli fstests-utils digest "$patch_name" "$hash"
+rcli fstests-utils digest "$patch_name" "$run_id"
 rcli fstests-utils state "$patch_name"
 
 echo

@@ -1,0 +1,265 @@
+#!/usr/bin/env python3
+"""
+fstests-utils selftest
+
+Fast (<1s) sanity checks for the digest parser and verdict logic.
+Run after any change to ssh-one.sh / para-fstests.sh / digest/run /
+state/run, so we catch regressions like the dur= refinement-line bug
+without doing a 2-hour real cloud run.
+
+Add fixtures liberally -- the value is in catching new edge cases as
+they show up, not in being exhaustive day 1.
+"""
+
+import importlib.util
+import os
+import sys
+import tempfile
+import textwrap
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+DIGEST_PATH = os.path.join(os.path.dirname(HERE), "digest", "run")
+
+# digest/run is a plain script, not a module.  Load it as a module so
+# we can call its extract() / verdict() functions directly.
+_spec = importlib.util.spec_from_loader(
+    "digest_run",
+    importlib.machinery.SourceFileLoader("digest_run", DIGEST_PATH),
+)
+digest = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(digest)
+
+
+# Test framework ------------------------------------------------------
+
+failures = []
+
+def check(name, condition, detail=""):
+    if condition:
+        print(f"  PASS  {name}")
+    else:
+        print(f"  FAIL  {name}{('  -- ' + detail) if detail else ''}")
+        failures.append(name)
+
+
+def with_raw(text):
+    """Write text to a tmpfile and return its path (caller is responsible
+    for the unlink, but cpython tmpfile autocleans on exit so we let it)."""
+    f = tempfile.NamedTemporaryFile("w", delete=False, suffix=".raw")
+    f.write(textwrap.dedent(text))
+    f.close()
+    return f.name
+
+
+# Fixtures ------------------------------------------------------------
+
+def test_pass_no_dur():
+    """Pre-instrumentation (no dur=) pass: backward-compat regex path."""
+    raw = with_raw("""\
+    fstests@1.2.3.4 btrfs/001
+    fstests@1.2.3.4 btrfs/001 Ran: btrfs/001
+    """)
+    out = digest.extract(raw)
+    check("pass without dur", out == {"btrfs/001":
+        {"result": "pass", "vm": "fstests@1.2.3.4", "dur": None}}, repr(out))
+
+
+def test_pass_with_dur():
+    raw = with_raw("""\
+    fstests@1.2.3.4 btrfs/001
+    fstests@1.2.3.4 btrfs/001 Ran: btrfs/001 dur=12s
+    """)
+    out = digest.extract(raw)
+    check("pass with dur", out == {"btrfs/001":
+        {"result": "pass", "vm": "fstests@1.2.3.4", "dur": 12}}, repr(out))
+
+
+def test_fail_with_dur_on_ran_only():
+    """Current ssh-one.sh shape: dur on Ran:, refinement line is clean."""
+    raw = with_raw("""\
+    fstests@1.2.3.4 btrfs/058
+    fstests@1.2.3.4 btrfs/058 Ran: btrfs/058 dur=15s
+    Failures: btrfs/058
+    """)
+    out = digest.extract(raw)
+    check("fail refines pass->fail with dur preserved",
+          out == {"btrfs/058":
+                  {"result": "fail", "vm": "fstests@1.2.3.4", "dur": 15}},
+          repr(out))
+
+
+def test_fail_with_dur_on_refinement():
+    """Defensive: an older buggy ssh-one.sh appended dur to the Failures
+    line.  Our relaxed FAIL_RE should still refine -- catches the
+    regression that nearly went out tonight."""
+    raw = with_raw("""\
+    fstests@1.2.3.4 btrfs/058
+    fstests@1.2.3.4 btrfs/058 Ran: btrfs/058
+    Failures: btrfs/058 dur=15s
+    """)
+    out = digest.extract(raw)
+    check("fail refines even when dur is on the refinement line",
+          out["btrfs/058"]["result"] == "fail", repr(out))
+
+
+def test_skip_with_dur_on_ran():
+    raw = with_raw("""\
+    fstests@1.2.3.4 generic/210
+    fstests@1.2.3.4 generic/210 Ran: generic/210 dur=2s
+    Not run: generic/210
+    """)
+    out = digest.extract(raw)
+    check("skip refines pass->skip",
+          out["generic/210"]["result"] == "skip", repr(out))
+
+
+def test_timeout_with_dur():
+    raw = with_raw("""\
+    fstests@1.2.3.4 btrfs/187
+    fstests@1.2.3.4 btrfs/187 Timeout: btrfs/187 dur=480s
+    """)
+    out = digest.extract(raw)
+    check("timeout with dur",
+          out == {"btrfs/187":
+                  {"result": "timeout", "vm": "fstests@1.2.3.4",
+                   "dur": 480}}, repr(out))
+
+
+def test_local_vm_hostname():
+    """v0..v4 ssh targets used by the local-vm backend still parse."""
+    raw = with_raw("""\
+    v0 btrfs/001
+    v0 btrfs/001 Ran: btrfs/001 dur=8s
+    """)
+    out = digest.extract(raw)
+    check("local-vm hostname (v0) still parsed",
+          out == {"btrfs/001": {"result": "pass", "vm": "v0", "dur": 8}},
+          repr(out))
+
+
+def test_mixed_workers():
+    raw = with_raw("""\
+    fstests@1.2.3.4 btrfs/001
+    fstests@5.6.7.8 generic/010
+    fstests@1.2.3.4 btrfs/001 Ran: btrfs/001 dur=3s
+    fstests@5.6.7.8 generic/010 Ran: generic/010 dur=5s
+    Failures: generic/010
+    """)
+    out = digest.extract(raw)
+    check("multiple workers interleaved",
+          out.get("btrfs/001", {}).get("result") == "pass"
+          and out.get("generic/010", {}).get("result") == "fail",
+          repr(out))
+
+
+def test_verdict_combinations():
+    cases = [
+        # (parallel, retry, expected verdict)
+        ("pass",    None,     "pass"),
+        ("skip",    None,     "skip"),
+        ("fail",    "pass",   "flake"),
+        ("fail",    "fail",   "fail"),
+        ("timeout", "pass",   "flake-from-timeout"),
+        ("timeout", "timeout","hang"),
+        ("timeout", "fail",   "fail"),
+        ("timeout", None,     "hang"),
+    ]
+    for p, r, want in cases:
+        got = digest.verdict(p, r)
+        check(f"verdict({p!r}, {r!r}) == {want!r}",
+              got == want, f"got {got!r}")
+
+
+def test_synthetic_para_skip_entry():
+    """A 'preknown <test> Timeout: <test> dur=0s' line is what test/run
+    writes for PARA_SKIP tests.  Digest must parse it as a parallel
+    timeout, no retry data -> verdict = hang (treated as worst case
+    until retry refines).  When combined with an actual retry pass,
+    verdict() should yield 'flake-from-timeout'."""
+    raw = with_raw("""\
+    preknown btrfs/010
+    preknown btrfs/010 Timeout: btrfs/010 dur=0s
+    """)
+    out = digest.extract(raw)
+    check("synthetic preknown line parses as timeout",
+          out.get("btrfs/010") == {"result": "timeout", "vm": "preknown",
+                                   "dur": 0}, repr(out))
+
+
+def test_persistent_hang_verdict():
+    """PERSISTENT_HANGS test gets synthetic parallel timeout, no retry
+    attempt.  verdict('timeout', None) must return 'hang'."""
+    got = digest.verdict("timeout", None)
+    check("verdict('timeout', None) == 'hang' (PERSISTENT_HANGS path)",
+          got == "hang", f"got {got!r}")
+
+
+def test_test_name_extraction_strips_trailing_whitespace():
+    """fstests' `check -n -g auto` pads test names with trailing
+    whitespace for column-aligned output:
+
+        btrfs/001   <-- 3 trailing spaces
+        btrfs/002   <-- and so on
+
+    The test/run filter step and para-fstests' TESTS extraction must
+    strip that padding -- otherwise comm comparisons against
+    PARA_SKIP/SLOW_TESTS files (which don't have padding) silently
+    fail to match.  This bit us hard during cloud rollout."""
+    import subprocess
+    raw = "btrfs/001   \nbtrfs/002   \nbtrfs/010   \n"
+    # The fix that lives in both test/run and para-fstests.sh:
+    out = subprocess.run(
+        ["grep", "-oE", "^[a-zA-Z]+/[0-9]+"],
+        input=raw, capture_output=True, text=True,
+    ).stdout
+    expected = "btrfs/001\nbtrfs/002\nbtrfs/010\n"
+    check("grep -oE strips check -n's trailing whitespace",
+          out == expected,
+          f"got {out!r}, want {expected!r}")
+
+
+def test_failures_line_does_not_match_start_re():
+    """Make sure permissive START_RE doesn't capture 'Failures: btrfs/058'
+    as a bare-start line.  Ordering of regexes in extract() must put
+    FAIL_RE before START_RE."""
+    raw = with_raw("""\
+    fstests@1.2.3.4 btrfs/058
+    fstests@1.2.3.4 btrfs/058 Ran: btrfs/058
+    Failures: btrfs/058
+    """)
+    out = digest.extract(raw)
+    # If START_RE matched "Failures: btrfs/058" first, btrfs/058 would
+    # stay pass.  Refinement must win.
+    check("refinement wins over permissive START_RE",
+          out["btrfs/058"]["result"] == "fail")
+
+
+# Driver --------------------------------------------------------------
+
+def main():
+    tests = [
+        test_pass_no_dur,
+        test_pass_with_dur,
+        test_fail_with_dur_on_ran_only,
+        test_fail_with_dur_on_refinement,
+        test_skip_with_dur_on_ran,
+        test_timeout_with_dur,
+        test_local_vm_hostname,
+        test_mixed_workers,
+        test_verdict_combinations,
+        test_synthetic_para_skip_entry,
+        test_persistent_hang_verdict,
+        test_test_name_extraction_strips_trailing_whitespace,
+        test_failures_line_does_not_match_start_re,
+    ]
+    for t in tests:
+        t()
+    print()
+    if failures:
+        print(f"FAILED: {len(failures)} case(s): {', '.join(failures)}")
+        sys.exit(1)
+    print("OK: all checks passed")
+
+
+if __name__ == "__main__":
+    main()

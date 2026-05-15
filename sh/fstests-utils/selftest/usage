@@ -1,0 +1,8 @@
+fstests-utils selftest
+
+Fast (<1s) sanity check for the digest parser and verdict logic.  Use
+after any change to ssh-one.sh / para-fstests.sh / digest/run /
+state/run to catch regex regressions and verdict-mapping bugs without
+doing a full ~2h cloud run.
+
+No env required.  Exits 0 on success, 1 on any failure.

@@ -31,17 +31,28 @@ USAGE = "usage: fstests-utils digest <branch> <sha>"
 # whitespace.  The ordering below (RAN/TIMEOUT/FAIL/NOTRUN before START)
 # ensures the permissive START_RE doesn't capture "Failures: t/N" /
 # "Not run: t/N" by mistake -- those match their specific regex first.
-RAN_RE      = re.compile(r"^(\S+) (\S+/\d+) Ran: (\S+/\d+)$")
-TIMEOUT_RE  = re.compile(r"^(\S+) (\S+/\d+) Timeout: (\S+/\d+)$")
+#
+# Ran/Timeout lines optionally end with " dur=Ns" (the wall-clock
+# duration ssh-one.sh records).  Older logs without it still match.
+RAN_RE      = re.compile(r"^(\S+) (\S+/\d+) Ran: (\S+/\d+)(?: dur=(\d+)s)?$")
+TIMEOUT_RE  = re.compile(r"^(\S+) (\S+/\d+) Timeout: (\S+/\d+)(?: dur=(\d+)s)?$")
 START_RE    = re.compile(r"^(\S+) (\S+/\d+)$")
-FAIL_RE     = re.compile(r"^Failures: (\S+/\d+)$")
-NOTRUN_RE   = re.compile(r"^Not run: (\S+/\d+)$")
+# FAIL_RE / NOTRUN_RE accept an optional " dur=Ns" tail too, defensive
+# against an earlier ssh-one.sh bug that appended dur after $res (the
+# multi-line Ran:+Failures: blob).  The Ran: line carries the canonical
+# dur; this is just so a stray dur on the refinement line doesn't
+# silently misverdict the test.
+FAIL_RE     = re.compile(r"^Failures: (\S+/\d+)(?: dur=\d+s)?$")
+NOTRUN_RE   = re.compile(r"^Not run: (\S+/\d+)(?: dur=\d+s)?$")
 
 
 def extract(path):
-    """Return {test_name: {"result": str, "vm": str}}.  result ∈ {pass, fail, skip, timeout}."""
+    """Return {test_name: {"result": str, "vm": str, "dur": int|None}}.
+    result ∈ {pass, fail, skip, timeout}.  dur is wall-clock seconds
+    captured from "dur=Ns" tail on Ran/Timeout lines; None for older
+    logs without the suffix."""
     out = {}
-    pending = None  # (vm, test, result) -- the most recent Ran: awaiting refinement
+    pending = None  # (vm, test, result, dur) -- the most recent Ran: awaiting refinement
     with open(path) as f:
         for line in f:
             line = line.rstrip("\n")
@@ -49,39 +60,44 @@ def extract(path):
             m = RAN_RE.match(line)
             if m:
                 if pending is not None:
-                    out[pending[1]] = {"result": pending[2], "vm": pending[0]}
-                vm, test, _ = m.groups()
-                pending = (vm, test, "pass")
+                    out[pending[1]] = {"result": pending[2], "vm": pending[0],
+                                       "dur": pending[3]}
+                vm, test, _, dur = m.groups()
+                pending = (vm, test, "pass", int(dur) if dur else None)
                 continue
 
             m = TIMEOUT_RE.match(line)
             if m:
                 if pending is not None:
-                    out[pending[1]] = {"result": pending[2], "vm": pending[0]}
-                vm, test, _ = m.groups()
-                out[test] = {"result": "timeout", "vm": vm}
+                    out[pending[1]] = {"result": pending[2], "vm": pending[0],
+                                       "dur": pending[3]}
+                vm, test, _, dur = m.groups()
+                out[test] = {"result": "timeout", "vm": vm,
+                             "dur": int(dur) if dur else None}
                 pending = None
                 continue
 
             m = FAIL_RE.match(line)
             if m and pending is not None and m.group(1) == pending[1]:
-                pending = (pending[0], pending[1], "fail")
+                pending = (pending[0], pending[1], "fail", pending[3])
                 continue
 
             m = NOTRUN_RE.match(line)
             if m and pending is not None and m.group(1) == pending[1]:
-                pending = (pending[0], pending[1], "skip")
+                pending = (pending[0], pending[1], "skip", pending[3])
                 continue
 
             m = START_RE.match(line)
             if m:
                 # Bare "vm test" start line; flush prior pending if it exists.
                 if pending is not None:
-                    out[pending[1]] = {"result": pending[2], "vm": pending[0]}
+                    out[pending[1]] = {"result": pending[2], "vm": pending[0],
+                                       "dur": pending[3]}
                     pending = None
                 continue
     if pending is not None:
-        out[pending[1]] = {"result": pending[2], "vm": pending[0]}
+        out[pending[1]] = {"result": pending[2], "vm": pending[0],
+                           "dur": pending[3]}
     return out
 
 

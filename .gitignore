@@ -14,3 +14,4 @@ c/*
 rust/**/target
 
 .claude
+__pycache__/

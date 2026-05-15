@@ -42,13 +42,11 @@ short_sha=$(git rev-parse --short HEAD)
 
 echo "for-next prev=$prev_sha new=$new_sha (short=$short_sha)"
 
-# Idempotency: skip if we already have a digest for this sha.  Note the
-# digest is named after the *short* sha (fstests-utils/test/run uses
-# `git log -1 --pretty=format:%h`), so check that filename.
-if [ -f "$results_dir/$short_sha.json" ]; then
-	echo "for-next at $short_sha already tested ($results_dir/$short_sha.json); skipping"
-	exit 0
-fi
+# No idempotency skip: each cron fire produces a fresh digest, even when
+# the upstream sha hasn't moved.  Re-runs against the same sha are
+# distinguished by test/run's run_id ("<sha>-<timestamp>"), so they
+# don't overwrite prior data -- exactly what flake / cross-run
+# regression detection wants.
 
 # Run the test pipeline.  test/run handles git checkout (no-op since we
 # already checked out btrfs/for-next), build, parallel + retry, digest,

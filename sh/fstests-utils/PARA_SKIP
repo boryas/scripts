@@ -1,0 +1,13 @@
+# Tests known to reliably hit the parallel-phase per-test timeout
+# (currently PARA_TIMEOUT=8m).  They are skipped in the parallel phase
+# and added directly to the retry list -- where they have the longer
+# RETRY_TIMEOUT=30m budget and usually finish.
+#
+# Format: one test per line.  Blank lines and # comments allowed.
+#
+# Derived initially from two consecutive cloud runs (2026-05-14, -15)
+# that all hit the 480s cap.  Promote tests to PERSISTENT_HANGS if they
+# *also* reliably hit the 30m retry cap.
+btrfs/010
+generic/334
+generic/415

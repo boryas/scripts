@@ -137,7 +137,7 @@ window.addEventListener('load', _ftOpenTargetDetails);
 </head><body>
 <nav><a href="../">all branches</a><a>{{ branch }}</a></nav>
 <h1>{{ branch }}</h1>
-<p class="meta">Latest run: <span class="sha">{{ latest_sha }}</span> &middot;
+<p class="meta">Latest run: <a class="sha" href="runs/{{ latest_run_id }}.html">{{ latest_sha }}</a> &middot;
   finished {{ latest_ts }}</p>
 
 <h2 id="latest-run">Latest run breakdown</h2>
@@ -201,7 +201,7 @@ window.addEventListener('load', _ftOpenTargetDetails);
   <tr><th>sha</th><th>finished</th><th>fail</th><th>flake</th><th>hang</th></tr>
   {% for r in recent_runs %}
   <tr>
-    <td><a class="sha" href="runs/{{ r.sha }}.html">{{ r.sha }}</a></td>
+    <td><a class="sha" href="runs/{{ r.run_id }}.html">{{ r.kernel_sha }}</a></td>
     <td class="meta">{{ r.ended }}</td>
     <td>{{ (r.summary.fail or 0) + (r.summary['persistent-fail'] or 0) }}</td>
     <td>{{ (r.summary.flake or 0) + (r.summary['flake-from-timeout'] or 0) }}</td>
@@ -241,7 +241,7 @@ window.addEventListener('load', _ftOpenTargetDetails);
   <tr><th>sha</th><th>verdict</th><th>finished</th></tr>
   {% for e in entries %}
   <tr>
-    <td><a class="sha" href="../../runs/{{ e.sha }}.html">{{ e.sha }}</a></td>
+    <td><a class="sha" href="../../runs/{{ e.sha }}.html">{{ e.kernel_sha }}</a></td>
     <td><span class="verdict {{ e.verdict }}">{{ e.verdict }}</span></td>
     <td class="meta">{{ e.ts }}</td>
   </tr>
@@ -275,7 +275,7 @@ window.addEventListener('load', _ftOpenTargetDetails);
   <a><span class="sha">{{ sha }}</span></a>
 </nav>
 <h1>{{ branch }} @ <span class="sha">{{ sha }}</span></h1>
-<p class="meta">finished {{ ts }}</p>
+<p class="meta">run_id <code>{{ run_id }}</code> &middot; finished {{ ts }}</p>
 
 <div class="summary">
   <a class="card ok"   href="#g-pass"><div class="num">{{ summary.pass or 0 }}</div><div class="label">pass</div></a>
@@ -312,6 +312,13 @@ def verdict_short(v):
         "fail": "F", "persistent-fail": "F",
         "hang": "H", "persistent-hang": "H",
     }.get(v, v[:1])
+
+
+def kernel_sha(run_id):
+    """Strip the '-<timestamp>' suffix from a run_id to recover the
+    kernel sha for display.  Old digests with bare kernel shas (pre-
+    multi-run support) are returned unchanged."""
+    return run_id.split("-", 1)[0] if run_id else run_id
 
 
 def load_digests(branch_dir):
@@ -414,8 +421,8 @@ def render_branch(env, branch, branch_dir, out_dir):
     sorted_breakages = sorted(breakages.items(), key=lambda kv: kv[0])
 
     recent_runs = [
-        {"sha": d["sha"], "ended": d.get("ended", ""),
-         "summary": d.get("summary", {})}
+        {"run_id": d["sha"], "kernel_sha": kernel_sha(d["sha"]),
+         "ended": d.get("ended", ""), "summary": d.get("summary", {})}
         for d in digests[:LAST_N_RUNS]
     ]
 
@@ -442,7 +449,8 @@ def render_branch(env, branch, branch_dir, out_dir):
 
     branch_html = env.get_template("branch").render(
         css=CSS, branch=branch,
-        latest_sha=latest["sha"],
+        latest_sha=kernel_sha(latest["sha"]),
+        latest_run_id=latest["sha"],
         latest_ts=latest.get("ended", "?"),
         run_count=len(sha_window),
         window_oldest=window_oldest,
@@ -466,24 +474,29 @@ def render_branch(env, branch, branch_dir, out_dir):
         history_entries = sorted(
             tentry["history"], key=lambda e: e.get("ts", ""), reverse=True
         )[:HISTORY_LIMIT]
+        # Inject kernel_sha for display; e["sha"] stays as the run_id for
+        # link targets.
+        for e in history_entries:
+            e["kernel_sha"] = kernel_sha(e.get("sha", ""))
         page = env.get_template("test").render(
             css=CSS, branch=branch, test_name=tname,
             entries=history_entries, limit=HISTORY_LIMIT,
         )
         write_file(branch_out / "tests" / f"{tname}.html", page)
 
-    # Per-run pages: one page per <sha>.json, showing all tests for that
-    # run grouped by verdict.  Linked from the recent-runs table on the
-    # branch page and from per-test history rows (sha column).
+    # Per-run pages: one page per <run_id>.json, showing all tests for
+    # that run grouped by verdict.  run_id includes a timestamp suffix
+    # so multiple runs against the same kernel sha get their own page.
     for d in digests:
+        run_id = d["sha"]  # legacy field name; actually carries the run_id
         page = env.get_template("run").render(
             css=CSS, branch=branch,
-            sha=d["sha"],
+            sha=kernel_sha(run_id), run_id=run_id,
             ts=d.get("ended", "?"),
             summary=d.get("summary", {}),
             groups=group_latest_tests(d),
         )
-        write_file(branch_out / "runs" / f"{d['sha']}.html", page)
+        write_file(branch_out / "runs" / f"{run_id}.html", page)
 
     return {
         "name": branch,

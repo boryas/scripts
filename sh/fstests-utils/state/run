@@ -100,8 +100,12 @@ def main():
             te = state["tests"].setdefault(tname, {"history": []})
             # Prepend newest-first.  Since we're folding in mtime order
             # (oldest first), each prepend stacks correctly so the final
-            # array has the most recent run at index 0.
-            te["history"].insert(0, {"sha": sha, "verdict": verdict, "ts": ts})
+            # array has the most recent run at index 0.  dur is the
+            # parallel-phase wall-clock seconds when present (None for
+            # pre-instrumentation digests).
+            dur = (tentry.get("parallel") or {}).get("dur")
+            te["history"].insert(0, {"sha": sha, "verdict": verdict,
+                                     "ts": ts, "dur": dur})
         seen_shas.add(sha)
         last_sha = sha
         last_ts = ts
