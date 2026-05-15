@@ -80,6 +80,23 @@ details[id]:target { background: #fffbe6; }
 .test-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
              gap: 0.2em 1em; margin: 0.4em 0 0.6em; font-size: 0.85em; }
 .test-grid a { white-space: nowrap; }
+/* Per-failure inline blocks on the per-run page.  One <details> per
+   failing test under the fail/hang/flake group, carrying that test's
+   .out.bad + first dmesg splat.  Anchor ids are "t-<group>-<num>" so
+   verdict pills on other pages can deep-link straight into the right
+   test's expanded artifacts. */
+details.failure { margin: 0.3em 0 0.3em 1em; padding-left: 0.8em;
+                  border-left: 2px solid #eee; }
+details.failure > summary { font-weight: 500; color: #555; padding: 0.2em 0; }
+details.failure > summary > code { color: #2c5aa0; }
+details.failure[id]:target { background: #fffbe6; border-left-color: #c0392b; }
+h4.art { font-size: 0.78em; color: #888; margin: 0.7em 0 0.2em;
+         font-weight: 500; text-transform: lowercase;
+         font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+pre.art { background: #f7f7f7; padding: 0.6em 0.8em; border-radius: 4px;
+          font-size: 0.82em; line-height: 1.4; overflow: auto;
+          max-height: 400px; margin: 0;
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 """
 
 # Templates ------------------------------------------------------------
@@ -95,8 +112,14 @@ INDEX_TMPL = """\
 // a summary card).  Modern browsers do this for the initial load in
 // some configurations, but not consistently for hashchange.
 function _ftOpenTargetDetails() {
+  // Walk up the tree opening every <details> ancestor so a deep link
+  // like #t-btrfs-058 opens both its inner failure block and the outer
+  // g-fail group that contains it.
   var t = document.getElementById(location.hash.slice(1));
-  if (t && t.tagName === 'DETAILS') t.open = true;
+  while (t) {
+    if (t.tagName === 'DETAILS') t.open = true;
+    t = t.parentElement;
+  }
 }
 window.addEventListener('hashchange', _ftOpenTargetDetails);
 window.addEventListener('load', _ftOpenTargetDetails);
@@ -128,8 +151,14 @@ BRANCH_TMPL = """\
 // a summary card).  Modern browsers do this for the initial load in
 // some configurations, but not consistently for hashchange.
 function _ftOpenTargetDetails() {
+  // Walk up the tree opening every <details> ancestor so a deep link
+  // like #t-btrfs-058 opens both its inner failure block and the outer
+  // g-fail group that contains it.
   var t = document.getElementById(location.hash.slice(1));
-  if (t && t.tagName === 'DETAILS') t.open = true;
+  while (t) {
+    if (t.tagName === 'DETAILS') t.open = true;
+    t = t.parentElement;
+  }
 }
 window.addEventListener('hashchange', _ftOpenTargetDetails);
 window.addEventListener('load', _ftOpenTargetDetails);
@@ -157,7 +186,7 @@ window.addEventListener('load', _ftOpenTargetDetails);
   {% if g.tests %}
   <div class="test-grid">
     {% for t in g.tests %}
-      <a href="tests/{{ t }}.html"><code>{{ t }}</code></a>
+      <a href="tests/{{ t.name }}.html"><code>{{ t.name }}</code></a>
     {% endfor %}
   </div>
   {% else %}
@@ -186,7 +215,7 @@ window.addEventListener('load', _ftOpenTargetDetails);
     <td>{{ info.flake }}</td>
     <td>
       {% for sha, v in info.verdicts %}
-        <a href="runs/{{ sha }}.html" class="verdict {{ v }}" title="{{ sha }}">{{ verdict_short(v) }}</a>
+        <a href="runs/{{ sha }}.html#t-{{ tname|replace('/', '-') }}" class="verdict {{ v }}" title="{{ sha }}">{{ verdict_short(v) }}</a>
       {% endfor %}
     </td>
   </tr>
@@ -223,8 +252,14 @@ TEST_TMPL = """\
 // a summary card).  Modern browsers do this for the initial load in
 // some configurations, but not consistently for hashchange.
 function _ftOpenTargetDetails() {
+  // Walk up the tree opening every <details> ancestor so a deep link
+  // like #t-btrfs-058 opens both its inner failure block and the outer
+  // g-fail group that contains it.
   var t = document.getElementById(location.hash.slice(1));
-  if (t && t.tagName === 'DETAILS') t.open = true;
+  while (t) {
+    if (t.tagName === 'DETAILS') t.open = true;
+    t = t.parentElement;
+  }
 }
 window.addEventListener('hashchange', _ftOpenTargetDetails);
 window.addEventListener('load', _ftOpenTargetDetails);
@@ -242,7 +277,14 @@ window.addEventListener('load', _ftOpenTargetDetails);
   {% for e in entries %}
   <tr>
     <td><a class="sha" href="../../runs/{{ e.sha }}.html">{{ e.kernel_sha }}</a></td>
-    <td><span class="verdict {{ e.verdict }}">{{ e.verdict }}</span></td>
+    <td>
+      {# Verdict pill deep-links to the failure's <details> anchor on
+         the run page.  Harmless for pass/skip rows: the anchor target
+         won't exist (only failures get inline blocks), so the browser
+         just lands at the top of the run page. #}
+      <a class="verdict {{ e.verdict }}"
+         href="../../runs/{{ e.sha }}.html#t-{{ test_name|replace('/', '-') }}">{{ e.verdict }}</a>
+    </td>
     <td class="meta">{{ e.ts }}</td>
   </tr>
   {% endfor %}
@@ -262,8 +304,14 @@ RUN_TMPL = """\
 // a summary card).  Modern browsers do this for the initial load in
 // some configurations, but not consistently for hashchange.
 function _ftOpenTargetDetails() {
+  // Walk up the tree opening every <details> ancestor so a deep link
+  // like #t-btrfs-058 opens both its inner failure block and the outer
+  // g-fail group that contains it.
   var t = document.getElementById(location.hash.slice(1));
-  if (t && t.tagName === 'DETAILS') t.open = true;
+  while (t) {
+    if (t.tagName === 'DETAILS') t.open = true;
+    t = t.parentElement;
+  }
 }
 window.addEventListener('hashchange', _ftOpenTargetDetails);
 window.addEventListener('load', _ftOpenTargetDetails);
@@ -289,11 +337,28 @@ window.addEventListener('load', _ftOpenTargetDetails);
 <details id="g-{{ g.key }}" {% if g.open %}open{% endif %}>
   <summary>{{ g.tests|length }} {{ g.label }}</summary>
   {% if g.tests %}
-  <div class="test-grid">
-    {% for t in g.tests %}
-      <a href="../tests/{{ t }}.html"><code>{{ t }}</code></a>
-    {% endfor %}
-  </div>
+    {% if g.with_details %}
+      {% for t in g.tests %}
+      <details class="failure" id="{{ t.anchor }}">
+        <summary>
+          <code>{{ t.name }}</code>
+          &middot; <a href="../tests/{{ t.name }}.html" class="meta">history</a>
+          {% if t.phase %}&middot; <span class="meta">artifacts from {{ t.phase }} phase</span>{% endif %}
+        </summary>
+        {% if t.out_bad %}<h4 class="art">.out.bad</h4><pre class="art">{{ t.out_bad }}</pre>{% endif %}
+        {% if t.dmesg %}<h4 class="art">.dmesg</h4><pre class="art">{{ t.dmesg }}</pre>{% endif %}
+        {% if not t.out_bad and not t.dmesg %}
+        <p class="meta">(no artifacts captured for this run)</p>
+        {% endif %}
+      </details>
+      {% endfor %}
+    {% else %}
+      <div class="test-grid">
+        {% for t in g.tests %}
+          <a href="../tests/{{ t.name }}.html"><code>{{ t.name }}</code></a>
+        {% endfor %}
+      </div>
+    {% endif %}
   {% else %}
   <p class="meta">(none)</p>
   {% endif %}
@@ -376,9 +441,54 @@ def write_file(path, content):
     path.write_text(content)
 
 
-def group_latest_tests(latest):
-    """Group the latest run's tests by verdict.  Returns a list of dicts
-    suitable for the BRANCH_TMPL `groups` variable, ordered worst→best."""
+def anchor_for(test_name):
+    """Stable URL-fragment id for a test on the per-run page.  Slashes
+    are not valid in fragments without escaping, so map them to '-'.
+    fstests test names are [a-z]+/[0-9]+ so this is unambiguous."""
+    return "t-" + test_name.replace("/", "-")
+
+
+def load_run_artifacts(branch_dir, run_id, test_name):
+    """Load failure artifacts (.out.bad, .dmesg) for one (run, test) tuple
+    off disk.  Layout written by ssh-one.sh + test/run:
+
+        <branch_dir>/<run_id>.details/<phase>/<group>/<num>.{out.bad,dmesg}
+
+    Prefer the parallel phase since that's the first attempt and the one
+    with the most diagnostic signal (retry runs in a fresh VM with a
+    longer timeout and may pass).  Returns a dict with 'phase', 'out_bad',
+    'dmesg' keys (each possibly None), or None if nothing was captured.
+
+    Read with errors='replace' because fstests output can include
+    non-utf-8 bytes from kernel splats etc.  Files are capped indirectly
+    by the CSS 'max-height: 400px; overflow: auto' on pre.art -- we
+    embed the full contents and let the browser scroll."""
+    details_root = branch_dir / f"{run_id}.details"
+    if not details_root.is_dir():
+        return None
+    group, num = test_name.split("/", 1)
+    for phase in ("parallel", "retry"):
+        phase_dir = details_root / phase / group
+        out_bad = phase_dir / f"{num}.out.bad"
+        dmesg = phase_dir / f"{num}.dmesg"
+        if out_bad.exists() or dmesg.exists():
+            return {
+                "phase": phase,
+                "out_bad": out_bad.read_text(errors="replace") if out_bad.exists() else None,
+                "dmesg": dmesg.read_text(errors="replace") if dmesg.exists() else None,
+            }
+    return None
+
+
+def group_latest_tests(latest, branch_dir=None, run_id=None):
+    """Group a run's tests by verdict.  Returns a list of dicts suitable
+    for the `groups` template variable, ordered worst→best.
+
+    When branch_dir+run_id are provided, fail/hang/flake entries are
+    enriched with on-disk artifacts (out.bad, dmesg) so the per-run
+    page can render them inline.  Without those args we return just
+    name+anchor (used by the branch index, which doesn't show inline
+    details and doesn't need the disk reads)."""
     by_verdict = {}
     for tname, t in latest.get("tests", {}).items():
         by_verdict.setdefault(t.get("verdict", "?"), []).append(tname)
@@ -393,17 +503,30 @@ def group_latest_tests(latest):
             out += by_verdict.get(v, [])
         return sorted(out)
 
+    show_arts = branch_dir is not None and run_id is not None
+
+    def enrich(tnames, with_arts):
+        out = []
+        for tname in tnames:
+            e = {"name": tname, "anchor": anchor_for(tname)}
+            if with_arts and show_arts:
+                arts = load_run_artifacts(branch_dir, run_id, tname)
+                if arts:
+                    e.update(arts)
+            out.append(e)
+        return out
+
     return [
-        {"key": "fail",  "label": "fail",       "open": True,
-         "tests": pool("fail", "persistent-fail")},
-        {"key": "hang",  "label": "hang",       "open": True,
-         "tests": pool("hang", "persistent-hang")},
-        {"key": "flake", "label": "flake",      "open": True,
-         "tests": pool("flake", "flake-from-timeout")},
-        {"key": "skip",  "label": "skip",       "open": False,
-         "tests": pool("skip")},
-        {"key": "pass",  "label": "pass",       "open": False,
-         "tests": pool("pass")},
+        {"key": "fail",  "label": "fail",  "open": True,  "with_details": show_arts,
+         "tests": enrich(pool("fail", "persistent-fail"), True)},
+        {"key": "hang",  "label": "hang",  "open": True,  "with_details": show_arts,
+         "tests": enrich(pool("hang", "persistent-hang"), True)},
+        {"key": "flake", "label": "flake", "open": True,  "with_details": show_arts,
+         "tests": enrich(pool("flake", "flake-from-timeout"), True)},
+        {"key": "skip",  "label": "skip",  "open": False, "with_details": False,
+         "tests": enrich(pool("skip"), False)},
+        {"key": "pass",  "label": "pass",  "open": False, "with_details": False,
+         "tests": enrich(pool("pass"), False)},
     ]
 
 
@@ -494,7 +617,12 @@ def render_branch(env, branch, branch_dir, out_dir):
             sha=kernel_sha(run_id), run_id=run_id,
             ts=d.get("ended", "?"),
             summary=d.get("summary", {}),
-            groups=group_latest_tests(d),
+            # Pass branch_dir + run_id so fail/hang/flake entries get
+            # enriched with the on-disk .out.bad / .dmesg artifacts.
+            # Branch page (line 438 above) deliberately does not pass
+            # these -- it shows test names only, so we don't pay the
+            # disk-read cost on the index.
+            groups=group_latest_tests(d, branch_dir, run_id),
         )
         write_file(branch_out / "runs" / f"{run_id}.html", page)
 
