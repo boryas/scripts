@@ -50,13 +50,8 @@ echo "for-next prev=$prev_sha new=$new_sha (short=$short_sha)"
 
 # Run the test pipeline.  test/run handles git checkout (no-op since we
 # already checked out btrfs/for-next), build, parallel + retry, digest,
-# and state fold.
+# state fold, and (via its publish tail step) pushing to s1 and
+# re-rendering the site there.
 rcli fstests-utils test for-next
-
-# Regenerate the static HTML dashboards and push them to s1.  The
-# rsync target is read from $HTML_RSYNC_TARGET; on success the new
-# digest from this run is visible at https://bur.io/fstests/.
-HTML_RSYNC_TARGET="${HTML_RSYNC_TARGET:-s1:/usr/local/share/site/static/html/fstests/}" \
-	rcli fstests-utils html for-next
 
 echo "cron/for-next: done"

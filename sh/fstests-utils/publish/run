@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# publish <branch>
+#
+# Push a freshly-completed run to s1 and re-render the site there.
+# Three steps:
+#   1. rsync the fstests-utils scripts dir to s1 so it renders with current code
+#   2. rsync the branch's digests/details/history to s1's persistent volume
+#   3. ssh s1 to invoke html/run, which writes directly into the nginx-served dir
+#
+# Invoked at the tail of `test/run` so every run automatically updates the site.
+# Safe to run by hand for ad-hoc republishes (e.g. after iterating on the
+# rendering code).
+set -euo pipefail
+
+if [ $# -ne 1 ]; then
+	echo "usage: publish <branch>" >&2
+	exit 1
+fi
+branch=$1
+
+S1_HOST="${S1_HOST:-s1}"
+S1_HTML_DIR="${S1_HTML_DIR:-/usr/local/share/site/static/html/fstests}"
+SCRIPTS_SRC="$HOME/repos/scripts/sh/fstests-utils/"
+SCRIPTS_DST="$S1_HOST:repos/scripts/sh/fstests-utils/"
+BRANCH_SRC="$HOME/fstests-results/$branch/"
+BRANCH_DST="$S1_HOST:fstests-results/$branch/"
+
+echo "publish: rsync scripts -> $SCRIPTS_DST"
+rsync -az --delete "$SCRIPTS_SRC" "$SCRIPTS_DST"
+
+echo "publish: rsync $branch digests -> $BRANCH_DST"
+rsync -az "$BRANCH_SRC" "$BRANCH_DST"
+
+echo "publish: rendering on $S1_HOST -> $S1_HTML_DIR"
+ssh "$S1_HOST" "HTML_DIR='$S1_HTML_DIR' ~/repos/scripts/sh/fstests-utils/html/run"

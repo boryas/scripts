@@ -19,11 +19,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+import yaml
 from jinja2 import Environment, BaseLoader, select_autoescape
 
 HOME = Path.home()
 RESULTS_DIR = HOME / "fstests-results"
-HTML_DIR = RESULTS_DIR / "html"
+HTML_DIR = Path(os.environ.get("HTML_DIR") or RESULTS_DIR / "html")
 LAST_N_RUNS = 10  # for the "breakages in last N runs" section
 HISTORY_LIMIT = 30  # rows on per-test history page
 
@@ -31,6 +32,55 @@ HISTORY_LIMIT = 30  # rows on per-test history page
 # are reported separately -- worth surfacing but not a clean fail.
 BAD_VERDICTS = {"persistent-fail", "persistent-hang", "fail", "hang"}
 FLAKE_VERDICTS = {"flake", "flake-from-timeout"}
+# Verdicts considered "the test ran cleanly" for known-failure transition
+# detection.  If a listed-as-known test produces one of these, it's an
+# improvement we want to surface.
+GOOD_VERDICTS = {"pass", "skip"}
+
+# KNOWN_FAILURES.yaml lives alongside this script's parent (the
+# fstests-utils/ root).  Loaded once at startup; missing file is fine.
+KNOWN_FAILURES_PATH = Path(__file__).resolve().parent.parent / "KNOWN_FAILURES.yaml"
+
+
+def load_known_failures():
+    """Return {test_name: {category, status, explanation, ...}}.
+    Empty dict if the file is missing or unparseable -- the page still
+    renders, it just won't have the known-failures bucket."""
+    if not KNOWN_FAILURES_PATH.exists():
+        return {}
+    try:
+        with open(KNOWN_FAILURES_PATH) as f:
+            entries = yaml.safe_load(f) or []
+    except yaml.YAMLError:
+        return {}
+    return {e["test"]: e for e in entries if "test" in e}
+
+
+KNOWN_FAILURES = load_known_failures()
+
+
+def adjusted_summary(digest):
+    """Return a copy of the digest's summary counts with known-failure
+    tests subtracted from the fail/hang totals and surfaced as a new
+    `known` count.  Unlisted tests are unchanged -- the headline
+    fail/hang numbers then reflect *unknown* problems only."""
+    s = dict(digest.get("summary", {}))
+    if not KNOWN_FAILURES:
+        return s
+    tests = digest.get("tests", {})
+    known_fail = known_hang = 0
+    for tname, meta in KNOWN_FAILURES.items():
+        v = tests.get(tname, {}).get("verdict")
+        if v in ("fail", "persistent-fail"):
+            known_fail += 1
+        elif v in ("hang", "persistent-hang"):
+            known_hang += 1
+    s["fail"] = max(0, s.get("fail", 0) - known_fail)
+    s["persistent-fail"] = max(0, s.get("persistent-fail", 0))
+    s["hang"] = max(0, s.get("hang", 0) - known_hang)
+    s["persistent-hang"] = max(0, s.get("persistent-hang", 0))
+    s["known"] = known_fail + known_hang
+    return s
 
 CSS = """\
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -53,6 +103,14 @@ tr:hover { background: #fbfbfb; }
 .summary .card.bad .num { color: #c0392b; }
 .summary .card.flake .num { color: #d68910; }
 .summary .card.ok .num { color: #27ae60; }
+.summary .card.known .num { color: #7f8c8d; }
+.known-row td.cat { font-weight: 600; color: #555; vertical-align: top; }
+.known-row td.expl { color: #555; font-size: 0.9em; white-space: pre-wrap; }
+.known-row td.status { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                       font-size: 0.78em; color: #777; }
+.transitions { background: #e8f8f1; border: 1px solid #b5e6cf; padding: 0.6em 1em;
+               border-radius: 6px; margin: 0.5em 0; }
+.transitions h4 { margin: 0 0 0.3em; color: #27ae60; }
 .verdict { font-size: 0.78em; padding: 0.08em 0.5em; border-radius: 3px;
            background: #eee; color: #444; display: inline-block;
            font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -178,6 +236,7 @@ window.addEventListener('load', _ftOpenTargetDetails);
   <a class="card flake" href="#g-flake"><div class="num">{{ (summary.flake or 0) + (summary['flake-from-timeout'] or 0) }}</div><div class="label">flake</div></a>
   <a class="card bad"  href="#g-fail"><div class="num">{{ (summary.fail or 0) + (summary['persistent-fail'] or 0) }}</div><div class="label">fail</div></a>
   <a class="card bad"  href="#g-hang"><div class="num">{{ (summary.hang or 0) + (summary['persistent-hang'] or 0) }}</div><div class="label">hang</div></a>
+  <a class="card known" href="#g-known"><div class="num">{{ summary.known or 0 }}</div><div class="label">known</div></a>
 </div>
 
 {% for g in groups %}
@@ -331,11 +390,24 @@ window.addEventListener('load', _ftOpenTargetDetails);
   <a class="card flake" href="#g-flake"><div class="num">{{ (summary.flake or 0) + (summary['flake-from-timeout'] or 0) }}</div><div class="label">flake</div></a>
   <a class="card bad"  href="#g-fail"><div class="num">{{ (summary.fail or 0) + (summary['persistent-fail'] or 0) }}</div><div class="label">fail</div></a>
   <a class="card bad"  href="#g-hang"><div class="num">{{ (summary.hang or 0) + (summary['persistent-hang'] or 0) }}</div><div class="label">hang</div></a>
+  <a class="card known" href="#g-known"><div class="num">{{ summary.known or 0 }}</div><div class="label">known</div></a>
 </div>
 
 {% for g in groups %}
 <details id="g-{{ g.key }}" {% if g.open %}open{% endif %}>
   <summary>{{ g.tests|length }} {{ g.label }}</summary>
+  {% if g.key == 'known' and g.transitions %}
+    <div class="transitions">
+      <h4>{{ g.transitions|length }} known-failure test(s) transitioned this run</h4>
+      <div class="test-grid">
+        {% for t in g.transitions %}
+          <a href="../tests/{{ t.name }}.html"><code>{{ t.name }}</code></a>
+          <span class="verdict {{ t.verdict }}">{{ t.verdict }}</span>
+        {% endfor %}
+      </div>
+      <p class="meta">Consider demoting these from KNOWN_FAILURES.yaml after a few stable runs.</p>
+    </div>
+  {% endif %}
   {% if g.tests %}
     {% if g.with_details %}
       {% for t in g.tests %}
@@ -352,6 +424,35 @@ window.addEventListener('load', _ftOpenTargetDetails);
         {% endif %}
       </details>
       {% endfor %}
+    {% elif g.key == 'known' and g.known_groups %}
+      {% for kg in g.known_groups %}
+      <h3>{{ kg.category }} ({{ kg.tests|length }})</h3>
+      <table>
+        <tr><th>test</th><th>status</th><th>explanation</th></tr>
+        {% for t in kg.tests %}
+        <tr class="known-row">
+          <td class="cat"><a href="../tests/{{ t.name }}.html"><code>{{ t.name }}</code></a></td>
+          <td class="status">{{ t.status }}</td>
+          <td class="expl">{{ t.explanation }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% endfor %}
+    {% elif g.key == 'skip' and g.skip_buckets %}
+      <table>
+        <tr><th>count</th><th>reason</th><th>tests</th></tr>
+        {% for b in g.skip_buckets %}
+        <tr>
+          <td>{{ b.tests|length }}</td>
+          <td>{{ b.reason }}</td>
+          <td><details><summary>show {{ b.tests|length }}</summary>
+            <div class="test-grid">
+              {% for tname in b.tests %}<a href="../tests/{{ tname }}.html"><code>{{ tname }}</code></a>{% endfor %}
+            </div>
+          </details></td>
+        </tr>
+        {% endfor %}
+      </table>
     {% else %}
       <div class="test-grid">
         {% for t in g.tests %}
@@ -504,6 +605,15 @@ def group_latest_tests(latest, branch_dir=None, run_id=None):
         return sorted(out)
 
     show_arts = branch_dir is not None and run_id is not None
+    test_entries = latest.get("tests", {})
+
+    def skip_reason(tname):
+        """Pull reason from parallel entry (preferred) or retry entry.
+        Returns None for digests written before skip_reason was wired in."""
+        t = test_entries.get(tname, {})
+        p = t.get("parallel") or {}
+        r = t.get("retry") or {}
+        return p.get("skip_reason") or r.get("skip_reason")
 
     def enrich(tnames, with_arts):
         out = []
@@ -516,15 +626,78 @@ def group_latest_tests(latest, branch_dir=None, run_id=None):
             out.append(e)
         return out
 
+    skip_tests = pool("skip")
+    # Bucket skips by reason for the taxonomy view.  When no digest carries
+    # skip_reason (old runs pre-wiring), buckets stays empty and the
+    # template falls back to the plain test grid.
+    buckets = {}
+    for tname in skip_tests:
+        r = skip_reason(tname)
+        if r:
+            buckets.setdefault(r, []).append(tname)
+    # Sorted: largest bucket first, then alphabetical reason for stability.
+    skip_buckets = [
+        {"reason": r, "tests": sorted(ts)}
+        for r, ts in sorted(buckets.items(), key=lambda x: (-len(x[1]), x[0]))
+    ]
+
+    # Split bad-verdict tests into "known" (listed in KNOWN_FAILURES.yaml)
+    # and "unknown" (the real signal).  Known entries are kept off the
+    # main fail/hang buckets and rendered in a dedicated section grouped
+    # by category.
+    bad_pool = pool("fail", "persistent-fail", "hang", "persistent-hang")
+    bad_unknown = [t for t in bad_pool if t not in KNOWN_FAILURES]
+    bad_known = [t for t in bad_pool if t in KNOWN_FAILURES]
+
+    # Transition detection: if a known-failures test produced a good or
+    # flake verdict in this run, surface it so we can decide whether to
+    # demote the entry.  Iterate the YAML once so each listed test gets
+    # checked, not just the ones currently bad.
+    transitions = []
+    for tname, meta in KNOWN_FAILURES.items():
+        v = test_entries.get(tname, {}).get("verdict")
+        if v in GOOD_VERDICTS or v in FLAKE_VERDICTS:
+            transitions.append({"name": tname, "anchor": anchor_for(tname),
+                                "verdict": v,
+                                "category": meta.get("category", ""),
+                                "status": meta.get("status", "")})
+    transitions.sort(key=lambda x: x["name"])
+
+    # Group known-bad by category for the bucket.
+    known_by_cat = {}
+    for tname in bad_known:
+        cat = KNOWN_FAILURES[tname].get("category", "uncategorized")
+        known_by_cat.setdefault(cat, []).append(tname)
+    known_groups = []
+    for cat, tnames in sorted(known_by_cat.items(), key=lambda x: (-len(x[1]), x[0])):
+        rows = []
+        for tname in sorted(tnames):
+            meta = KNOWN_FAILURES[tname]
+            rows.append({"name": tname, "anchor": anchor_for(tname),
+                         "status": meta.get("status", ""),
+                         "explanation": meta.get("explanation", "").strip(),
+                         "investigated": meta.get("investigated", "")})
+        known_groups.append({"category": cat, "tests": rows})
+
+    # Split bad-unknown back by verdict for the fail/hang buckets.
+    unknown_set = set(bad_unknown)
+    def filt(names):
+        return [n for n in names if n in unknown_set]
+
     return [
         {"key": "fail",  "label": "fail",  "open": True,  "with_details": show_arts,
-         "tests": enrich(pool("fail", "persistent-fail"), True)},
+         "tests": enrich(filt(pool("fail", "persistent-fail")), True)},
         {"key": "hang",  "label": "hang",  "open": True,  "with_details": show_arts,
-         "tests": enrich(pool("hang", "persistent-hang"), True)},
+         "tests": enrich(filt(pool("hang", "persistent-hang")), True)},
         {"key": "flake", "label": "flake", "open": True,  "with_details": show_arts,
          "tests": enrich(pool("flake", "flake-from-timeout"), True)},
+        {"key": "known", "label": "known failures", "open": False, "with_details": False,
+         "tests": enrich(bad_known, False),
+         "known_groups": known_groups,
+         "transitions": transitions},
         {"key": "skip",  "label": "skip",  "open": False, "with_details": False,
-         "tests": enrich(pool("skip"), False)},
+         "tests": enrich(skip_tests, False),
+         "skip_buckets": skip_buckets},
         {"key": "pass",  "label": "pass",  "open": False, "with_details": False,
          "tests": enrich(pool("pass"), False)},
     ]
@@ -578,7 +751,7 @@ def render_branch(env, branch, branch_dir, out_dir):
         run_count=len(sha_window),
         window_oldest=window_oldest,
         window_newest=window_newest,
-        summary=latest.get("summary", {}),
+        summary=adjusted_summary(latest),
         groups=groups,
         last_n=LAST_N_RUNS,
         breakages=sorted_breakages,
@@ -616,7 +789,7 @@ def render_branch(env, branch, branch_dir, out_dir):
             css=CSS, branch=branch,
             sha=kernel_sha(run_id), run_id=run_id,
             ts=d.get("ended", "?"),
-            summary=d.get("summary", {}),
+            summary=adjusted_summary(d),
             # Pass branch_dir + run_id so fail/hang/flake entries get
             # enriched with the on-disk .out.bad / .dmesg artifacts.
             # Branch page (line 438 above) deliberately does not pass

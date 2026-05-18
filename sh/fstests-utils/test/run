@@ -55,13 +55,20 @@ if [ ! -x "$B/up" ]; then
 fi
 
 cd "$kernel_src"
-# Check out the requested branch, but fall back to detached HEAD if the
-# branch is already checked out in another worktree (the cron uses the
-# linux-fnext worktree alongside the user's main linux repo; the local
-# `for-next` branch can only be held in one place at a time).
-if ! git checkout "$patch_name" 2>/dev/null; then
-	echo "branch $patch_name is claimed by another worktree; detaching at it instead"
-	git checkout --detach "$patch_name"
+# If HEAD is detached, the caller has already positioned us at a
+# specific commit (e.g. cron/for-next pins to `btrfs/for-next`'s
+# current tip).  Don't "switch to $patch_name" -- that resolves to
+# the local branch, which may lag the remote, and would roll the
+# worktree back to a different commit than the caller chose.
+# When HEAD is on a branch, switch to $patch_name as before, with
+# a detach fallback for the "branch is held by another worktree"
+# case (e.g. cron's worktree wants for-next while the main repo
+# already has the local for-next branch checked out).
+if git symbolic-ref -q HEAD >/dev/null; then
+	if ! git checkout "$patch_name" 2>/dev/null; then
+		echo "branch $patch_name is claimed by another worktree; detaching at it instead"
+		git checkout --detach "$patch_name"
+	fi
 fi
 make olddefconfig
 # tarzst-pkg builds the kernel and packages it into
@@ -268,6 +275,13 @@ echo
 echo "=== writing structured digest ==="
 rcli fstests-utils digest "$patch_name" "$run_id"
 rcli fstests-utils state "$patch_name"
+
+# Push to s1: ships current scripts + this branch's digests/details, then
+# re-renders the site directly into the nginx-served dir.  Replaces the
+# old "render locally, rsync HTML" path; s1 is now the canonical store.
+echo
+echo "=== publishing to s1 ==="
+rcli fstests-utils publish "$patch_name"
 
 echo
 echo "=== run timing ==="

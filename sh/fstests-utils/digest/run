@@ -44,15 +44,22 @@ START_RE    = re.compile(r"^(\S+) (\S+/\d+)$")
 # silently misverdict the test.
 FAIL_RE     = re.compile(r"^Failures: (\S+/\d+)(?: dur=\d+s)?$")
 NOTRUN_RE   = re.compile(r"^Not run: (\S+/\d+)(?: dur=\d+s)?$")
+# Per-test skip reason emitted by ssh-one.sh as ./check's verbatim
+# "<test>  [not run] <reason>" line.  Captured for the most recent
+# pending Ran: by test name (skips also get a Ran: line first).
+SKIP_REASON_RE = re.compile(r"^(\S+/\d+)\s+\[not run\]\s*(.+)$")
 
 
 def extract(path):
-    """Return {test_name: {"result": str, "vm": str, "dur": int|None}}.
+    """Return {test_name: {"result": str, "vm": str, "dur": int|None,
+                           "skip_reason": str|None (skips only)}}.
     result ∈ {pass, fail, skip, timeout}.  dur is wall-clock seconds
     captured from "dur=Ns" tail on Ran/Timeout lines; None for older
-    logs without the suffix."""
+    logs without the suffix.  skip_reason is the text after "[not run]"
+    from ./check; present only when result == "skip"."""
     out = {}
-    pending = None  # (vm, test, result, dur) -- the most recent Ran: awaiting refinement
+    # pending: (vm, test, result, dur, skip_reason)
+    pending = None
     with open(path) as f:
         for line in f:
             line = line.rstrip("\n")
@@ -60,17 +67,15 @@ def extract(path):
             m = RAN_RE.match(line)
             if m:
                 if pending is not None:
-                    out[pending[1]] = {"result": pending[2], "vm": pending[0],
-                                       "dur": pending[3]}
+                    flush(out, pending)
                 vm, test, _, dur = m.groups()
-                pending = (vm, test, "pass", int(dur) if dur else None)
+                pending = (vm, test, "pass", int(dur) if dur else None, None)
                 continue
 
             m = TIMEOUT_RE.match(line)
             if m:
                 if pending is not None:
-                    out[pending[1]] = {"result": pending[2], "vm": pending[0],
-                                       "dur": pending[3]}
+                    flush(out, pending)
                 vm, test, _, dur = m.groups()
                 out[test] = {"result": "timeout", "vm": vm,
                              "dur": int(dur) if dur else None}
@@ -79,26 +84,39 @@ def extract(path):
 
             m = FAIL_RE.match(line)
             if m and pending is not None and m.group(1) == pending[1]:
-                pending = (pending[0], pending[1], "fail", pending[3])
+                pending = (pending[0], pending[1], "fail", pending[3], pending[4])
                 continue
 
             m = NOTRUN_RE.match(line)
             if m and pending is not None and m.group(1) == pending[1]:
-                pending = (pending[0], pending[1], "skip", pending[3])
+                pending = (pending[0], pending[1], "skip", pending[3], pending[4])
+                continue
+
+            m = SKIP_REASON_RE.match(line)
+            if m and pending is not None and m.group(1) == pending[1]:
+                pending = (pending[0], pending[1], pending[2], pending[3],
+                           m.group(2).strip())
                 continue
 
             m = START_RE.match(line)
             if m:
                 # Bare "vm test" start line; flush prior pending if it exists.
                 if pending is not None:
-                    out[pending[1]] = {"result": pending[2], "vm": pending[0],
-                                       "dur": pending[3]}
+                    flush(out, pending)
                     pending = None
                 continue
     if pending is not None:
-        out[pending[1]] = {"result": pending[2], "vm": pending[0],
-                           "dur": pending[3]}
+        flush(out, pending)
     return out
+
+
+def flush(out, pending):
+    """Write a finalized pending tuple into out."""
+    vm, test, result, dur, reason = pending
+    entry = {"result": result, "vm": vm, "dur": dur}
+    if result == "skip" and reason:
+        entry["skip_reason"] = reason
+    out[test] = entry
 
 
 def verdict(p, r):
