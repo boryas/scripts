@@ -303,8 +303,8 @@ else
 fi
 echo "$retry" | sed 's/^/    /'
 
-retry_cfg="$retry_file.retry.yaml"
-retry_tasks="$retry_file.retry.tasks"
+retry_cfg="$out_file.retry.yaml"
+retry_tasks="$out_file.retry.tasks"
 echo "$retry" > "$retry_tasks"
 cat > "$retry_cfg" <<EOF
 workers:
