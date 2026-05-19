@@ -12,20 +12,22 @@
 # Schema (all fields optional, mix-and-match):
 #
 #   slow: true
-#       Promote to slow-first dispatch.  Just a hint to the scheduler;
-#       no effect on whether the test runs.
+#       Promote to slow-first dispatch.  Just an ordering hint; no
+#       effect on whether the test runs.
 #
-#   schedule: <policy>
-#       Special dispatch policy.  Implies slow=true.  Values:
-#         persistent_hang  -- skipped entirely.  test/run synthesizes a
-#                             parallel-phase timeout entry; the digest's
-#                             verdict logic produces "hang" automatically
-#                             (parallel=timeout + no retry data => hang).
-#                             Saves ~30 minutes per cron run.
-#         para_skip        -- skipped in the parallel phase; added to the
-#                             retry list (where the 30m budget usually
-#                             completes them).
-#       (absent => normal dispatch in both phases)
+#   schedule: persistent_hang
+#       Skip this test entirely.  test/run synthesizes a parallel-phase
+#       timeout entry; digest verdicts as "timeout" via the no-attempt
+#       fallback.  Saves the wall-clock cost of running tests we know
+#       won't complete.
+#       (absent => normal dispatch)
+#
+#   timeout_budget: <humantime>
+#       Operator override for the per-test timeout (e.g. "30m").  When
+#       absent, the budget is derived from history.json:
+#         max(non-timeout dur over last ~10 runs) * 1.5, clamped to
+#         [60s, 30m].
+#       Fallback when no history exists: 8m.
 #
 #   category: <bucket>
 #       Investigation taxonomy.  html/run groups failures on the web UI
@@ -48,10 +50,12 @@
 #
 # Workflow notes:
 #
-# * Promote to schedule: para_skip after 2+ consecutive parallel-phase
-#   timeouts that the retry phase eventually completes.
-# * Promote to schedule: persistent_hang after 2+ consecutive retry-phase
-#   30m caps.
+# * Set timeout_budget when a test reliably exceeds the auto-derived
+#   value (the derivation can't tell "test capped at 8m" from "test
+#   completed in 8m", so once a test starts timing out, encode the
+#   real budget here until enough non-timeout history accumulates).
+# * Promote to schedule: persistent_hang after 2+ consecutive 30m+
+#   timeouts (the test isn't worth waiting on).
 # * Add a category/status entry after 3+ consecutive failures with the
 #   same root cause.  Demote (delete or status: fixed-pending-verify)
 #   once the underlying issue is resolved.
@@ -69,24 +73,26 @@ generic/166:
   schedule: persistent_hang
 
 # ---------------------------------------------------------------------------
-# Parallel-phase skip (>8m but ≤30m; finishes in retry)
+# Tests reliably needing >8m but ≤30m -- give them the bigger budget up
+# front (the old para_skip-then-retry dance was eliminated when retry
+# folded into a single dispatch).
 # ---------------------------------------------------------------------------
 
 btrfs/010:
   slow: true
-  schedule: para_skip
+  timeout_budget: 30m
 
 generic/334:
   slow: true
-  schedule: para_skip
+  timeout_budget: 30m
 
 generic/415:
   slow: true
-  schedule: para_skip
+  timeout_budget: 30m
 
 generic/416:
   slow: true
-  schedule: para_skip
+  timeout_budget: 30m
 
 # ---------------------------------------------------------------------------
 # Slow but fits in the parallel 8m budget; dispatch first to start the

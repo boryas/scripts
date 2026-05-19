@@ -30,7 +30,10 @@ HISTORY_LIMIT = 30  # rows on per-test history page
 
 # Verdicts we care about for "broken" status.  flake & flake-from-timeout
 # are reported separately -- worth surfacing but not a clean fail.
-BAD_VERDICTS = {"persistent-fail", "persistent-hang", "fail", "hang"}
+# Post-#84 we emit just {pass, skip, fail, timeout}.  Pre-#84 digests
+# in history.json carry the older richer vocab; we keep recognizing
+# both so the page renders correctly across the rename boundary.
+BAD_VERDICTS = {"fail", "timeout", "persistent-fail", "persistent-hang", "hang"}
 FLAKE_VERDICTS = {"flake", "flake-from-timeout"}
 # Verdicts considered "the test ran cleanly" for known-failure transition
 # detection.  If a listed-as-known test produces one of these, it's an
@@ -79,18 +82,19 @@ def adjusted_summary(digest):
     if not KNOWN_FAILURES:
         return s
     tests = digest.get("tests", {})
-    known_fail = known_hang = 0
+    known_fail = known_timeout = 0
     for tname, meta in KNOWN_FAILURES.items():
         v = tests.get(tname, {}).get("verdict")
         if v in ("fail", "persistent-fail"):
             known_fail += 1
-        elif v in ("hang", "persistent-hang"):
-            known_hang += 1
+        elif v in ("hang", "persistent-hang", "timeout"):
+            known_timeout += 1
     s["fail"] = max(0, s.get("fail", 0) - known_fail)
     s["persistent-fail"] = max(0, s.get("persistent-fail", 0))
-    s["hang"] = max(0, s.get("hang", 0) - known_hang)
+    s["hang"] = max(0, s.get("hang", 0) - known_timeout)
     s["persistent-hang"] = max(0, s.get("persistent-hang", 0))
-    s["known"] = known_fail + known_hang
+    s["timeout"] = max(0, s.get("timeout", 0))  # post-#84 vocab
+    s["known"] = known_fail + known_timeout
     return s
 
 CSS = """\
@@ -246,7 +250,7 @@ window.addEventListener('load', _ftOpenTargetDetails);
   <a class="card"      href="#g-skip"><div class="num">{{ summary.skip or 0 }}</div><div class="label">skip</div></a>
   <a class="card flake" href="#g-flake"><div class="num">{{ (summary.flake or 0) + (summary['flake-from-timeout'] or 0) }}</div><div class="label">flake</div></a>
   <a class="card bad"  href="#g-fail"><div class="num">{{ (summary.fail or 0) + (summary['persistent-fail'] or 0) }}</div><div class="label">fail</div></a>
-  <a class="card bad"  href="#g-hang"><div class="num">{{ (summary.hang or 0) + (summary['persistent-hang'] or 0) }}</div><div class="label">hang</div></a>
+  <a class="card bad"  href="#g-hang"><div class="num">{{ (summary.hang or 0) + (summary['persistent-hang'] or 0) + (summary.timeout or 0) }}</div><div class="label">timeout</div></a>
   <a class="card known" href="#g-known"><div class="num">{{ summary.known or 0 }}</div><div class="label">known</div></a>
 </div>
 
@@ -400,7 +404,7 @@ window.addEventListener('load', _ftOpenTargetDetails);
   <a class="card"      href="#g-skip"><div class="num">{{ summary.skip or 0 }}</div><div class="label">skip</div></a>
   <a class="card flake" href="#g-flake"><div class="num">{{ (summary.flake or 0) + (summary['flake-from-timeout'] or 0) }}</div><div class="label">flake</div></a>
   <a class="card bad"  href="#g-fail"><div class="num">{{ (summary.fail or 0) + (summary['persistent-fail'] or 0) }}</div><div class="label">fail</div></a>
-  <a class="card bad"  href="#g-hang"><div class="num">{{ (summary.hang or 0) + (summary['persistent-hang'] or 0) }}</div><div class="label">hang</div></a>
+  <a class="card bad"  href="#g-hang"><div class="num">{{ (summary.hang or 0) + (summary['persistent-hang'] or 0) + (summary.timeout or 0) }}</div><div class="label">timeout</div></a>
   <a class="card known" href="#g-known"><div class="num">{{ summary.known or 0 }}</div><div class="label">known</div></a>
 </div>
 

@@ -15,8 +15,8 @@ patch_name=$1
 shift
 
 # Phase timing: capture wall-clock at each major boundary so the run
-# reports build / provision / parallel / retry elapsed at the end.
-# Useful for "is the slow part the build or the tests" diagnostics.
+# reports build / provision / dispatch elapsed at the end.  Useful for
+# "is the slow part the build or the tests" diagnostics.
 run_start_s=$(date +%s)
 phase_start_s=$run_start_s
 phase_log=()
@@ -30,12 +30,10 @@ phase_end() {
 		"$(date +%H:%M:%S)" "$name" "$((elapsed/60))" "$((elapsed%60))" >&2
 }
 
-# Per-test timeout in the parallel phase; tests that exceed this are killed
-# and re-dispatched in the retry phase with the longer retry_timeout.
-para_timeout="${PARA_TIMEOUT:-8m}"
-# Longer ceiling for the retry phase; if a test still doesn't finish here
-# it's a real hang.
-retry_timeout="${RETRY_TIMEOUT:-30m}"
+# Maximum per-task budget envelope.  Sets wq-ssh's local-watchdog
+# ceiling; per-test budgets (encoded in the JSONL task stream) enforce
+# the real deadline via `timeout(1)` inside the cmd template.
+max_task_timeout="${MAX_TASK_TIMEOUT:-30m}"
 
 # Source kernel tree to build / boot from.  Defaults to the user's main
 # repo.  The for-next cron sets this to ~/repos/linux-fnext so the
@@ -88,12 +86,8 @@ phase_end build
 out_dir=~/fstests-results/$patch_name
 mkdir -p $out_dir
 out_file="$out_dir/$run_id"
-retry_file="$out_dir/$run_id.retry"
 # Per-run dir where the artifacts step rsyncs failure files (.out.bad,
-# .full, .dmesg) off the workers after each phase.  Sub-dirs parallel/
-# and retry/ keep the two phases' attempts of the same test separate (a
-# parallel-phase fail with a kernel splat is more interesting than the
-# same test passing on retry, but we want to keep both).
+# .full, .dmesg) off the workers after dispatch.
 details_dir="$out_dir/$run_id.details"
 
 # Dispatcher binary.  WQ_SSH_BIN lets cron / the for-next worktree
@@ -119,11 +113,9 @@ fi
 # droplets cost money); local-vm benefits too.  The scope-kill is
 # what prevents the "zombie para-fstests pounding deleted IPs for
 # an hour" failure mode that bit us earlier.
-para_scope="fstests-para-$$"
-retry_scope="fstests-retry-$$"
+para_scope="fstests-dispatch-$$"
 trap '
 	systemctl --user stop "$para_scope.scope"  2>/dev/null || true
-	systemctl --user stop "$retry_scope.scope" 2>/dev/null || true
 	"$B/down"
 ' EXIT INT TERM
 
@@ -131,19 +123,17 @@ trap '
 "$B/up"
 vms=($("$B/list"))
 all_vms=${vms[*]}
-echo "running fstests on: $all_vms (per-test timeout: $para_timeout)"
+echo "running fstests on: $all_vms (per-task timeouts derived from history; max envelope: $max_task_timeout)"
 for vm in $vms; do
 	"$B/ready" "$vm"
 done
 phase_end provision
 
 # Per-test operator metadata: consolidated in fstests-utils/tests.yaml,
-# queried via `rcli fstests-utils tests {slow,schedule,meta}`.
-# Schedules we care about here:
-#   - persistent_hang  -> skip in parallel AND retry (digest verdicts as "hang"
-#                         via the synthetic-timeout entry we append below)
-#   - para_skip        -> skip in parallel; force into retry list (longer budget)
-para_skip_tests=$(rcli fstests-utils tests schedule para_skip)
+# queried via `rcli fstests-utils tests {slow,schedule,budgets,meta}`.
+# schedule:persistent_hang means "don't even try"; the test gets a
+# synthetic timeout TaskDone appended to the JSONL after dispatch so
+# the digest still has an entry for it.
 persistent_hang_tests=$(rcli fstests-utils tests schedule persistent_hang)
 slow_tests=$(rcli fstests-utils tests slow)
 
@@ -156,13 +146,11 @@ para_tests=$(ssh "${vms[0]}" 'cd /mnt/repos/fstests; sudo ./check -E EXCLUDE -n 
 # (grep -oE strips trailing whitespace; check -n pads test names with
 #  spaces for column-alignment, which breaks naive ^...$ regex matches.)
 nbefore=$(echo "$para_tests" | wc -l)
-skip_set=$(printf '%s\n%s\n' "$para_skip_tests" "$persistent_hang_tests" \
-	| grep -v '^$' | sort -u)
-if [ -n "$skip_set" ]; then
-	para_tests=$(comm -23 <(echo "$para_tests") <(echo "$skip_set"))
+if [ -n "$persistent_hang_tests" ]; then
+	para_tests=$(comm -23 <(echo "$para_tests") <(echo "$persistent_hang_tests" | sort -u))
 fi
 nafter=$(echo "$para_tests" | wc -l)
-echo "parallel-phase test list: $nbefore -> $nafter tests after filtering"
+echo "dispatch test list: $nbefore -> $nafter tests after filtering"
 
 # Slow-first dispatch: tests tagged slow:true in tests.yaml get the
 # front of the queue so the long tail starts running on its own worker
@@ -175,209 +163,52 @@ if [ -n "$slow_tests" ]; then
 fi
 
 # Save the resolved YAML + task list next to the JSONL for forensic
-# value (you can eyeball what the run actually saw).  The task list
-# itself is fed to wq-ssh on stdin, not referenced from the YAML --
-# pulling it from a stdin pipe and a yaml field would be redundant.
+# value (you can eyeball what the run actually saw).
 #
-# cmd places sudo *outside* timeout so timeout is in the position to
-# kill ./check's pgroup.  The opposite arrangement (timeout outside
-# sudo) leaks: sudo starts ./check in a fresh session, so timeout's
-# SIGTERM to its bash child never reaches ./check, and the scratch
-# device stays mounted long enough to cascade-poison subsequent tests
-# on the same worker.  wq-ssh itself never wraps user commands -- this
-# correctness is the cmd template's responsibility.  The local watchdog
-# (task_timeout + task_grace + 5s) is wq-ssh's only enforcement layer.
-parallel_cfg="$out_file.parallel.yaml"
-parallel_tasks="$out_file.parallel.tasks"
-echo "$para_tests" > "$parallel_tasks"
-cat > "$parallel_cfg" <<EOF
+# Each task line carries its own `timeout:` field, derived from
+# tests.yaml + history.  wq-ssh exports that as $TASK_TIMEOUT on the
+# worker; the cmd template uses it to drive a per-test timeout(1)
+# invocation.
+#
+# cmd places sudo *outside* timeout so timeout owns the process group
+# and SIGTERM reaches ./check.  The opposite arrangement (timeout
+# outside sudo) leaks because sudo creates a fresh session.
+run_cfg="$out_file.yaml"
+run_tasks="$out_file.tasks"
+echo "$para_tests" | rcli fstests-utils tests budgets "$patch_name" > "$run_tasks"
+cat > "$run_cfg" <<EOF
 workers:
 $(printf '  - %s\n' "${vms[@]}")
-cmd: 'cd /mnt/repos/fstests && sudo TERM=dumb timeout -k 30s $para_timeout ./check -E EXCLUDE {}'
-task_timeout: $para_timeout
-task_grace: 30s
-dead_threshold: 3
-probe_interval: 5s
+cmd: 'cd /mnt/repos/fstests && sudo TERM=dumb timeout -k 30s "\$TASK_TIMEOUT" ./check -E EXCLUDE {}'
+task_timeout: $max_task_timeout
 EOF
 
-# Parallel phase: dispatch via wq-ssh, in a cgroup so the trap can
+# Dispatch: single phase, per-task budgets, in a cgroup so the trap can
 # teardown every descendant on exit.  JSONL goes to $out_file;
-# digest/run autodetects the format.
+# digest/run reads it.
 systemd-run --user --scope --quiet --unit="$para_scope" \
 	--property=TimeoutStopSec=10s \
-	--description="fstests parallel ($patch_name @ $hash)" \
-	-- "$wq_ssh" "$parallel_cfg" \
-	< "$parallel_tasks" \
+	--description="fstests run ($patch_name @ $hash)" \
+	-- "$wq_ssh" "$run_cfg" \
+	< "$run_tasks" \
 	| tee "$out_file" >/dev/null
-phase_end parallel
+phase_end dispatch
 
 # Rsync failure artifacts off each worker for any failed/timed-out test.
-# Today's policy is post-pass (fstests' .dmesg file persists on disk on
-# the worker, so we don't lose dmesg context by waiting).  A future
-# wq-ssh --on-failure hook can move this to fire-and-forget at the
-# moment of failure if the dmesg-ring-rotation gap becomes a problem.
-rcli fstests-utils artifacts "$out_file" "$details_dir/parallel"
+# Post-pass: fstests' .dmesg file persists on disk on the worker, so we
+# don't lose dmesg context by waiting until the whole dispatch is done.
+rcli fstests-utils artifacts "$out_file" "$details_dir"
 
-# Synthesize "parallel-phase timeout" task_done events in the JSONL for
-# every test we just dropped from the parallel list, so the digest sees
-# them:
-#   schedule: para_skip       -> parallel=timeout + retry runs them ->
-#                                verdict computed normally (flake-from-
-#                                timeout / hang).
-#   schedule: persistent_hang -> parallel=timeout + retry skipped ->
-#                                digest's fallback verdict("timeout",
-#                                None) gives "hang".
-# worker="preknown" so digest's synthetic-event check can recognize
-# them and the per-test "vm" field is identifiable.
+# Synthesize task_done events for schedule:persistent_hang tests so
+# the digest sees them with verdict timeout.  No actual dispatch
+# happens; saves the cost of waiting on tests we know don't complete.
+# worker="preknown" so the digest's synthetic-event check can
+# recognize them.
 synth_ts=$(date -u +%FT%T.000Z)
-for tst in $skip_set; do
-	printf '{"event":"task_done","ts":"%s","worker":"preknown","task":"%s","exit":124,"signal":null,"timeout":true,"dur":0.0,"stdout":"","stdout_truncated":false,"stderr":"synthetic: parallel-skipped via tests.yaml","stderr_truncated":false,"transport_error":null}\n' \
+for tst in $persistent_hang_tests; do
+	printf '{"event":"task_done","ts":"%s","worker":"preknown","task":"%s","exit":124,"signal":null,"timeout":true,"dur":0.0,"stdout":"","stdout_truncated":false,"stderr":"synthetic: schedule:persistent_hang via tests.yaml","stderr_truncated":false,"transport_error":null}\n' \
 		"$synth_ts" "$tst" >> "$out_file"
 done
-
-# Build the retry list from the JSONL log: every task_done whose verdict
-# is fail/timeout (transport_error counted as timeout for retry purposes)
-# becomes a retry candidate.
-retry=$(python3 - "$out_file" <<'PY'
-import json, re, sys
-fail_re = re.compile(r"^Failures: ", re.M)
-out = set()
-with open(sys.argv[1]) as f:
-    for line in f:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            ev = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if ev.get("event") != "task_done":
-            continue
-        if ev.get("timeout") or ev.get("transport_error") \
-                or fail_re.search(ev.get("stdout", "")):
-            out.add(ev["task"])
-print("\n".join(sorted(out)))
-PY
-)
-
-# Don't actually run schedule:persistent_hang tests in retry.  The
-# digest will verdict them as "hang" via the no-retry-data fallback.
-if [ -n "$persistent_hang_tests" ]; then
-	retry=$(comm -23 <(echo "$retry" | sort -u) <(echo "$persistent_hang_tests" | sort -u))
-	echo "skipping retry for $(echo "$persistent_hang_tests" | grep -c .) persistent_hang tests"
-fi
-
-if [ -z "$retry" ]; then
-	echo "no failures or timeouts; nothing to re-run"
-	phase_end retry
-	echo
-	echo "=== run timing ==="
-	for entry in "${phase_log[@]}"; do
-		printf '  %-12s %4dm %02ds\n' "${entry%:*}" "$((${entry#*:}/60))" "$((${entry#*:}%60))"
-	done
-	total=$(( $(date +%s) - run_start_s ))
-	printf '  %-12s %4dm %02ds\n' "TOTAL" "$((total/60))" "$((total%60))"
-	exit 0
-fi
-
-# Retry parallelism.  local-vm's v0..v4 share the host, so dispatching
-# retries across all of them recreates exactly the noisy-neighbor
-# scenario the retry phase exists to escape -- a real flake gets a
-# clean shot only if the worker isn't fighting four siblings for CPU,
-# RAM, and IO.  Cloud workers are independent VMs, so parallel retry
-# is a free ~Nx speedup.  Default per backend; override with
-# $RETRY_WORKERS (space-separated list of worker names).
-retry_vms_str="${RETRY_WORKERS:-}"
-if [ -z "$retry_vms_str" ]; then
-	case "$workers" in
-		local-vm) retry_vms_str="${vms[0]}" ;;       # serial: first vm only
-		*)        retry_vms_str="${vms[*]}" ;;       # parallel: all workers
-	esac
-fi
-read -ra retry_vms <<<"$retry_vms_str"
-
-if [ ${#retry_vms[@]} -eq 1 ]; then
-	echo "re-running on ${retry_vms[0]} (per-test timeout: $retry_timeout):"
-else
-	echo "re-running across ${#retry_vms[@]} workers (per-test timeout: $retry_timeout):"
-fi
-echo "$retry" | sed 's/^/    /'
-
-retry_cfg="$out_file.retry.yaml"
-retry_tasks="$out_file.retry.tasks"
-echo "$retry" > "$retry_tasks"
-cat > "$retry_cfg" <<EOF
-workers:
-$(printf '  - %s\n' "${retry_vms[@]}")
-cmd: 'cd /mnt/repos/fstests && sudo TERM=dumb timeout -k 30s $retry_timeout ./check -E EXCLUDE {}'
-task_timeout: $retry_timeout
-task_grace: 30s
-dead_threshold: 3
-probe_interval: 5s
-EOF
-
-# Retry phase: dispatch the retry list in a fresh cgroup with the
-# longer per-test timeout, using whichever worker pool the parallelism
-# policy above chose.
-systemd-run --user --scope --quiet --unit="$retry_scope" \
-	--property=TimeoutStopSec=10s \
-	--description="fstests retry ($patch_name @ $hash)" \
-	-- "$wq_ssh" "$retry_cfg" \
-	< "$retry_tasks" \
-	| tee "$retry_file" >/dev/null
-phase_end retry
-
-# Same artifact rsync sweep for the retry phase.  Lands under details/retry
-# so a parallel splat that no longer reproduces on retry stays visible.
-rcli fstests-utils artifacts "$retry_file" "$details_dir/retry"
-
-# Final summary: pass / flake / persistent-fail / persistent-hang.
-# Derived entirely from the JSONL outputs to avoid maintaining a second
-# line-grammar parser here.
-echo
-echo "=== retry summary ==="
-python3 - "$out_file" "$retry_file" <<'PY' | sort
-import json, re, sys
-
-fail_re = re.compile(r"^Failures: ", re.M)
-
-def extract(path):
-    out = {}
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                ev = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if ev.get("event") != "task_done":
-                continue
-            test = ev["task"]
-            if ev.get("timeout") or ev.get("transport_error"):
-                out[test] = "timeout"
-            elif fail_re.search(ev.get("stdout", "")):
-                out[test] = "fail"
-            elif ev.get("exit") == 0:
-                out[test] = "pass"
-            else:
-                out[test] = "fail"
-    return out
-
-para  = extract(sys.argv[1])
-retry = extract(sys.argv[2])
-for tst, r in retry.items():
-    p = para.get(tst, "absent")
-    if   r == "timeout": verdict = "persistent-hang"
-    elif r == "fail":    verdict = "persistent-fail"
-    elif r == "pass":    verdict = "flake (passed on retry)"
-    else:                verdict = r
-    if   p == "timeout": orig = "timeout"
-    elif p == "fail":    orig = "failure"
-    else:                orig = "unknown"
-    print(f"  {tst:<20}  orig={orig}  retry={verdict}")
-PY
 
 # Produce the structured digest for long-term tracking.  Fold into the
 # branch's history.json so cross-run queries see this run.

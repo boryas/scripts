@@ -152,31 +152,23 @@ def test_mixed_workers():
           repr(out))
 
 
-def test_verdict_combinations():
-    cases = [
-        # (parallel, retry, expected verdict)
-        ("pass",    None,     "pass"),
-        ("skip",    None,     "skip"),
-        ("fail",    "pass",   "flake"),
-        ("fail",    "fail",   "fail"),
-        ("timeout", "pass",   "flake-from-timeout"),
-        ("timeout", "timeout","hang"),
-        ("timeout", "fail",   "fail"),
-        ("timeout", None,     "hang"),
-    ]
-    for p, r, want in cases:
-        got = digest.verdict(p, r)
-        check(f"verdict({p!r}, {r!r}) == {want!r}",
-              got == want, f"got {got!r}")
+def test_verdict_is_identity():
+    """Post-#84 verdict() just echoes the single-pass result.  Retry
+    phase is gone; flake / flake-from-timeout / hang are no longer
+    produced by digest -- cross-run flake detection lives in
+    `results flakes` (task #88)."""
+    for result in ("pass", "skip", "fail", "timeout"):
+        got = digest.verdict(result)
+        check(f"verdict({result!r}) == {result!r}",
+              got == result, f"got {got!r}")
 
 
-def test_synthetic_para_skip_entry():
-    """A 'preknown <test> Timeout: <test> dur=0s' line is what test/run
-    used to write for PARA_SKIP tests (line-grammar era; now JSONL).
-    Digest must parse it as a parallel timeout, no retry data ->
-    verdict = hang (treated as worst case until retry refines).  When
-    combined with an actual retry pass, verdict() should yield
-    'flake-from-timeout'."""
+def test_synthetic_persistent_hang_entry():
+    """A 'preknown <test> Timeout: <test> dur=0s' line is the legacy
+    line-grammar form of the synthetic schedule:persistent_hang entry
+    (current code emits this as JSONL).  Digest must parse it as a
+    timeout with vm=preknown; the verdict is just 'timeout' since
+    there's no retry combination anymore."""
     raw = with_raw("""\
     preknown btrfs/010
     preknown btrfs/010 Timeout: btrfs/010 dur=0s
@@ -185,14 +177,6 @@ def test_synthetic_para_skip_entry():
     check("synthetic preknown line parses as timeout",
           out.get("btrfs/010") == {"result": "timeout", "vm": "preknown",
                                    "dur": 0}, repr(out))
-
-
-def test_persistent_hang_verdict():
-    """schedule:persistent_hang test gets a synthetic parallel timeout
-    and no retry attempt.  verdict('timeout', None) must return 'hang'."""
-    got = digest.verdict("timeout", None)
-    check("verdict('timeout', None) == 'hang' (persistent_hang path)",
-          got == "hang", f"got {got!r}")
 
 
 def test_test_name_extraction_strips_trailing_whitespace():
@@ -247,9 +231,8 @@ def main():
         test_timeout_with_dur,
         test_local_vm_hostname,
         test_mixed_workers,
-        test_verdict_combinations,
-        test_synthetic_para_skip_entry,
-        test_persistent_hang_verdict,
+        test_verdict_is_identity,
+        test_synthetic_persistent_hang_entry,
         test_test_name_extraction_strips_trailing_whitespace,
         test_failures_line_does_not_match_start_re,
     ]

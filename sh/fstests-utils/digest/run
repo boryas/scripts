@@ -200,23 +200,12 @@ def flush(out, pending):
     out[test] = entry
 
 
-def verdict(p, r):
-    """Combine parallel result `p` and retry result `r` (may be None) into a verdict."""
-    if p == "pass":
-        return "pass"
-    if p == "skip":
-        return "skip"
-    if p == "fail":
-        return "flake" if r == "pass" else "fail"
-    if p == "timeout":
-        if r == "pass":
-            return "flake-from-timeout"
-        if r == "timeout":
-            return "hang"
-        if r == "fail":
-            return "fail"
-        return "hang"  # no retry data -> assume worst
-    return p
+def verdict(result):
+    """Single-pass verdict.  Result is the only signal we have; no
+    cross-phase combination since the retry phase was retired (#84).
+    Verdicts: pass, skip, fail, timeout.  (Cross-run flake detection
+    lives in `results flakes` -- task #88.)"""
+    return result
 
 
 def main():
@@ -226,35 +215,23 @@ def main():
 
     branch, sha = sys.argv[1], sys.argv[2]
     results_dir = os.path.expanduser(f"~/fstests-results/{branch}")
-    para_file = os.path.join(results_dir, sha)
-    retry_file = os.path.join(results_dir, f"{sha}.retry")
+    run_file = os.path.join(results_dir, sha)
     out_file = os.path.join(results_dir, f"{sha}.json")
 
-    if not os.path.isfile(para_file):
-        print(f"FAIL: no parallel result file: {para_file}", file=sys.stderr)
+    if not os.path.isfile(run_file):
+        print(f"FAIL: no result file: {run_file}", file=sys.stderr)
         sys.exit(1)
 
-    parallel = (extract_jsonl(para_file) if is_jsonl(para_file)
-                else extract(para_file))
-    if os.path.isfile(retry_file):
-        retry = (extract_jsonl(retry_file) if is_jsonl(retry_file)
-                 else extract(retry_file))
-    else:
-        retry = {}
+    results = (extract_jsonl(run_file) if is_jsonl(run_file)
+               else extract(run_file))
 
     tests = {}
-    for name, p_entry in parallel.items():
-        r_entry = retry.get(name)
-        entry = {"parallel": p_entry}
-        if r_entry is not None:
-            entry["retry"] = r_entry
-        entry["verdict"] = verdict(p_entry["result"],
-                                   r_entry["result"] if r_entry else None)
-        tests[name] = entry
+    for name, entry in results.items():
+        out_entry = {"run": entry, "verdict": verdict(entry["result"])}
+        tests[name] = out_entry
 
     # Summary counts.
-    counts = {k: 0 for k in
-              ("pass", "skip", "fail", "flake", "flake-from-timeout", "hang")}
+    counts = {k: 0 for k in ("pass", "skip", "fail", "timeout")}
     for t in tests.values():
         counts[t["verdict"]] = counts.get(t["verdict"], 0) + 1
     counts["total"] = len(tests)

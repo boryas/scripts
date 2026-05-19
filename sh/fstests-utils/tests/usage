@@ -1,5 +1,7 @@
 fstests-utils tests <subcommand> [args]
 
   slow                          list tests with slow: true
-  schedule <name>               list tests with schedule: <persistent_hang|para_skip>
+  schedule <name>               list tests with schedule: persistent_hang
   meta <test>                   JSON metadata for one test
+  budgets [branch]              read test names from stdin, emit JSONL
+                                with per-task timeout budget on stdout

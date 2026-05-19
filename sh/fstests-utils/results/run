@@ -129,9 +129,13 @@ ba_tests = ba.get("tests", {})
 def cls(v):
     return v   # raw verdict; could collapse later
 
-new_fail, new_flake, new_hang, fixed, new_skip = [], [], [], [], []
+new_fail, new_timeout, fixed, new_skip = [], [], [], []
 
-bad = {"fail", "hang"}
+# Vocabularies span both pre-#84 (flake/flake-from-timeout, hang,
+# persistent-fail, persistent-hang) and post-#84 (just timeout +
+# fail).  We classify both into broad buckets so the diff still
+# works against mixed-vintage digests.
+bad = {"fail", "hang", "timeout", "persistent-fail", "persistent-hang"}
 flaky = {"flake", "flake-from-timeout"}
 good = {"pass", "skip"}
 
@@ -141,13 +145,10 @@ for tname, bentry in br_tests.items():
     av = aentry.get("verdict") if aentry else None
     if bv == av:
         continue
-    # Branch worse?
     if bv == "fail" and av in good | flaky | {None}:
         new_fail.append((tname, av, bv))
-    elif bv == "hang" and av in good | flaky | {None}:
-        new_hang.append((tname, av, bv))
-    elif bv in flaky and av in good | {None}:
-        new_flake.append((tname, av, bv))
+    elif bv in ("timeout", "hang", "persistent-hang") and av in good | flaky | {None}:
+        new_timeout.append((tname, av, bv))
     elif bv in good and av in bad | flaky:
         fixed.append((tname, av, bv))
     elif bv == "skip" and av not in (None, "skip"):
@@ -166,12 +167,11 @@ print(f"branch: {br['branch']} @ {br['sha']}")
 print(f"baseline: {ba['branch']} @ {ba['sha']}")
 print()
 
-emit("NEW FAIL",  new_fail)
-emit("NEW HANG",  new_hang)
-emit("NEW FLAKE", new_flake)
-emit("NEW SKIP",  new_skip)
-emit("FIXED",     fixed)
+emit("NEW FAIL",    new_fail)
+emit("NEW TIMEOUT", new_timeout)
+emit("NEW SKIP",    new_skip)
+emit("FIXED",       fixed)
 
-if not (new_fail or new_hang or new_flake or new_skip or fixed):
+if not (new_fail or new_timeout or new_skip or fixed):
     print("no changes vs baseline")
 EOF

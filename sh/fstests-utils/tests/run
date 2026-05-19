@@ -24,13 +24,20 @@ import sys
 from pathlib import Path
 
 USAGE = ("usage: fstests-utils tests "
-         "{slow | schedule <name> | meta <test>}")
+         "{slow | schedule <name> | meta <test> | budgets [branch]}")
 
 DEFAULT_TESTS_PATH = (
     Path(__file__).resolve().parent.parent / "tests.yaml"
 )
 
-VALID_SCHEDULES = {"persistent_hang", "para_skip"}
+VALID_SCHEDULES = {"persistent_hang"}
+
+# Budget derivation knobs
+HISTORY_LOOKBACK = 10           # how many recent runs to consider
+BUDGET_MULTIPLIER = 1.5          # max(dur) * this = budget
+BUDGET_FLOOR_S = 60              # 1 minute
+BUDGET_CEIL_S = 30 * 60          # 30 minutes
+BUDGET_DEFAULT_S = 8 * 60        # 8 min when no history exists
 
 
 def load(path):
@@ -93,10 +100,88 @@ def cmd_meta(args):
     print(json.dumps(data.get(args[0], {}), indent=2, sort_keys=True))
 
 
+def parse_humantime_to_s(s):
+    """Parse 'humantime' duration strings the same way wq-ssh does:
+    `30s`, `8m`, `1h30m`, etc.  Returns seconds as float."""
+    # Tiny ad-hoc parser; good enough for the units we use.  Raises
+    # ValueError on garbage.
+    import re
+    units = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    parts = re.findall(r"(\d+)([smhd])", s.strip())
+    if not parts:
+        raise ValueError(f"unparseable duration {s!r}")
+    consumed = "".join(n + u for n, u in parts)
+    if consumed != s.strip():
+        raise ValueError(f"unparseable duration {s!r}")
+    return sum(int(n) * units[u] for n, u in parts)
+
+
+def format_s(seconds):
+    """Inverse of the above.  Emits the shortest reasonable form."""
+    s = int(round(seconds))
+    if s % 3600 == 0:
+        return f"{s // 3600}h"
+    if s % 60 == 0:
+        return f"{s // 60}m"
+    return f"{s}s"
+
+
+def derive_budget(test_name, tests_meta, history_tests):
+    """Pick a per-task timeout.  Operator override wins; else derive
+    from history; else default.  Returns a humantime string."""
+    explicit = tests_meta.get(test_name, {}).get("timeout_budget")
+    if explicit:
+        return str(explicit)
+    entries = history_tests.get(test_name, {}).get("history", [])[:HISTORY_LOOKBACK]
+    durs = [
+        e["dur"] for e in entries
+        if e.get("dur") is not None and e.get("verdict") not in ("timeout",)
+    ]
+    if not durs:
+        return format_s(BUDGET_DEFAULT_S)
+    raw = max(durs) * BUDGET_MULTIPLIER
+    clamped = max(BUDGET_FLOOR_S, min(BUDGET_CEIL_S, int(raw)))
+    return format_s(clamped)
+
+
+def cmd_budgets(args):
+    """`tests budgets [branch]` -- read test names from stdin, one per
+    line; emit JSONL `{"name": ..., "timeout": ...}` per task with the
+    derived budget."""
+    branch = args[0] if args else "for-next"
+    if len(args) > 1:
+        print("budgets: at most one argument (branch name)", file=sys.stderr)
+        sys.exit(2)
+
+    path = os.environ.get("TESTS_FILE", str(DEFAULT_TESTS_PATH))
+    tests_meta = load(path)
+
+    history_path = Path(os.path.expanduser(
+        f"~/fstests-results/{branch}/history.json"))
+    history_tests = {}
+    if history_path.exists():
+        try:
+            with open(history_path) as f:
+                history = json.load(f)
+            history_tests = history.get("tests", {})
+        except (json.JSONDecodeError, OSError):
+            pass  # no history => everyone gets the default
+
+    for line in sys.stdin:
+        name = line.strip()
+        if not name or name.startswith("#"):
+            continue
+        budget = derive_budget(name, tests_meta, history_tests)
+        sys.stdout.write(
+            json.dumps({"name": name, "timeout": budget}, separators=(",", ":")) + "\n"
+        )
+
+
 SUBCOMMANDS = {
     "slow": cmd_slow,
     "schedule": cmd_schedule,
     "meta": cmd_meta,
+    "budgets": cmd_budgets,
 }
 
 

@@ -103,7 +103,11 @@ def main():
             # array has the most recent run at index 0.  dur is the
             # parallel-phase wall-clock seconds when present (None for
             # pre-instrumentation digests).
-            dur = (tentry.get("parallel") or {}).get("dur")
+            # New digests use `run`; old digests had `parallel` (with a
+            # `retry` sibling) -- keep falling back to it so backfill of
+            # pre-retry-collapse runs (#84) still records dur correctly.
+            run = tentry.get("run") or tentry.get("parallel") or {}
+            dur = run.get("dur")
             te["history"].insert(0, {"sha": sha, "verdict": verdict,
                                      "ts": ts, "dur": dur})
         seen_shas.add(sha)
