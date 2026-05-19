@@ -32,8 +32,11 @@ phase_end() {
 
 # Maximum per-task budget envelope.  Sets wq-ssh's local-watchdog
 # ceiling; per-test budgets (encoded in the JSONL task stream) enforce
-# the real deadline via `timeout(1)` inside the cmd template.
-max_task_timeout="${MAX_TASK_TIMEOUT:-30m}"
+# the real deadline via `timeout(1)` inside the cmd template.  Bumped
+# to 90m to accommodate the 1h operator override on btrfs/187 and
+# generic/166 -- those tests were previously skipped via schedule:
+# persistent_hang and now get a real chance to finish.
+max_task_timeout="${MAX_TASK_TIMEOUT:-90m}"
 
 # Source kernel tree to build / boot from.  Defaults to the user's main
 # repo.  The for-next cron sets this to ~/repos/linux-fnext so the
