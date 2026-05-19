@@ -34,7 +34,7 @@ VALID_SCHEDULES = {"persistent_hang"}
 
 # Budget derivation knobs
 HISTORY_LOOKBACK = 10           # how many recent runs to consider
-BUDGET_MULTIPLIER = 1.5          # max(dur) * this = budget
+BUDGET_MULTIPLIER = 2.0          # max(dur) * this = budget
 BUDGET_FLOOR_S = 60              # 1 minute
 BUDGET_CEIL_S = 30 * 60          # 30 minutes
 BUDGET_DEFAULT_S = 8 * 60        # 8 min when no history exists
