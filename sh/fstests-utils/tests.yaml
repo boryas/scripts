@@ -1,0 +1,362 @@
+# Per-test operator metadata.
+#
+# This file replaces the historical split of:
+#   - PARA_SKIP          (which tests to skip in the parallel phase)
+#   - PERSISTENT_HANGS   (which tests to skip entirely)
+#   - SLOW_TESTS         (which tests to dispatch first)
+#   - KNOWN_FAILURES.yaml (investigation notes for failures)
+#
+# Tests not listed here have no operator metadata; their runtime stats
+# are still captured per-run in history.json.
+#
+# Schema (all fields optional, mix-and-match):
+#
+#   slow: true
+#       Promote to slow-first dispatch.  Just a hint to the scheduler;
+#       no effect on whether the test runs.
+#
+#   schedule: <policy>
+#       Special dispatch policy.  Implies slow=true.  Values:
+#         persistent_hang  -- skipped entirely.  test/run synthesizes a
+#                             parallel-phase timeout entry; the digest's
+#                             verdict logic produces "hang" automatically
+#                             (parallel=timeout + no retry data => hang).
+#                             Saves ~30 minutes per cron run.
+#         para_skip        -- skipped in the parallel phase; added to the
+#                             retry list (where the 30m budget usually
+#                             completes them).
+#       (absent => normal dispatch in both phases)
+#
+#   category: <bucket>
+#       Investigation taxonomy.  html/run groups failures on the web UI
+#       by this field.  Free-form-ish; current values:
+#         enospc-fragility, dm-suspected-real, tooling-skew,
+#         env-fixed-pending-verify
+#
+#   status: <state>
+#       Investigation state.  Current values:
+#         known-test-bug, needs-upstream-check, fixed-pending-verify,
+#         tooling-skew
+#
+#   explanation: |
+#       Multi-line, what's known about the failure mode.
+#
+#   investigated: YYYY-MM-DD
+#       Last review date.
+#
+#   bug: <url-or-id>   (optional)
+#
+# Workflow notes:
+#
+# * Promote to schedule: para_skip after 2+ consecutive parallel-phase
+#   timeouts that the retry phase eventually completes.
+# * Promote to schedule: persistent_hang after 2+ consecutive retry-phase
+#   30m caps.
+# * Add a category/status entry after 3+ consecutive failures with the
+#   same root cause.  Demote (delete or status: fixed-pending-verify)
+#   once the underlying issue is resolved.
+
+# ---------------------------------------------------------------------------
+# Persistent hangs (skipped entirely; saves ~30 min per run)
+# ---------------------------------------------------------------------------
+
+btrfs/187:
+  slow: true
+  schedule: persistent_hang
+
+generic/166:
+  slow: true
+  schedule: persistent_hang
+
+# ---------------------------------------------------------------------------
+# Parallel-phase skip (>8m but ≤30m; finishes in retry)
+# ---------------------------------------------------------------------------
+
+btrfs/010:
+  slow: true
+  schedule: para_skip
+
+generic/334:
+  slow: true
+  schedule: para_skip
+
+generic/415:
+  slow: true
+  schedule: para_skip
+
+generic/416:
+  slow: true
+  schedule: para_skip
+
+# ---------------------------------------------------------------------------
+# Slow but fits in the parallel 8m budget; dispatch first to start the
+# long tail early.
+# ---------------------------------------------------------------------------
+
+btrfs/004:
+  slow: true
+
+btrfs/011:
+  slow: true
+
+btrfs/036:
+  slow: true
+
+btrfs/078:
+  slow: true
+
+btrfs/138:
+  slow: true
+
+btrfs/179:
+  slow: true
+
+btrfs/252:
+  slow: true
+
+btrfs/276:
+  slow: true
+
+btrfs/301:
+  slow: true
+
+generic/074:
+  slow: true
+
+generic/077:
+  slow: true
+
+generic/127:
+  slow: true
+
+generic/170:
+  slow: true
+
+generic/175:
+  slow: true
+
+generic/204:
+  slow: true
+
+generic/208:
+  slow: true
+
+generic/323:
+  slow: true
+
+generic/333:
+  slow: true
+
+generic/387:
+  slow: true
+
+generic/438:
+  slow: true
+
+generic/476:
+  slow: true
+
+generic/551:
+  slow: true
+
+generic/562:
+  slow: true
+
+generic/672:
+  slow: true
+
+generic/707:
+  slow: true
+
+# ---------------------------------------------------------------------------
+# Fixed locally, awaiting first passing run to confirm and demote.
+# ---------------------------------------------------------------------------
+
+btrfs/058:
+  category: env-fixed-pending-verify
+  status: fixed-pending-verify
+  investigated: 2026-05-18
+  explanation: |
+    Test invokes terminfo-aware tools; ssh BatchMode left TERM unset
+    so they emitted "No entry for terminal type 'unknown'..." into
+    the test's stdout, breaking the golden-output match.  Fix landed
+    in para-fstests/ssh-one.sh: TERM=dumb prepended to the sudo
+    invocation.  Should pass on the next nightly; demote once stable.
+
+# ---------------------------------------------------------------------------
+# ENOSPC family (11) -- tests reformat scratch to a small filesystem
+# (256MiB to 2GiB) and assume xfs/ext4-style space accounting.  At
+# those sizes btrfs metadata overhead is 20-40% of the fs, so ENOSPC
+# fires at the wrong point relative to the test's expectations.
+# Reproduced identically on cloud + cloud-rerun + v0.  Not a kernel
+# bug; tests need btrfs-aware adjustments upstream.
+# ---------------------------------------------------------------------------
+
+btrfs/170:
+  category: enospc-fragility
+  status: known-test-bug
+  investigated: 2026-05-18
+  explanation: |
+    2GiB scratch; `btrfs subvolume snapshot` fails ENOSPC because
+    metadata overhead consumes most of the small fs.
+
+generic/015:
+  category: enospc-fragility
+  status: known-test-bug
+  investigated: 2026-05-18
+  explanation: |
+    256MiB scratch; expects ~246MB free after delete, observes 0.
+    Btrfs reserves metadata space that isn't freed by file delete --
+    a known small-fs accounting discrepancy with the test's xfs/ext4
+    assumptions.
+
+generic/171:
+  category: enospc-fragility
+  status: known-test-bug
+  investigated: 2026-05-18
+  explanation: |
+    320MiB scratch; expects CoW-after-fill to ENOSPC; btrfs allocator
+    chunk-reuse gives extra headroom and the CoW succeeds.
+
+generic/172:
+  category: enospc-fragility
+  status: known-test-bug
+  investigated: 2026-05-18
+  explanation: |
+    1GiB scratch; mkdir of test workdir fails ENOSPC at start because
+    metadata already consumed the small fs's budget.
+
+generic/173:
+  category: enospc-fragility
+  status: known-test-bug
+  investigated: 2026-05-18
+  explanation: |
+    320MiB scratch; mmap CoW expected SIGBUS on ENOSPC, got clean exit
+    (writes succeeded because btrfs headroom differed from test's
+    fill calculation).
+
+generic/174:
+  category: enospc-fragility
+  status: known-test-bug
+  investigated: 2026-05-18
+  explanation: |
+    Same shape as generic/171 at 320MiB; CoW-after-fill succeeds when
+    the test expects ENOSPC.
+
+generic/274:
+  category: enospc-fragility
+  status: known-test-bug
+  investigated: 2026-05-18
+  explanation: |
+    2GiB preallocation test; first write fails ENOSPC because btrfs
+    metadata reservations consumed the fs upfront.
+
+generic/427:
+  category: enospc-fragility
+  status: known-test-bug
+  investigated: 2026-05-18
+  explanation: |
+    256MiB scratch; `open: No space left on device` at the start --
+    fs is effectively full before the test does anything.
+
+generic/511:
+  category: enospc-fragility
+  status: known-test-bug
+  investigated: 2026-05-18
+  explanation: |
+    Small fs; `touch` fails ENOSPC immediately at test start.
+
+generic/546:
+  category: enospc-fragility
+  status: known-test-bug
+  investigated: 2026-05-18
+  explanation: |
+    Small fs; `XFS_IOC_CLONE_RANGE: No space left on device` during
+    a clone operation that the test assumes will succeed.
+
+generic/747:
+  category: enospc-fragility
+  status: known-test-bug
+  investigated: 2026-05-18
+  explanation: |
+    8GiB scratch; mixed write/delete fillup hits ENOSPC during the
+    direct-IO phase when test expects to still have headroom.
+
+# ---------------------------------------------------------------------------
+# DM-group (4) -- all use device-mapper targets (dm-error or dm-thin
+# + dm-log-writes) and test specific kernel-side semantics: fsync
+# error clearing, FUA write emission on log-root updates, log-replay
+# file reconstruction.  Fail on both cloud and v0 with same kernel.
+# These look more like real kernel issues than test fragility, but
+# haven't been tested against a non-for-next btrfs base to confirm.
+# Needs upstream check or bisect to know if they're regressions vs
+# longstanding.
+# ---------------------------------------------------------------------------
+
+btrfs/146:
+  category: dm-suspected-real
+  status: needs-upstream-check
+  investigated: 2026-05-18
+  explanation: |
+    Tests fsync error-state recovery via dm-error toggle.  After the
+    device transitions error -> OK, the test's third fsync still
+    returns EIO instead of 0.  Could be a btrfs fsync error-clearing
+    regression, or longstanding behavior the test never matched.
+
+btrfs/196:
+  category: dm-suspected-real
+  status: needs-upstream-check
+  investigated: 2026-05-18
+  explanation: |
+    Multi-subvolume fsync test using dm-log-writes to capture FUA
+    writes against the log root.  Test fails with "failed to locate
+    next FUA write" -- no FUA-flagged write found where the original
+    fix (btrfs: fix incorrect updating of log root tree) was supposed
+    to emit one.  Possible regression in log-root FUA emission.
+
+generic/455:
+  category: dm-suspected-real
+  status: needs-upstream-check
+  investigated: 2026-05-18
+  explanation: |
+    Crash-recovery test via fsx + dm-log-writes replay.  After replay
+    to a marked point, testfile0 is *missing* (No such file or
+    directory) -- not corrupted, gone entirely.  Suggests btrfs log
+    replay isn't reconstructing the file when it should.
+
+generic/457:
+  category: dm-suspected-real
+  status: needs-upstream-check
+  investigated: 2026-05-18
+  explanation: |
+    Same shape as generic/455 but with reflinked test files.
+    testfile1 missing after dm-log-writes replay.
+
+# ---------------------------------------------------------------------------
+# Tooling skew (2) -- cloud worker's snapshot has older fstests
+# checkout and/or newer distro btrfs-progs vs v0's custom build.  Not
+# kernel bugs.  Fix: rebuild snapshot with current fstests + matching
+# btrfs-progs.
+# ---------------------------------------------------------------------------
+
+btrfs/218:
+  category: tooling-skew
+  status: tooling-skew
+  investigated: 2026-05-18
+  explanation: |
+    Cloud's btrfs-progs (v6.17, distro) emits "found more devices than
+    fs_info" informational warning; test golden doesn't expect it.
+    v0's custom older btrfs-progs predates the message and passes.
+    Confirmed via `strings /usr/bin/btrfs`.  Fix: rebuild cloud snapshot
+    with matching btrfs-progs, or contribute an fstests golden update.
+
+generic/301:
+  category: tooling-skew
+  status: tooling-skew
+  investigated: 2026-05-18
+  explanation: |
+    Cloud's fstests checkout predates a commit that adds a btrfs guard
+    around the 2/3-of-blocks fragmentation threshold (designed for XFS
+    cowextsize).  Same extent counts on cloud (1500-1700) and v0
+    loop-on-ext4 (1611-1690); v0 passes only because its fstests has
+    the guard.  Fix: refresh cloud snapshot's fstests checkout.

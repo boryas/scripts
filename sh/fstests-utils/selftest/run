@@ -172,10 +172,11 @@ def test_verdict_combinations():
 
 def test_synthetic_para_skip_entry():
     """A 'preknown <test> Timeout: <test> dur=0s' line is what test/run
-    writes for PARA_SKIP tests.  Digest must parse it as a parallel
-    timeout, no retry data -> verdict = hang (treated as worst case
-    until retry refines).  When combined with an actual retry pass,
-    verdict() should yield 'flake-from-timeout'."""
+    used to write for PARA_SKIP tests (line-grammar era; now JSONL).
+    Digest must parse it as a parallel timeout, no retry data ->
+    verdict = hang (treated as worst case until retry refines).  When
+    combined with an actual retry pass, verdict() should yield
+    'flake-from-timeout'."""
     raw = with_raw("""\
     preknown btrfs/010
     preknown btrfs/010 Timeout: btrfs/010 dur=0s
@@ -187,10 +188,10 @@ def test_synthetic_para_skip_entry():
 
 
 def test_persistent_hang_verdict():
-    """PERSISTENT_HANGS test gets synthetic parallel timeout, no retry
-    attempt.  verdict('timeout', None) must return 'hang'."""
+    """schedule:persistent_hang test gets a synthetic parallel timeout
+    and no retry attempt.  verdict('timeout', None) must return 'hang'."""
     got = digest.verdict("timeout", None)
-    check("verdict('timeout', None) == 'hang' (PERSISTENT_HANGS path)",
+    check("verdict('timeout', None) == 'hang' (persistent_hang path)",
           got == "hang", f"got {got!r}")
 
 
@@ -201,10 +202,10 @@ def test_test_name_extraction_strips_trailing_whitespace():
         btrfs/001   <-- 3 trailing spaces
         btrfs/002   <-- and so on
 
-    The test/run filter step and para-fstests' TESTS extraction must
-    strip that padding -- otherwise comm comparisons against
-    PARA_SKIP/SLOW_TESTS files (which don't have padding) silently
-    fail to match.  This bit us hard during cloud rollout."""
+    The test/run filter step must strip that padding -- otherwise comm
+    comparisons against the tests.yaml-derived lists (which don't have
+    padding) silently fail to match.  This bit us hard during cloud
+    rollout."""
     import subprocess
     raw = "btrfs/001   \nbtrfs/002   \nbtrfs/010   \n"
     # The fix that lives in both test/run and para-fstests.sh:

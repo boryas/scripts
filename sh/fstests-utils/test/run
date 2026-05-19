@@ -137,37 +137,41 @@ for vm in $vms; do
 done
 phase_end provision
 
+# Per-test operator metadata: consolidated in fstests-utils/tests.yaml,
+# queried via `rcli fstests-utils tests {slow,schedule,meta}`.
+# Schedules we care about here:
+#   - persistent_hang  -> skip in parallel AND retry (digest verdicts as "hang"
+#                         via the synthetic-timeout entry we append below)
+#   - para_skip        -> skip in parallel; force into retry list (longer budget)
+para_skip_tests=$(rcli fstests-utils tests schedule para_skip)
+persistent_hang_tests=$(rcli fstests-utils tests schedule persistent_hang)
+slow_tests=$(rcli fstests-utils tests slow)
+
 # Compute the explicit parallel-phase test list on the controller.
 # Ask the first worker for the full -g auto list, then drop any tests
-# named in PARA_SKIP_FILE / PERSISTENT_HANGS_FILE.  wq-ssh consumes the
+# scheduled persistent_hang or para_skip.  wq-ssh consumes the
 # resulting list verbatim; no dispatcher-side filtering needed.
 para_tests=$(ssh "${vms[0]}" 'cd /mnt/repos/fstests; sudo ./check -E EXCLUDE -n -g auto' \
 	| grep -oE '^[a-zA-Z]+/[0-9]+' | grep -v expunged | sort -u)
 # (grep -oE strips trailing whitespace; check -n pads test names with
 #  spaces for column-alignment, which breaks naive ^...$ regex matches.)
 nbefore=$(echo "$para_tests" | wc -l)
-for skipfile in "${PARA_SKIP_FILE:-}" "${PERSISTENT_HANGS_FILE:-}"; do
-	[ -n "$skipfile" ] && [ -r "$skipfile" ] || continue
-	skip=$(grep -E '^[a-zA-Z]+/[0-9]+$' "$skipfile" | sort -u)
-	[ -n "$skip" ] || continue
-	para_tests=$(comm -23 <(echo "$para_tests") <(echo "$skip"))
-	echo "filter: dropped $(echo "$skip" | wc -l) tests via $(basename "$skipfile")"
-done
+skip_set=$(printf '%s\n%s\n' "$para_skip_tests" "$persistent_hang_tests" \
+	| grep -v '^$' | sort -u)
+if [ -n "$skip_set" ]; then
+	para_tests=$(comm -23 <(echo "$para_tests") <(echo "$skip_set"))
+fi
 nafter=$(echo "$para_tests" | wc -l)
 echo "parallel-phase test list: $nbefore -> $nafter tests after filtering"
 
-# Slow-first dispatch: put any tests named in $SLOW_TESTS_FILE at the
-# front of the list so the long tail starts running on its own worker
-# while the short tests churn through later.  Was inside para-fstests;
-# now lives in the wrapper since wq-ssh receives the list pre-sorted.
-if [ -n "${SLOW_TESTS_FILE:-}" ] && [ -r "$SLOW_TESTS_FILE" ]; then
-	slow=$(grep -E '^[a-zA-Z]+/[0-9]+$' "$SLOW_TESTS_FILE" | sort -u)
-	if [ -n "$slow" ]; then
-		slow_in_tests=$(comm -12 <(echo "$slow") <(echo "$para_tests" | sort -u))
-		rest=$(comm -23 <(echo "$para_tests" | sort -u) <(echo "$slow"))
-		para_tests=$(printf '%s\n%s\n' "$slow_in_tests" "$rest" | grep -v '^$')
-		echo "slow-first: $(echo "$slow_in_tests" | grep -c .) slow tests dispatched first"
-	fi
+# Slow-first dispatch: tests tagged slow:true in tests.yaml get the
+# front of the queue so the long tail starts running on its own worker
+# while the short tests churn through later.
+if [ -n "$slow_tests" ]; then
+	slow_in_tests=$(comm -12 <(echo "$slow_tests" | sort -u) <(echo "$para_tests" | sort -u))
+	rest=$(comm -23 <(echo "$para_tests" | sort -u) <(echo "$slow_tests" | sort -u))
+	para_tests=$(printf '%s\n%s\n' "$slow_in_tests" "$rest" | grep -v '^$')
+	echo "slow-first: $(echo "$slow_in_tests" | grep -c .) slow tests dispatched first"
 fi
 
 # Save the resolved YAML + task list next to the JSONL for forensic
@@ -215,21 +219,20 @@ phase_end parallel
 rcli fstests-utils artifacts "$out_file" "$details_dir/parallel"
 
 # Synthesize "parallel-phase timeout" task_done events in the JSONL for
-# the two quarantine lists, so the digest sees them:
-#   PARA_SKIP        -> parallel=timeout + retry runs them -> verdict
-#                       computed normally (flake-from-timeout / hang).
-#   PERSISTENT_HANGS -> parallel=timeout + retry skipped -> digest's
-#                       fallback verdict("timeout", None) gives "hang".
-# worker="preknown" so digest's transport_error/synthetic checks can
-# recognize them and the per-test "vm" field is identifiable.
+# every test we just dropped from the parallel list, so the digest sees
+# them:
+#   schedule: para_skip       -> parallel=timeout + retry runs them ->
+#                                verdict computed normally (flake-from-
+#                                timeout / hang).
+#   schedule: persistent_hang -> parallel=timeout + retry skipped ->
+#                                digest's fallback verdict("timeout",
+#                                None) gives "hang".
+# worker="preknown" so digest's synthetic-event check can recognize
+# them and the per-test "vm" field is identifiable.
 synth_ts=$(date -u +%FT%T.000Z)
-for skipfile in "${PARA_SKIP_FILE:-}" "${PERSISTENT_HANGS_FILE:-}"; do
-	[ -n "$skipfile" ] && [ -r "$skipfile" ] || continue
-	while IFS= read -r tst; do
-		case "$tst" in ''|\#*) continue;; esac
-		printf '{"event":"task_done","ts":"%s","worker":"preknown","task":"%s","exit":124,"signal":null,"timeout":true,"dur":0.0,"stdout":"","stdout_truncated":false,"stderr":"synthetic: parallel-skipped via %s","stderr_truncated":false,"transport_error":null}\n' \
-			"$synth_ts" "$tst" "$(basename "$skipfile")" >> "$out_file"
-	done < "$skipfile"
+for tst in $skip_set; do
+	printf '{"event":"task_done","ts":"%s","worker":"preknown","task":"%s","exit":124,"signal":null,"timeout":true,"dur":0.0,"stdout":"","stdout_truncated":false,"stderr":"synthetic: parallel-skipped via tests.yaml","stderr_truncated":false,"transport_error":null}\n' \
+		"$synth_ts" "$tst" >> "$out_file"
 done
 
 # Build the retry list from the JSONL log: every task_done whose verdict
@@ -257,14 +260,11 @@ print("\n".join(sorted(out)))
 PY
 )
 
-# Don't actually run PERSISTENT_HANGS tests in retry.  The digest will
-# verdict them as "hang" via the no-retry-data fallback.
-if [ -n "${PERSISTENT_HANGS_FILE:-}" ] && [ -r "$PERSISTENT_HANGS_FILE" ]; then
-	hangs=$(grep -E '^[a-zA-Z]+/[0-9]+$' "$PERSISTENT_HANGS_FILE" | sort -u)
-	if [ -n "$hangs" ]; then
-		retry=$(comm -23 <(echo "$retry" | sort -u) <(echo "$hangs"))
-		echo "skipping retry for $(echo "$hangs" | wc -l) PERSISTENT_HANGS tests"
-	fi
+# Don't actually run schedule:persistent_hang tests in retry.  The
+# digest will verdict them as "hang" via the no-retry-data fallback.
+if [ -n "$persistent_hang_tests" ]; then
+	retry=$(comm -23 <(echo "$retry" | sort -u) <(echo "$persistent_hang_tests" | sort -u))
+	echo "skipping retry for $(echo "$persistent_hang_tests" | grep -c .) persistent_hang tests"
 fi
 
 if [ -z "$retry" ]; then

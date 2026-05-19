@@ -1,0 +1,5 @@
+fstests-utils tests <subcommand> [args]
+
+  slow                          list tests with slow: true
+  schedule <name>               list tests with schedule: <persistent_hang|para_skip>
+  meta <test>                   JSON metadata for one test

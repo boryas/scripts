@@ -37,23 +37,34 @@ FLAKE_VERDICTS = {"flake", "flake-from-timeout"}
 # improvement we want to surface.
 GOOD_VERDICTS = {"pass", "skip"}
 
-# KNOWN_FAILURES.yaml lives alongside this script's parent (the
-# fstests-utils/ root).  Loaded once at startup; missing file is fine.
-KNOWN_FAILURES_PATH = Path(__file__).resolve().parent.parent / "KNOWN_FAILURES.yaml"
+# tests.yaml lives alongside this script's parent (the fstests-utils/
+# root).  Loaded once at startup; missing file is fine.  Holds all
+# per-test operator metadata (schedule, slow, plus investigation
+# notes); we project out just the entries with investigation notes
+# (`category` set) for the known-failures bucket on the per-run page.
+TESTS_PATH = Path(__file__).resolve().parent.parent / "tests.yaml"
 
 
 def load_known_failures():
-    """Return {test_name: {category, status, explanation, ...}}.
-    Empty dict if the file is missing or unparseable -- the page still
-    renders, it just won't have the known-failures bucket."""
-    if not KNOWN_FAILURES_PATH.exists():
+    """Return {test_name: {category, status, explanation, ...}} for
+    every test in tests.yaml that has investigation notes (i.e. a
+    `category` field).  Empty dict if the file is missing or
+    unparseable -- the page still renders, it just won't have the
+    known-failures bucket."""
+    if not TESTS_PATH.exists():
         return {}
     try:
-        with open(KNOWN_FAILURES_PATH) as f:
-            entries = yaml.safe_load(f) or []
+        with open(TESTS_PATH) as f:
+            data = yaml.safe_load(f) or {}
     except yaml.YAMLError:
         return {}
-    return {e["test"]: e for e in entries if "test" in e}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        tname: meta
+        for tname, meta in data.items()
+        if isinstance(meta, dict) and meta.get("category")
+    }
 
 
 KNOWN_FAILURES = load_known_failures()
@@ -405,7 +416,7 @@ window.addEventListener('load', _ftOpenTargetDetails);
           <span class="verdict {{ t.verdict }}">{{ t.verdict }}</span>
         {% endfor %}
       </div>
-      <p class="meta">Consider demoting these from KNOWN_FAILURES.yaml after a few stable runs.</p>
+      <p class="meta">Consider demoting these from tests.yaml after a few stable runs.</p>
     </div>
   {% endif %}
   {% if g.tests %}
@@ -641,7 +652,7 @@ def group_latest_tests(latest, branch_dir=None, run_id=None):
         for r, ts in sorted(buckets.items(), key=lambda x: (-len(x[1]), x[0]))
     ]
 
-    # Split bad-verdict tests into "known" (listed in KNOWN_FAILURES.yaml)
+    # Split bad-verdict tests into "known" (have a category in tests.yaml)
     # and "unknown" (the real signal).  Known entries are kept off the
     # main fail/hang buckets and rendered in a dedicated section grouped
     # by category.

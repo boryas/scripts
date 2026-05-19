@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""
+fstests-utils tests <subcommand> [args]
+
+Query helper over the consolidated per-test metadata file (tests.yaml).
+
+Subcommands (rcli intercepts flag args, so the syntax is positional):
+
+  slow
+      Emit a sorted, deduped list of test names with `slow: true`.
+
+  schedule <persistent_hang|para_skip>
+      Emit a sorted, deduped list of test names with the given schedule.
+
+  meta <test>
+      Emit one test's full metadata as JSON.  Empty object if absent.
+
+Reads $TESTS_FILE if set, else <fstests-utils>/tests.yaml.
+"""
+
+import json
+import os
+import sys
+from pathlib import Path
+
+USAGE = ("usage: fstests-utils tests "
+         "{slow | schedule <name> | meta <test>}")
+
+DEFAULT_TESTS_PATH = (
+    Path(__file__).resolve().parent.parent / "tests.yaml"
+)
+
+VALID_SCHEDULES = {"persistent_hang", "para_skip"}
+
+
+def load(path):
+    import yaml
+    if not Path(path).exists():
+        return {}
+    with open(path) as f:
+        data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        print(f"tests.yaml must be a mapping at the top level, got {type(data).__name__}",
+              file=sys.stderr)
+        sys.exit(2)
+    for tname, meta in data.items():
+        if not isinstance(meta, dict):
+            print(f"tests.yaml: {tname}: entry must be a mapping, got {type(meta).__name__}",
+                  file=sys.stderr)
+            sys.exit(2)
+        sched = meta.get("schedule")
+        if sched is not None and sched not in VALID_SCHEDULES:
+            print(f"tests.yaml: {tname}: invalid schedule {sched!r} "
+                  f"(expected one of {sorted(VALID_SCHEDULES)})",
+                  file=sys.stderr)
+            sys.exit(2)
+    return data
+
+
+def emit_filtered(predicate):
+    path = os.environ.get("TESTS_FILE", str(DEFAULT_TESTS_PATH))
+    data = load(path)
+    matches = sorted({tname for tname, meta in data.items() if predicate(meta)})
+    for t in matches:
+        print(t)
+
+
+def cmd_slow(args):
+    if args:
+        print("slow: takes no arguments", file=sys.stderr)
+        sys.exit(2)
+    emit_filtered(lambda m: bool(m.get("slow")))
+
+
+def cmd_schedule(args):
+    if len(args) != 1:
+        print(f"schedule: expected one of {sorted(VALID_SCHEDULES)}", file=sys.stderr)
+        sys.exit(2)
+    sched = args[0]
+    if sched not in VALID_SCHEDULES:
+        print(f"schedule: expected one of {sorted(VALID_SCHEDULES)}, got {sched!r}",
+              file=sys.stderr)
+        sys.exit(2)
+    emit_filtered(lambda m: m.get("schedule") == sched)
+
+
+def cmd_meta(args):
+    if len(args) != 1:
+        print("meta: expected exactly one test name", file=sys.stderr)
+        sys.exit(2)
+    path = os.environ.get("TESTS_FILE", str(DEFAULT_TESTS_PATH))
+    data = load(path)
+    print(json.dumps(data.get(args[0], {}), indent=2, sort_keys=True))
+
+
+SUBCOMMANDS = {
+    "slow": cmd_slow,
+    "schedule": cmd_schedule,
+    "meta": cmd_meta,
+}
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(USAGE, file=sys.stderr)
+        sys.exit(22)
+    sub = sys.argv[1]
+    if sub not in SUBCOMMANDS:
+        print(f"unknown subcommand {sub!r}", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        sys.exit(2)
+    SUBCOMMANDS[sub](sys.argv[2:])
+
+
+if __name__ == "__main__":
+    main()
