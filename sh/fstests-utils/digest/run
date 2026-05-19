@@ -236,7 +236,7 @@ def main():
         counts[t["verdict"]] = counts.get(t["verdict"], 0) + 1
     counts["total"] = len(tests)
 
-    ended_ts = os.stat(para_file).st_mtime
+    ended_ts = os.stat(run_file).st_mtime
     ended_iso = datetime.fromtimestamp(ended_ts, tz=timezone.utc).astimezone().isoformat()
 
     doc = {
