@@ -5,17 +5,15 @@ fstests-utils digest <branch> <sha>
 Parses ~/fstests-results/<branch>/<sha> [+ .retry] into <sha>.json with
 the schema documented in the long-term-tracking plan.
 
-Per-run line grammar produced by para-fstests/ssh-one.sh and the retry
-block in fstests-utils/test/run:
+Two input formats are auto-detected:
 
-    "vm test"                      -- worker started the test
-    "vm test Ran: test"            -- ./check completed; provisionally pass
-    "Failures: test"               -- on a following line, refines to fail
-    "Not run: test"                -- on a following line, refines to skip
-    "vm test Timeout: test"        -- ssh-one.sh's timeout branch (no Ran:)
-
-"Failures:"/"Not run:" lines are matched to the most recent pending
-Ran: line by test name (robust against unlikely interleaving).
+  1. JSONL (wq-ssh era): one TaskDone event per line.  Per-test result is
+     derived from the event's exit/timeout/transport_error fields plus a
+     "Failures:" / "Not run:" / "[not run]" scan of the captured stdout.
+  2. Line grammar (legacy para-fstests era): paired "vm tst Ran: tst" /
+     "Failures: tst" / "Not run: tst" / "vm tst Timeout: tst" lines, with
+     "Failures:"/"Not run:" matched to the most recent pending Ran: by
+     test name.  Kept so backfill of historical runs still works.
 """
 
 import json
@@ -48,6 +46,89 @@ NOTRUN_RE   = re.compile(r"^Not run: (\S+/\d+)(?: dur=\d+s)?$")
 # "<test>  [not run] <reason>" line.  Captured for the most recent
 # pending Ran: by test name (skips also get a Ran: line first).
 SKIP_REASON_RE = re.compile(r"^(\S+/\d+)\s+\[not run\]\s*(.+)$")
+
+# Per-test patterns scanned inside one TaskDone's captured stdout when
+# parsing JSONL.  Multiline so they match lines anywhere in the blob.
+JSONL_FAIL_RE     = re.compile(r"^Failures: ", re.M)
+JSONL_NOTRUN_RE   = re.compile(r"^Not run: ",  re.M)
+# Synthetic events emitted by test/run for PARA_SKIP / PERSISTENT_HANGS
+# tests (see the synthetic-skip block there) use these worker names so
+# the digest can recognize them; the value lands in the per-test "vm"
+# field unchanged.
+SYNTHETIC_WORKERS = {"preknown", "_skip"}
+
+
+def is_jsonl(path):
+    """Peek the first non-empty line; JSONL if it parses as an object
+    with an `event` field, else legacy line grammar."""
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    return False
+                return isinstance(obj, dict) and "event" in obj
+    except OSError:
+        return False
+    return False
+
+
+def extract_jsonl(path):
+    """JSONL parser.  Same return shape as extract()."""
+    out = {}
+    with open(path) as f:
+        for i, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError as e:
+                print(f"warn: {path}:{i}: not JSON: {e}", file=sys.stderr)
+                continue
+            if ev.get("event") != "task_done":
+                continue
+            test   = ev["task"]
+            worker = ev["worker"]
+            stdout = ev.get("stdout", "")
+            dur_f  = ev.get("dur")
+            dur    = int(round(dur_f)) if isinstance(dur_f, (int, float)) else None
+
+            # Verdict derivation order matters: timeout dominates other
+            # signals because the remote process tree was killed mid-run,
+            # so any "Failures:"/"Not run:" already in stdout is moot.
+            if ev.get("timeout"):
+                result = "timeout"
+            elif ev.get("transport_error"):
+                # Treat ssh transport failures like timeouts: the test
+                # didn't really run, so retry will rerun it.  Verdict
+                # logic in verdict() then collapses on the retry result.
+                result = "timeout"
+            elif JSONL_FAIL_RE.search(stdout):
+                result = "fail"
+            elif JSONL_NOTRUN_RE.search(stdout):
+                result = "skip"
+            elif ev.get("exit") == 0:
+                result = "pass"
+            else:
+                # Non-zero exit with no Failures:/Not run: in stdout --
+                # most likely an early ./check error (bad option, EXCLUDE
+                # file missing, ...).  Treat as fail so it shows up.
+                result = "fail"
+
+            entry = {"result": result, "vm": worker, "dur": dur}
+            if result == "skip":
+                m = re.search(
+                    rf"^{re.escape(test)}\s+\[not run\]\s*(.+)$",
+                    stdout, re.M)
+                if m:
+                    entry["skip_reason"] = m.group(1).strip()
+            out[test] = entry
+    return out
 
 
 def extract(path):
@@ -153,8 +234,13 @@ def main():
         print(f"FAIL: no parallel result file: {para_file}", file=sys.stderr)
         sys.exit(1)
 
-    parallel = extract(para_file)
-    retry = extract(retry_file) if os.path.isfile(retry_file) else {}
+    parallel = (extract_jsonl(para_file) if is_jsonl(para_file)
+                else extract(para_file))
+    if os.path.isfile(retry_file):
+        retry = (extract_jsonl(retry_file) if is_jsonl(retry_file)
+                 else extract(retry_file))
+    else:
+        retry = {}
 
     tests = {}
     for name, p_entry in parallel.items():

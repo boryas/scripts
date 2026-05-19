@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""
+fstests-utils artifacts <jsonl-file> <dest-dir>
+
+Walks the wq-ssh JSONL log produced by one fstests phase and rsyncs
+the per-test failure artifacts (.out.bad, .full, .dmesg) off each
+worker into <dest-dir>/<group>/<num>.{out.bad,full,dmesg}.
+
+Pulled for each task_done event whose verdict is fail or timeout, i.e.:
+  - timeout == true                                  (remote `timeout(1)` fired)
+  - or stdout contains a "Failures: <test>" line     (./check reported failure)
+Skipped for:
+  - transport_error != null                          (worker unreachable; nothing to pull)
+  - synthetic events (worker == "preknown" / "_skip")(no real worker behind them)
+  - passes and skips                                 (no artifacts to gather)
+
+Best-effort: rsync errors are non-fatal, mirroring ssh-one.sh's
+historical behavior.
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+USAGE = "usage: fstests-utils artifacts <jsonl-file> <dest-dir>"
+
+FAIL_LINE = re.compile(r"^Failures: ", re.M)
+SYNTHETIC_WORKERS = {"preknown", "_skip"}
+ARTIFACT_SUFFIXES = ("out.bad", "full", "dmesg")
+FSTESTS_RESULTS = "/mnt/repos/fstests/results"
+
+
+def needs_pull(ev):
+    if ev.get("event") != "task_done":
+        return False
+    if ev.get("worker") in SYNTHETIC_WORKERS:
+        return False
+    if ev.get("transport_error"):
+        return False
+    if ev.get("timeout"):
+        return True
+    return bool(FAIL_LINE.search(ev.get("stdout", "")))
+
+
+def pull(worker, test, dest_root):
+    """Rsync the three artifact files for one (worker, test) into
+    dest_root/<test>.<suffix>.  Mkdir parent on demand.  Errors are
+    swallowed."""
+    out = dest_root / test
+    out.parent.mkdir(parents=True, exist_ok=True)
+    for suf in ARTIFACT_SUFFIXES:
+        subprocess.run(
+            [
+                "rsync",
+                "-az",
+                "--rsync-path=sudo rsync",
+                "--ignore-missing-args",
+                f"{worker}:{FSTESTS_RESULTS}/{test}.{suf}",
+                f"{out}.{suf}",
+            ],
+            check=False,
+            stderr=subprocess.DEVNULL,
+        )
+
+
+def main():
+    if len(sys.argv) != 3:
+        print(USAGE, file=sys.stderr)
+        sys.exit(22)
+    jsonl_path, dest = sys.argv[1], Path(sys.argv[2])
+    if not os.path.isfile(jsonl_path):
+        # Empty/missing log: nothing to do, not an error.
+        return
+
+    n_pulled = 0
+    with open(jsonl_path) as f:
+        for i, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError as e:
+                print(f"warn: line {i}: not JSON: {e}", file=sys.stderr)
+                continue
+            if not needs_pull(ev):
+                continue
+            pull(ev["worker"], ev["task"], dest)
+            n_pulled += 1
+    if n_pulled:
+        print(f"artifacts: pulled {n_pulled} test(s) into {dest}")
+
+
+if __name__ == "__main__":
+    main()
