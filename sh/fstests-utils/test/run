@@ -191,7 +191,7 @@ echo "$para_tests" | systemd-run --user --scope --quiet --unit="$para_scope" \
 	--description="fstests parallel ($patch_name @ $hash)" \
 	-- "$wq_ssh" \
 		"${wq_worker_args[@]}" \
-		--cmd "cd /mnt/repos/fstests && sudo TERM=dumb timeout -k 30s $para_timeout ./check -E EXCLUDE {task}" \
+		--cmd "cd /mnt/repos/fstests && sudo TERM=dumb timeout -k 30s $para_timeout ./check -E EXCLUDE {}" \
 		--no-remote-timeout \
 		--task-timeout "$para_timeout" \
 		--task-grace 30s \
@@ -308,7 +308,7 @@ echo "$retry" | systemd-run --user --scope --quiet --unit="$retry_scope" \
 	--description="fstests retry ($patch_name @ $hash)" \
 	-- "$wq_ssh" \
 		"${retry_worker_args[@]}" \
-		--cmd "cd /mnt/repos/fstests && sudo TERM=dumb timeout -k 30s $retry_timeout ./check -E EXCLUDE {task}" \
+		--cmd "cd /mnt/repos/fstests && sudo TERM=dumb timeout -k 30s $retry_timeout ./check -E EXCLUDE {}" \
 		--no-remote-timeout \
 		--task-timeout "$retry_timeout" \
 		--task-grace 30s \

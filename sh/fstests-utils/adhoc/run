@@ -71,7 +71,7 @@ done
 
 printf '%s\n' "${tests[@]}" | "$wq_ssh" \
 	"${wq_worker_args[@]}" \
-	--cmd "cd /mnt/repos/fstests && sudo TERM=dumb timeout -k 30s $timeout ./check -E EXCLUDE {task}" \
+	--cmd "cd /mnt/repos/fstests && sudo TERM=dumb timeout -k 30s $timeout ./check -E EXCLUDE {}" \
 	--no-remote-timeout \
 	--task-timeout "$timeout" \
 	--task-grace 30s \
