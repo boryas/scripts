@@ -72,9 +72,6 @@ workers:
 $(printf '  - %s\n' $hosts)
 cmd: 'cd /mnt/repos/fstests && sudo TERM=dumb timeout -k 30s $timeout ./check -E EXCLUDE {}'
 task_timeout: $timeout
-task_grace: 30s
-dead_threshold: 3
-probe_interval: 5s
 EOF
 
 printf '%s\n' "${tests[@]}" | "$wq_ssh" "$cfg"

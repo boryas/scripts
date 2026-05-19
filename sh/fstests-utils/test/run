@@ -155,6 +155,17 @@ fi
 nafter=$(echo "$para_tests" | wc -l)
 echo "dispatch test list: $nbefore -> $nafter tests after filtering"
 
+# FAST_ONLY: drop everything except budget-at-floor tests.  Targets
+# developer-loop quick runs (~7-8 min dispatch on N=22 cloud,
+# excluding build + provision overhead).  Skips ~12% of the list
+# (the medium- and long-tail tests).
+if [ "${FAST_ONLY:-0}" = "1" ]; then
+	nfast_before=$(echo "$para_tests" | wc -l)
+	para_tests=$(echo "$para_tests" | rcli fstests-utils tests fast "$patch_name")
+	nfast_after=$(echo "$para_tests" | wc -l)
+	echo "FAST_ONLY: dropped $((nfast_before - nfast_after)) slow/medium tests; running $nfast_after"
+fi
+
 # Slow-first dispatch: tests tagged slow:true in tests.yaml get the
 # front of the queue so the long tail starts running on its own worker
 # while the short tests churn through later.

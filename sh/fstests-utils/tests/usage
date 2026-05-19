@@ -5,3 +5,5 @@ fstests-utils tests <subcommand> [args]
   meta <test>                   JSON metadata for one test
   budgets [branch]              read test names from stdin, emit JSONL
                                 with per-task timeout budget on stdout
+  fast [branch]                 read test names from stdin, emit only
+                                those whose budget is at the 60s floor

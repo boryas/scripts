@@ -144,6 +144,51 @@ def derive_budget(test_name, tests_meta, history_tests):
     return format_s(clamped)
 
 
+def _load_for_budget(args, name):
+    """Common arg-parse + file-load for `budgets` and `fast`.  Returns
+    (tests_meta, history_tests)."""
+    branch = args[0] if args else "for-next"
+    if len(args) > 1:
+        print(f"{name}: at most one argument (branch name)", file=sys.stderr)
+        sys.exit(2)
+    path = os.environ.get("TESTS_FILE", str(DEFAULT_TESTS_PATH))
+    tests_meta = load(path)
+    history_path = Path(os.path.expanduser(
+        f"~/fstests-results/{branch}/history.json"))
+    history_tests = {}
+    if history_path.exists():
+        try:
+            with open(history_path) as f:
+                history = json.load(f)
+            history_tests = history.get("tests", {})
+        except (json.JSONDecodeError, OSError):
+            pass
+    return tests_meta, history_tests
+
+
+def cmd_fast(args):
+    """`tests fast [branch]` -- read test names from stdin, emit those
+    whose derived budget is at the 60s floor.  Used by test/run's
+    FAST_ONLY mode for developer-loop quick runs (~7-8 min dispatch on
+    N=22 cloud, excluding provision/build).
+
+    Strict definition: budget == BUDGET_FLOOR_S.  Tests with no
+    history land on the 8m default and are NOT fast; they'll get a
+    real budget after their first run."""
+    tests_meta, history_tests = _load_for_budget(args, "fast")
+    for line in sys.stdin:
+        name = line.strip()
+        if not name or name.startswith("#"):
+            continue
+        budget = derive_budget(name, tests_meta, history_tests)
+        try:
+            secs = parse_humantime_to_s(budget)
+        except ValueError:
+            continue
+        if secs == BUDGET_FLOOR_S:
+            print(name)
+
+
 def cmd_budgets(args):
     """`tests budgets [branch]` -- read test names from stdin, one per
     line; emit JSONL `{"name": ..., "timeout": ...}` per task with the
@@ -182,6 +227,7 @@ SUBCOMMANDS = {
     "schedule": cmd_schedule,
     "meta": cmd_meta,
     "budgets": cmd_budgets,
+    "fast": cmd_fast,
 }
 
 
