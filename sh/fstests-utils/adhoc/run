@@ -2,21 +2,23 @@
 # fstests-utils adhoc <test> [test...]
 #
 # Run a specific list of tests in parallel across whatever workers are
-# currently up.  No build, no up/down, no digest -- just dispatch and
-# show results.  Useful for:
+# currently up.  No build, no up/down, no digest -- just dispatch via
+# wq-ssh and dump the resulting JSONL to stdout.  Useful for:
 #   - reproducing a flake quickly
 #   - validating a single fix
-#   - running the new para-fstests retry logic against an existing fleet
+#   - dispatching to an existing fleet without going through test/run
 #
 # Honors:
-#   $WORKERS  worker backend (default local-vm)
-#   $TIMEOUT  per-test timeout (default 30m -- closer to retry semantics
-#             than parallel-phase 8m; assumes you're targeting flakes or
-#             specific tests, not a full sweep)
-#   $HOSTS    explicit comma-separated subset of hosts to use, e.g.
-#             HOSTS=fstests@1.2.3.4,fstests@5.6.7.8 for the "run on the
-#             idle workers while a serial run uses one of them" case.
-#             Defaults to "$B/list".
+#   $WORKERS    worker backend (default local-vm)
+#   $TIMEOUT    per-test timeout (default 30m -- closer to retry semantics
+#               than parallel-phase 8m; assumes you're targeting flakes or
+#               specific tests, not a full sweep)
+#   $HOSTS      explicit comma-separated subset of hosts to use, e.g.
+#               HOSTS=fstests@1.2.3.4,fstests@5.6.7.8 for the "run on the
+#               idle workers while a serial run uses one of them" case.
+#               Defaults to "$B/list".
+#   $WQ_SSH_BIN override the wq-ssh binary path (default
+#               ~/repos/wq-ssh/target/release/wq-ssh).
 
 SCRIPT=$(readlink -f "$0")
 DIR=$(dirname "$SCRIPT")
@@ -48,13 +50,30 @@ if [ -z "$hosts" ]; then
 	exit 1
 fi
 
-tests="$*"
+tests=("$@")
 nhosts=$(echo "$hosts" | wc -w)
-echo "adhoc: $tests"
-echo "       across $nhosts workers (per-test timeout: $timeout)"
-echo "       hosts: $hosts"
-echo
+echo "adhoc: ${tests[*]}" >&2
+echo "       across $nhosts workers (per-test timeout: $timeout)" >&2
+echo "       hosts: $hosts" >&2
+echo >&2
 
-cd ~/repos/para-fstests
-FST_DIR=/mnt/repos/fstests EXCLUDE_FILE=EXCLUDE \
-	./para-fstests.sh -T "$timeout" -t "$tests" $hosts
+wq_ssh="${WQ_SSH_BIN:-$HOME/repos/wq-ssh/target/release/wq-ssh}"
+if [ ! -x "$wq_ssh" ]; then
+	echo "wq-ssh binary not found at $wq_ssh" >&2
+	echo "  build with: (cd ~/repos/wq-ssh && cargo build --release)" >&2
+	exit 1
+fi
+
+wq_worker_args=()
+for h in $hosts; do
+	wq_worker_args+=(--worker "$h")
+done
+
+printf '%s\n' "${tests[@]}" | "$wq_ssh" \
+	"${wq_worker_args[@]}" \
+	--cmd "cd /mnt/repos/fstests && sudo TERM=dumb timeout -k 30s $timeout ./check -E EXCLUDE {task}" \
+	--no-remote-timeout \
+	--task-timeout "$timeout" \
+	--task-grace 30s \
+	--dead-threshold 3 \
+	--probe-interval 5s

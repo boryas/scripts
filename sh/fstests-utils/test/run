@@ -89,14 +89,24 @@ out_dir=~/fstests-results/$patch_name
 mkdir -p $out_dir
 out_file="$out_dir/$run_id"
 retry_file="$out_dir/$run_id.retry"
-# Per-run dir where ssh-one.sh rsyncs failure artifacts (.out.bad, .full,
-# .dmesg) off the workers.  Sub-dirs parallel/ and retry/ keep the two
-# phases' attempts of the same test separate (a parallel-phase fail with
-# a kernel splat is more interesting than the same test passing on
-# retry, but we want to keep both).
+# Per-run dir where the artifacts step rsyncs failure files (.out.bad,
+# .full, .dmesg) off the workers after each phase.  Sub-dirs parallel/
+# and retry/ keep the two phases' attempts of the same test separate (a
+# parallel-phase fail with a kernel splat is more interesting than the
+# same test passing on retry, but we want to keep both).
 details_dir="$out_dir/$run_id.details"
 
-cd ~/repos/para-fstests
+# Dispatcher binary.  WQ_SSH_BIN lets cron / the for-next worktree
+# override the path without editing this file.  Build with
+# `cargo build --release` inside ~/repos/wq-ssh; the default points at
+# the release artifact.
+wq_ssh="${WQ_SSH_BIN:-$HOME/repos/wq-ssh/target/release/wq-ssh}"
+if [ ! -x "$wq_ssh" ]; then
+	echo "wq-ssh binary not found at $wq_ssh" >&2
+	echo "  build with: (cd ~/repos/wq-ssh && cargo build --release)" >&2
+	echo "  or override WQ_SSH_BIN" >&2
+	exit 1
+fi
 
 # Each fstests phase runs inside its own transient systemd scope, i.e.
 # its own cgroup.  On any exit -- clean completion, error, external
@@ -129,9 +139,8 @@ phase_end provision
 
 # Compute the explicit parallel-phase test list on the controller.
 # Ask the first worker for the full -g auto list, then drop any tests
-# named in PARA_SKIP_FILE / PERSISTENT_HANGS_FILE.  Pass the resulting
-# list explicitly to para-fstests via -t so para-fstests stays a dumb
-# dispatcher and doesn't need to know about our quarantine policy.
+# named in PARA_SKIP_FILE / PERSISTENT_HANGS_FILE.  wq-ssh consumes the
+# resulting list verbatim; no dispatcher-side filtering needed.
 para_tests=$(ssh "${vms[0]}" 'cd /mnt/repos/fstests; sudo ./check -E EXCLUDE -n -g auto' \
 	| grep -oE '^[a-zA-Z]+/[0-9]+' | grep -v expunged | sort -u)
 # (grep -oE strips trailing whitespace; check -n pads test names with
@@ -146,53 +155,99 @@ for skipfile in "${PARA_SKIP_FILE:-}" "${PERSISTENT_HANGS_FILE:-}"; do
 done
 nafter=$(echo "$para_tests" | wc -l)
 echo "parallel-phase test list: $nbefore -> $nafter tests after filtering"
-para_tests_csv=$(echo "$para_tests" | tr '\n' ' ')
 
-# Parallel phase: explicit test list dispatched across all workers, in a cgroup.
-systemd-run --user --scope --unit="$para_scope" \
+# Slow-first dispatch: put any tests named in $SLOW_TESTS_FILE at the
+# front of the list so the long tail starts running on its own worker
+# while the short tests churn through later.  Was inside para-fstests;
+# now lives in the wrapper since wq-ssh receives the list pre-sorted.
+if [ -n "${SLOW_TESTS_FILE:-}" ] && [ -r "$SLOW_TESTS_FILE" ]; then
+	slow=$(grep -E '^[a-zA-Z]+/[0-9]+$' "$SLOW_TESTS_FILE" | sort -u)
+	if [ -n "$slow" ]; then
+		slow_in_tests=$(comm -12 <(echo "$slow") <(echo "$para_tests" | sort -u))
+		rest=$(comm -23 <(echo "$para_tests" | sort -u) <(echo "$slow"))
+		para_tests=$(printf '%s\n%s\n' "$slow_in_tests" "$rest" | grep -v '^$')
+		echo "slow-first: $(echo "$slow_in_tests" | grep -c .) slow tests dispatched first"
+	fi
+fi
+
+# Build wq-ssh's --worker flags from the VM list.
+wq_worker_args=()
+for vm in "${vms[@]}"; do
+	wq_worker_args+=(--worker "$vm")
+done
+
+# Parallel phase: dispatch para_tests across all workers via wq-ssh, in a
+# cgroup so the trap can teardown every descendant on exit.  JSONL goes
+# to $out_file; digest/run autodetects the format.
+# --no-remote-timeout: wq-ssh skips its own `timeout(1)` wrapping so we
+# can put sudo *outside* timeout in --cmd.  The opposite arrangement
+# (timeout outside sudo) leaks: sudo starts ./check in a fresh session,
+# so timeout's SIGTERM to its bash child never reaches ./check, and the
+# scratch device stays mounted long enough to cascade-poison subsequent
+# tests on the same worker.  The local watchdog (task-timeout + grace +
+# 5s) still bounds the local ssh subprocess.
+echo "$para_tests" | systemd-run --user --scope --quiet --unit="$para_scope" \
 	--property=TimeoutStopSec=10s \
 	--description="fstests parallel ($patch_name @ $hash)" \
-	--setenv=PARA_TIMEOUT="$para_timeout" \
-	--setenv=ALL_VMS="$all_vms" \
-	--setenv=PARA_TESTS="$para_tests_csv" \
-	--setenv=SLOW_TESTS_FILE="${SLOW_TESTS_FILE:-}" \
-	--setenv=DETAILS_DIR="$details_dir/parallel" \
-	-- bash -c '
-		cd ~/repos/para-fstests
-		FST_DIR=/mnt/repos/fstests EXCLUDE_FILE=EXCLUDE \
-			./para-fstests.sh -T "$PARA_TIMEOUT" -t "$PARA_TESTS" $ALL_VMS
-	' | tee "$out_file"
+	-- "$wq_ssh" \
+		"${wq_worker_args[@]}" \
+		--cmd "cd /mnt/repos/fstests && sudo TERM=dumb timeout -k 30s $para_timeout ./check -E EXCLUDE {task}" \
+		--no-remote-timeout \
+		--task-timeout "$para_timeout" \
+		--task-grace 30s \
+		--dead-threshold 3 \
+		--probe-interval 5s \
+	| tee "$out_file" >/dev/null
 phase_end parallel
 
-# Synthesize "parallel-phase timeout" entries in the out_file for both
-# quarantine lists.  This is how the digest learns about these tests:
+# Rsync failure artifacts off each worker for any failed/timed-out test.
+# Today's policy is post-pass (fstests' .dmesg file persists on disk on
+# the worker, so we don't lose dmesg context by waiting).  A future
+# wq-ssh --on-failure hook can move this to fire-and-forget at the
+# moment of failure if the dmesg-ring-rotation gap becomes a problem.
+rcli fstests-utils artifacts "$out_file" "$details_dir/parallel"
+
+# Synthesize "parallel-phase timeout" task_done events in the JSONL for
+# the two quarantine lists, so the digest sees them:
 #   PARA_SKIP        -> parallel=timeout + retry runs them -> verdict
 #                       computed normally (flake-from-timeout / hang).
 #   PERSISTENT_HANGS -> parallel=timeout + retry skipped -> digest's
 #                       fallback verdict("timeout", None) gives "hang".
-# Stub host = "preknown" so the line shape matches what digest's regex
-# expects, but it's clearly not a real worker in the per-test history.
+# worker="preknown" so digest's transport_error/synthetic checks can
+# recognize them and the per-test "vm" field is identifiable.
+synth_ts=$(date -u +%FT%T.000Z)
 for skipfile in "${PARA_SKIP_FILE:-}" "${PERSISTENT_HANGS_FILE:-}"; do
 	[ -n "$skipfile" ] && [ -r "$skipfile" ] || continue
 	while IFS= read -r tst; do
 		case "$tst" in ''|\#*) continue;; esac
-		printf 'preknown %s\npreknown %s Timeout: %s dur=0s\n' \
-			"$tst" "$tst" "$tst" >> "$out_file"
+		printf '{"event":"task_done","ts":"%s","worker":"preknown","task":"%s","exit":124,"signal":null,"timeout":true,"dur":0.0,"stdout":"","stdout_truncated":false,"stderr":"synthetic: parallel-skipped via %s","stderr_truncated":false,"transport_error":null}\n' \
+			"$synth_ts" "$tst" "$(basename "$skipfile")" >> "$out_file"
 	done < "$skipfile"
 done
 
-# Build the retry list from the parallel-run output:
-#   - tests that failed: 'Failures: <test>' on its own line (from ./check)
-#   - tests that timed out: 'vm tst Timeout: tst' inline (from ssh-one.sh)
-#   - PARA_SKIP and PERSISTENT_HANGS tests are picked up here via the
-#     synthetic Timeout lines we just appended.
-retry=$(
-	{
-		grep -E '^Failures: ' "$out_file" | awk '{print $2}'
-		grep -E ' Timeout: '  "$out_file" | awk '{
-			for (i=1; i<=NF; i++) if ($i == "Timeout:") { print $(i+1); break }
-		}'
-	} | sort -u
+# Build the retry list from the JSONL log: every task_done whose verdict
+# is fail/timeout (transport_error counted as timeout for retry purposes)
+# becomes a retry candidate.
+retry=$(python3 - "$out_file" <<'PY'
+import json, re, sys
+fail_re = re.compile(r"^Failures: ", re.M)
+out = set()
+with open(sys.argv[1]) as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if ev.get("event") != "task_done":
+            continue
+        if ev.get("timeout") or ev.get("transport_error") \
+                or fail_re.search(ev.get("stdout", "")):
+            out.add(ev["task"])
+print("\n".join(sorted(out)))
+PY
 )
 
 # Don't actually run PERSISTENT_HANGS tests in retry.  The digest will
@@ -218,56 +273,101 @@ if [ -z "$retry" ]; then
 	exit 0
 fi
 
-echo "re-running across all workers (per-test timeout: $retry_timeout):"
+# Retry parallelism.  local-vm's v0..v4 share the host, so dispatching
+# retries across all of them recreates exactly the noisy-neighbor
+# scenario the retry phase exists to escape -- a real flake gets a
+# clean shot only if the worker isn't fighting four siblings for CPU,
+# RAM, and IO.  Cloud workers are independent VMs, so parallel retry
+# is a free ~Nx speedup.  Default per backend; override with
+# $RETRY_WORKERS (space-separated list of worker names).
+retry_vms_str="${RETRY_WORKERS:-}"
+if [ -z "$retry_vms_str" ]; then
+	case "$workers" in
+		local-vm) retry_vms_str="${vms[0]}" ;;       # serial: first vm only
+		*)        retry_vms_str="${vms[*]}" ;;       # parallel: all workers
+	esac
+fi
+read -ra retry_vms <<<"$retry_vms_str"
+retry_worker_args=()
+for vm in "${retry_vms[@]}"; do
+	retry_worker_args+=(--worker "$vm")
+done
+
+if [ ${#retry_vms[@]} -eq 1 ]; then
+	echo "re-running on ${retry_vms[0]} (per-test timeout: $retry_timeout):"
+else
+	echo "re-running across ${#retry_vms[@]} workers (per-test timeout: $retry_timeout):"
+fi
 echo "$retry" | sed 's/^/    /'
 
-# Retry phase: dispatch the retry list across the same workers in a
-# fresh cgroup with the longer per-test timeout.  Previously this was
-# a serial loop on one host (made sense for local-vm where v0 had
-# extra RAM); for cloud every worker is identical and the 9 idle
-# workers were just burning money, so parallelizing is a ~Nx speedup
-# at no extra cost.
-retry_tests=$(echo "$retry" | tr '\n' ' ')
-systemd-run --user --scope --unit="$retry_scope" \
+# Retry phase: dispatch the retry list in a fresh cgroup with the
+# longer per-test timeout, using whichever worker pool the parallelism
+# policy above chose.
+echo "$retry" | systemd-run --user --scope --quiet --unit="$retry_scope" \
 	--property=TimeoutStopSec=10s \
 	--description="fstests retry ($patch_name @ $hash)" \
-	--setenv=RETRY_TIMEOUT="$retry_timeout" \
-	--setenv=RETRY_TESTS="$retry_tests" \
-	--setenv=ALL_VMS="$all_vms" \
-	--setenv=SLOW_TESTS_FILE="${SLOW_TESTS_FILE:-}" \
-	--setenv=DETAILS_DIR="$details_dir/retry" \
-	-- bash -c '
-		cd ~/repos/para-fstests
-		FST_DIR=/mnt/repos/fstests EXCLUDE_FILE=EXCLUDE \
-			./para-fstests.sh -T "$RETRY_TIMEOUT" -t "$RETRY_TESTS" $ALL_VMS
-	' | tee "$retry_file"
+	-- "$wq_ssh" \
+		"${retry_worker_args[@]}" \
+		--cmd "cd /mnt/repos/fstests && sudo TERM=dumb timeout -k 30s $retry_timeout ./check -E EXCLUDE {task}" \
+		--no-remote-timeout \
+		--task-timeout "$retry_timeout" \
+		--task-grace 30s \
+		--dead-threshold 3 \
+		--probe-interval 5s \
+	| tee "$retry_file" >/dev/null
 phase_end retry
 
-# Final summary: pass / flake / persistent-fail / persistent-hang
+# Same artifact rsync sweep for the retry phase.  Lands under details/retry
+# so a parallel splat that no longer reproduces on retry stays visible.
+rcli fstests-utils artifacts "$retry_file" "$details_dir/retry"
+
+# Final summary: pass / flake / persistent-fail / persistent-hang.
+# Derived entirely from the JSONL outputs to avoid maintaining a second
+# line-grammar parser here.
 echo
 echo "=== retry summary ==="
-{
-	for tst in $retry; do
-		# Was the test originally a failure, a timeout, or both?
-		grep -qE "Failures: $tst($|[^0-9])" "$out_file"            && orig_fail=1   || orig_fail=0
-		grep -qE "Timeout: $tst($|[^0-9])"  "$out_file"            && orig_to=1     || orig_to=0
-		# Retry outcome.
-		grep -qE "Failures: $tst($|[^0-9])" "$retry_file"          && retry_fail=1  || retry_fail=0
-		grep -qE "Timeout: $tst($|[^0-9])"  "$retry_file"          && retry_to=1    || retry_to=0
+python3 - "$out_file" "$retry_file" <<'PY' | sort
+import json, re, sys
 
-		if   [ "$retry_to"   = 1 ]; then verdict="persistent-hang"
-		elif [ "$retry_fail" = 1 ]; then verdict="persistent-fail"
-		else                             verdict="flake (passed on retry)"
-		fi
+fail_re = re.compile(r"^Failures: ", re.M)
 
-		if   [ "$orig_to"   = 1 ]; then orig="timeout"
-		elif [ "$orig_fail" = 1 ]; then orig="failure"
-		else                            orig="unknown"
-		fi
+def extract(path):
+    out = {}
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if ev.get("event") != "task_done":
+                continue
+            test = ev["task"]
+            if ev.get("timeout") or ev.get("transport_error"):
+                out[test] = "timeout"
+            elif fail_re.search(ev.get("stdout", "")):
+                out[test] = "fail"
+            elif ev.get("exit") == 0:
+                out[test] = "pass"
+            else:
+                out[test] = "fail"
+    return out
 
-		printf '  %-20s  orig=%s  retry=%s\n' "$tst" "$orig" "$verdict"
-	done
-} | sort
+para  = extract(sys.argv[1])
+retry = extract(sys.argv[2])
+for tst, r in retry.items():
+    p = para.get(tst, "absent")
+    if   r == "timeout": verdict = "persistent-hang"
+    elif r == "fail":    verdict = "persistent-fail"
+    elif r == "pass":    verdict = "flake (passed on retry)"
+    else:                verdict = r
+    if   p == "timeout": orig = "timeout"
+    elif p == "fail":    orig = "failure"
+    else:                orig = "unknown"
+    print(f"  {tst:<20}  orig={orig}  retry={verdict}")
+PY
 
 # Produce the structured digest for long-term tracking.  Fold into the
 # branch's history.json so cross-run queries see this run.
