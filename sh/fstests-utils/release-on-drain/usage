@@ -1,11 +1,13 @@
-fstests-utils release-on-drain <backend-down-cmd> <out-file>
+fstests-utils release-on-drain <backend-down-cmd> <details-dir> <out-file>
 
-Read wq-ssh JSONL on stdin, write it through to <out-file>, and fire
-"<backend-down-cmd> <worker>" in the background whenever a
-worker_stopped event with reason in {drained, quarantined} appears.
+Read wq-ssh JSONL on stdin, write it through to <out-file>, and when
+a worker_stopped event with reason in {drained, quarantined} appears:
 
-Both reasons mean the worker has exited its run loop -- "drained"
-because the queue emptied, "quarantined" because DEAD_THRESHOLD
-consecutive transport errors marked it terminally lost.  Either
-way the ssh ControlMaster is gone and the droplet is safe to
-destroy.
+  1. rsync that worker's failure artifacts (.out.bad/.full/.dmesg
+     for every test it failed or timed out on) into <details-dir>;
+  2. fire "<backend-down-cmd> <worker>" to destroy the VM/droplet.
+
+Step 1 has to happen before step 2: once the droplet is gone, the
+files on its disk are unreachable forever.  wq-ssh's pull-model
+gives us exactly that window -- worker_stopped means the worker is
+idle and ssh ControlMaster is closed, but the droplet still exists.

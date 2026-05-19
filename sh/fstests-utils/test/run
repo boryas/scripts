@@ -180,11 +180,17 @@ fi
 # drain the remaining queue in ~20-25m, then exit "drained".
 #
 # `release-on-drain` watches the JSONL stream and, every time a worker
-# emits worker_stopped(reason=drained), calls $B/down on that worker
-# in the background -- destroying that droplet so we stop paying for
-# it while the long-tail worker keeps going.  The droplet is
-# guaranteed idle at that point (the pull-model invariant: worker
-# exited => its ssh ControlMaster closed => no task is running).
+# emits worker_stopped(reason in {drained,quarantined}):
+#   1. rsyncs that worker's failure artifacts off into $details_dir
+#      while the droplet still exists;
+#   2. calls $B/down to destroy it.
+# Step 1 has to happen before step 2 -- after `down`, the IP is gone
+# and the .out.bad/.full/.dmesg files are unreachable forever.  The
+# pull-model invariant (worker_stopped => idle, ControlMaster closed,
+# droplet still alive) gives us exactly that window.  Replaces the
+# old post-dispatch artifacts sweep, which was broken by aggressive
+# per-worker teardown: by the time the sweep ran, every worker's
+# droplet was already gone.
 run_cfg="$out_file.yaml"
 run_tasks="$out_file.tasks"
 echo "$para_tests" | rcli fstests-utils tests budgets "$patch_name" > "$run_tasks"
@@ -200,13 +206,8 @@ systemd-run --user --scope --quiet --unit="$para_scope" \
 	--description="fstests run ($patch_name @ $hash)" \
 	-- "$wq_ssh" "$run_cfg" \
 	< "$run_tasks" \
-	| rcli fstests-utils release-on-drain "$B/down" "$out_file"
+	| rcli fstests-utils release-on-drain "$B/down" "$details_dir" "$out_file"
 phase_end dispatch
-
-# Rsync failure artifacts off each worker for any failed/timed-out test.
-# Post-pass: fstests' .dmesg file persists on disk on the worker, so we
-# don't lose dmesg context by waiting until the whole dispatch is done.
-rcli fstests-utils artifacts "$out_file" "$details_dir"
 
 # Synthesize task_done events for schedule:persistent_hang tests so
 # the digest sees them with verdict timeout.  No actual dispatch

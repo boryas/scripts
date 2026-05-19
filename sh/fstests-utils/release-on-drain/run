@@ -1,55 +1,163 @@
 #!/usr/bin/env python3
 """
-fstests-utils release-on-drain <backend-down-cmd> <out-file>
+fstests-utils release-on-drain <backend-down-cmd> <details-dir> <out-file>
 
-Pass-through-with-side-effect: reads wq-ssh JSONL on stdin, writes
-every line to <out-file>, and on each worker_stopped event with
-reason in {"drained", "quarantined"}, fires `<backend-down-cmd>
-<worker>` in the background to destroy that worker's VM/droplet.
+Pass-through-with-side-effect: reads wq-ssh JSONL on stdin and writes
+every line to <out-file>.  On each worker_stopped event with reason
+in {"drained", "quarantined"}, this script:
 
-Both reasons mean the worker has exited its run loop and will
-dispatch no further tasks: "drained" = work queue empty, "quarantined"
-= DEAD_THRESHOLD consecutive transport errors (terminal in wq-ssh).
-In either case the ssh ControlMaster is closed and the droplet is
-safe to destroy.
+  1. rsyncs failure artifacts (.out.bad, .full, .dmesg) for every
+     test that worker failed/timed-out, into <details-dir>/<test>.*
+  2. fires `<backend-down-cmd> <worker>` to destroy the underlying
+     VM/droplet.
+
+The order matters.  wq-ssh's pull-model guarantees a worker is idle
+the moment it emits worker_stopped: its ssh ControlMaster is closed,
+no task is running on it -- but the droplet (or local VM) is still
+alive at that exact moment.  After `down` runs, the IP is gone and
+artifacts on the worker's disk are unreachable forever.  So we
+collect first, tear down second.
+
+Each worker's collect+down runs in its own thread so a slow rsync on
+one worker doesn't stall progress on others (or starve the JSONL
+reader, which would back-pressure wq-ssh through the pipe buffer).
+At end-of-stream, we block until every worker's collect+down has
+finished, so the caller can rely on artifacts being on disk and
+droplets being deleted by the time this exits.
 
 Args:
   backend-down-cmd  Path to the worker backend's `down` script
                     (e.g. .../workers/cloud/down).  Called as
                     `<down> <worker>` per terminal worker.
+  details-dir       Per-run dir where failure artifacts land; one
+                    file per (test, suffix) at
+                    <details-dir>/<group>/<num>.<suffix>.  Created
+                    on demand.
   out-file          Destination for the JSONL stream (the same file
                     test/run would have tee'd to).
 """
 import json
 import os
+import re
 import subprocess
 import sys
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
-USAGE = "usage: fstests-utils release-on-drain <backend-down-cmd> <out-file>"
+USAGE = "usage: fstests-utils release-on-drain " \
+        "<backend-down-cmd> <details-dir> <out-file>"
+
+FAIL_LINE = re.compile(r"^Failures: ", re.M)
+# Synthetic worker names emitted by the dispatcher (no real host
+# behind them; nothing to rsync from).
+SYNTHETIC_WORKERS = {"preknown", "_skip"}
+ARTIFACT_SUFFIXES = ("out.bad", "full", "dmesg")
+FSTESTS_RESULTS_DIR = "/mnt/repos/fstests/results"
+# Per-rsync deadlines.  ConnectTimeout catches a vanished IP fast;
+# --timeout catches a stalled transfer mid-flight.  Both belt and
+# suspenders because a torn-down cloud droplet may still SYN-ACK
+# briefly before its route is withdrawn.
+SSH_CONNECT_TIMEOUT_S = 10
+RSYNC_TIMEOUT_S = 60
+
+
+def needs_pull(ev):
+    """Mirror of fstests-utils/artifacts/run: this task_done warrants
+    pulling its .out.bad/.full/.dmesg off the worker."""
+    if ev.get("event") != "task_done":
+        return False
+    if ev.get("worker") in SYNTHETIC_WORKERS:
+        return False
+    if ev.get("transport_error"):
+        return False
+    if ev.get("timeout"):
+        return True
+    return bool(FAIL_LINE.search(ev.get("stdout", "")))
+
+
+def pull_one(worker, test, dest_root):
+    """Rsync the three artifact files for one (worker, test) into
+    dest_root/<test>.<suffix>.  Errors swallowed; rsync's
+    --ignore-missing-args means a missing suffix on the worker is
+    not an error."""
+    out = dest_root / test
+    out.parent.mkdir(parents=True, exist_ok=True)
+    for suf in ARTIFACT_SUFFIXES:
+        try:
+            subprocess.run(
+                [
+                    "rsync", "-az",
+                    "--rsync-path=sudo rsync",
+                    "--ignore-missing-args",
+                    "--timeout", str(RSYNC_TIMEOUT_S),
+                    "-e", f"ssh -o ConnectTimeout={SSH_CONNECT_TIMEOUT_S}",
+                    f"{worker}:{FSTESTS_RESULTS_DIR}/{test}.{suf}",
+                    f"{out}.{suf}",
+                ],
+                check=False,
+                stderr=subprocess.DEVNULL,
+                timeout=RSYNC_TIMEOUT_S + SSH_CONNECT_TIMEOUT_S + 5,
+            )
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def release_worker(down_cmd, worker, tasks, details_dir):
+    """Worker bottomed out -- pull every failure artifact off it, then
+    destroy it.  Sequential rsync within one worker so we reuse the
+    ssh control connection if one is still around."""
+    for task in tasks:
+        pull_one(worker, task, details_dir)
+    if down_cmd:
+        # Fire and wait: we want this worker's droplet actually gone
+        # before this thread returns, so the test/run trap doesn't
+        # try to re-delete it (idempotent but noisy).  Errors
+        # swallowed -- the trap's full-teardown sweep at end-of-run
+        # is the safety net.
+        subprocess.run(
+            [down_cmd, worker],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
 
 
 def main():
-    if len(sys.argv) != 3:
+    if len(sys.argv) != 4:
         print(USAGE, file=sys.stderr)
         sys.exit(22)
-    down_cmd, out_path = sys.argv[1], sys.argv[2]
+    down_cmd, details_dir, out_path = (
+        sys.argv[1], Path(sys.argv[2]), sys.argv[3])
     if not os.path.isfile(down_cmd) or not os.access(down_cmd, os.X_OK):
-        # not fatal -- maybe the backend doesn't ship a `down`; we
-        # still tee the JSONL.  Just warn.
         print(f"release-on-drain: warning: {down_cmd} not executable; "
-              f"workers won't be released individually", file=sys.stderr)
+              "workers won't be released individually", file=sys.stderr)
         down_cmd = None
+    details_dir.mkdir(parents=True, exist_ok=True)
+
+    # Per-worker list of tests whose artifacts we'll need to rsync
+    # when that worker emits worker_stopped.  Accumulated as task_done
+    # events stream by; drained into release_worker() on stop.
+    failing = defaultdict(list)
+    # Parallelism cap: at peak we might see many workers drain within
+    # seconds of each other (queue empties, everyone hits the
+    # work_rx-closed path at once).  8 in flight keeps the local fd
+    # count and concurrent ssh handshakes reasonable.
+    pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="release")
 
     with open(out_path, "w") as out_f:
         for line in sys.stdin:
             out_f.write(line)
             out_f.flush()
-            if not down_cmd:
-                continue
             try:
                 ev = json.loads(line)
             except json.JSONDecodeError:
                 continue
+
+            if needs_pull(ev):
+                failing[ev["worker"]].append(ev["task"])
+                continue
+
             if ev.get("event") != "worker_stopped":
                 continue
             if ev.get("reason") not in ("drained", "quarantined"):
@@ -57,14 +165,13 @@ def main():
             worker = ev.get("worker")
             if not worker:
                 continue
-            # Fire and forget; the down command does its own cleanup
-            # and we don't want to block the JSONL stream waiting on
-            # it (a hung doctl call shouldn't stall the dispatcher).
-            subprocess.Popen(
-                [down_cmd, worker],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+
+            tasks = failing.pop(worker, [])
+            pool.submit(release_worker, down_cmd, worker, tasks, details_dir)
+
+    # Block until every in-flight release_worker is done so the caller
+    # can rely on artifacts being on disk and droplets being gone.
+    pool.shutdown(wait=True)
 
 
 if __name__ == "__main__":

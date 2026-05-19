@@ -1,5 +1,19 @@
 #!/usr/bin/env bash
-# workers/local-vm/down: shut down all local VMs.  Idempotent; safe to
-# call when nothing is running.
+# workers/local-vm/down [HOST]: shut down local VMs.  Idempotent.
+#
+# With no args: shut down every running VM (full teardown).  Called
+# from test/run's trap on exit/interrupt.
+#
+# With one HOST arg ("fstests@vN", matching what `list` emits):
+# shut down just that VM.  Called by release-on-drain when worker
+# vN's wq-ssh loop emits worker_stopped, so only the drained VM is
+# brought down while the rest keep working.
 set -eu
-exec rcli vm down all
+
+if [ $# -eq 0 ]; then
+	exec rcli vm down all
+fi
+
+host=$1
+vm=${host#fstests@}
+exec rcli vm down "$vm"
