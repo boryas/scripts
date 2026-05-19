@@ -1,0 +1,9 @@
+fstests-utils release-on-drain <backend-down-cmd> <out-file>
+
+Read wq-ssh JSONL on stdin, write it through to <out-file>, and fire
+"<backend-down-cmd> <worker>" in the background whenever a
+worker_stopped event with reason=drained appears.
+
+That's wq-ssh's "this worker has nothing more to do" signal; the
+pull-model guarantees the worker is idle at that moment, so it's
+safe to destroy its underlying VM/droplet.

@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""
+fstests-utils release-on-drain <backend-down-cmd> <out-file>
+
+Pass-through-with-side-effect: reads wq-ssh JSONL on stdin, writes
+every line to <out-file>, and on each worker_stopped event with
+reason=drained, fires `<backend-down-cmd> <worker>` in the background
+to destroy that worker's VM/droplet.
+
+This works because of the wq-ssh pull-model invariant: a worker only
+emits worker_stopped after its run loop exits, which means its ssh
+ControlMaster is closed and no task is running on it.  Destroying
+the underlying droplet at that moment is safe.
+
+Args:
+  backend-down-cmd  Path to the worker backend's `down` script
+                    (e.g. .../workers/cloud/down).  Called as
+                    `<down> <worker>` per drained worker.
+  out-file          Destination for the JSONL stream (the same file
+                    test/run would have tee'd to).
+"""
+import json
+import os
+import subprocess
+import sys
+
+USAGE = "usage: fstests-utils release-on-drain <backend-down-cmd> <out-file>"
+
+
+def main():
+    if len(sys.argv) != 3:
+        print(USAGE, file=sys.stderr)
+        sys.exit(22)
+    down_cmd, out_path = sys.argv[1], sys.argv[2]
+    if not os.path.isfile(down_cmd) or not os.access(down_cmd, os.X_OK):
+        # not fatal -- maybe the backend doesn't ship a `down`; we
+        # still tee the JSONL.  Just warn.
+        print(f"release-on-drain: warning: {down_cmd} not executable; "
+              f"workers won't be released individually", file=sys.stderr)
+        down_cmd = None
+
+    with open(out_path, "w") as out_f:
+        for line in sys.stdin:
+            out_f.write(line)
+            out_f.flush()
+            if not down_cmd:
+                continue
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if ev.get("event") != "worker_stopped":
+                continue
+            if ev.get("reason") != "drained":
+                continue
+            worker = ev.get("worker")
+            if not worker:
+                continue
+            # Fire and forget; the down command does its own cleanup
+            # and we don't want to block the JSONL stream waiting on
+            # it (a hung doctl call shouldn't stall the dispatcher).
+            subprocess.Popen(
+                [down_cmd, worker],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+
+
+if __name__ == "__main__":
+    main()
