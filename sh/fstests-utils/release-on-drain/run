@@ -4,18 +4,19 @@ fstests-utils release-on-drain <backend-down-cmd> <out-file>
 
 Pass-through-with-side-effect: reads wq-ssh JSONL on stdin, writes
 every line to <out-file>, and on each worker_stopped event with
-reason=drained, fires `<backend-down-cmd> <worker>` in the background
-to destroy that worker's VM/droplet.
+reason in {"drained", "quarantined"}, fires `<backend-down-cmd>
+<worker>` in the background to destroy that worker's VM/droplet.
 
-This works because of the wq-ssh pull-model invariant: a worker only
-emits worker_stopped after its run loop exits, which means its ssh
-ControlMaster is closed and no task is running on it.  Destroying
-the underlying droplet at that moment is safe.
+Both reasons mean the worker has exited its run loop and will
+dispatch no further tasks: "drained" = work queue empty, "quarantined"
+= DEAD_THRESHOLD consecutive transport errors (terminal in wq-ssh).
+In either case the ssh ControlMaster is closed and the droplet is
+safe to destroy.
 
 Args:
   backend-down-cmd  Path to the worker backend's `down` script
                     (e.g. .../workers/cloud/down).  Called as
-                    `<down> <worker>` per drained worker.
+                    `<down> <worker>` per terminal worker.
   out-file          Destination for the JSONL stream (the same file
                     test/run would have tee'd to).
 """
@@ -51,7 +52,7 @@ def main():
                 continue
             if ev.get("event") != "worker_stopped":
                 continue
-            if ev.get("reason") != "drained":
+            if ev.get("reason") not in ("drained", "quarantined"):
                 continue
             worker = ev.get("worker")
             if not worker:
