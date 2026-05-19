@@ -71,7 +71,6 @@ cat > "$cfg" <<EOF
 workers:
 $(printf '  - %s\n' $hosts)
 cmd: 'cd /mnt/repos/fstests && sudo TERM=dumb timeout -k 30s $timeout ./check -E EXCLUDE {}'
-no_remote_timeout: true
 task_timeout: $timeout
 task_grace: 30s
 dead_threshold: 3

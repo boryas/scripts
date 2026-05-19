@@ -175,13 +175,14 @@ fi
 # itself is fed to wq-ssh on stdin, not referenced from the YAML --
 # pulling it from a stdin pipe and a yaml field would be redundant.
 #
-# --no-remote-timeout: wq-ssh skips its own `timeout(1)` wrapping so we
-# put sudo *outside* timeout in cmd.  The opposite arrangement (timeout
-# outside sudo) leaks: sudo starts ./check in a fresh session, so
-# timeout's SIGTERM to its bash child never reaches ./check, and the
-# scratch device stays mounted long enough to cascade-poison subsequent
-# tests on the same worker.  The local watchdog (task-timeout + grace
-# + 5s) still bounds the local ssh subprocess.
+# cmd places sudo *outside* timeout so timeout is in the position to
+# kill ./check's pgroup.  The opposite arrangement (timeout outside
+# sudo) leaks: sudo starts ./check in a fresh session, so timeout's
+# SIGTERM to its bash child never reaches ./check, and the scratch
+# device stays mounted long enough to cascade-poison subsequent tests
+# on the same worker.  wq-ssh itself never wraps user commands -- this
+# correctness is the cmd template's responsibility.  The local watchdog
+# (task_timeout + task_grace + 5s) is wq-ssh's only enforcement layer.
 parallel_cfg="$out_file.parallel.yaml"
 parallel_tasks="$out_file.parallel.tasks"
 echo "$para_tests" > "$parallel_tasks"
@@ -189,7 +190,6 @@ cat > "$parallel_cfg" <<EOF
 workers:
 $(printf '  - %s\n' "${vms[@]}")
 cmd: 'cd /mnt/repos/fstests && sudo TERM=dumb timeout -k 30s $para_timeout ./check -E EXCLUDE {}'
-no_remote_timeout: true
 task_timeout: $para_timeout
 task_grace: 30s
 dead_threshold: 3
@@ -310,7 +310,6 @@ cat > "$retry_cfg" <<EOF
 workers:
 $(printf '  - %s\n' "${retry_vms[@]}")
 cmd: 'cd /mnt/repos/fstests && sudo TERM=dumb timeout -k 30s $retry_timeout ./check -E EXCLUDE {}'
-no_remote_timeout: true
 task_timeout: $retry_timeout
 task_grace: 30s
 dead_threshold: 3
