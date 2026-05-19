@@ -170,33 +170,40 @@ if [ -n "${SLOW_TESTS_FILE:-}" ] && [ -r "$SLOW_TESTS_FILE" ]; then
 	fi
 fi
 
-# Build wq-ssh's --worker flags from the VM list.
-wq_worker_args=()
-for vm in "${vms[@]}"; do
-	wq_worker_args+=(--worker "$vm")
-done
-
-# Parallel phase: dispatch para_tests across all workers via wq-ssh, in a
-# cgroup so the trap can teardown every descendant on exit.  JSONL goes
-# to $out_file; digest/run autodetects the format.
+# Save the resolved YAML + task list next to the JSONL for forensic
+# value (you can eyeball what the run actually saw).  The task list
+# itself is fed to wq-ssh on stdin, not referenced from the YAML --
+# pulling it from a stdin pipe and a yaml field would be redundant.
+#
 # --no-remote-timeout: wq-ssh skips its own `timeout(1)` wrapping so we
-# can put sudo *outside* timeout in --cmd.  The opposite arrangement
-# (timeout outside sudo) leaks: sudo starts ./check in a fresh session,
-# so timeout's SIGTERM to its bash child never reaches ./check, and the
+# put sudo *outside* timeout in cmd.  The opposite arrangement (timeout
+# outside sudo) leaks: sudo starts ./check in a fresh session, so
+# timeout's SIGTERM to its bash child never reaches ./check, and the
 # scratch device stays mounted long enough to cascade-poison subsequent
-# tests on the same worker.  The local watchdog (task-timeout + grace +
-# 5s) still bounds the local ssh subprocess.
-echo "$para_tests" | systemd-run --user --scope --quiet --unit="$para_scope" \
+# tests on the same worker.  The local watchdog (task-timeout + grace
+# + 5s) still bounds the local ssh subprocess.
+parallel_cfg="$out_file.parallel.yaml"
+parallel_tasks="$out_file.parallel.tasks"
+echo "$para_tests" > "$parallel_tasks"
+cat > "$parallel_cfg" <<EOF
+workers:
+$(printf '  - %s\n' "${vms[@]}")
+cmd: 'cd /mnt/repos/fstests && sudo TERM=dumb timeout -k 30s $para_timeout ./check -E EXCLUDE {}'
+no_remote_timeout: true
+task_timeout: $para_timeout
+task_grace: 30s
+dead_threshold: 3
+probe_interval: 5s
+EOF
+
+# Parallel phase: dispatch via wq-ssh, in a cgroup so the trap can
+# teardown every descendant on exit.  JSONL goes to $out_file;
+# digest/run autodetects the format.
+systemd-run --user --scope --quiet --unit="$para_scope" \
 	--property=TimeoutStopSec=10s \
 	--description="fstests parallel ($patch_name @ $hash)" \
-	-- "$wq_ssh" \
-		"${wq_worker_args[@]}" \
-		--cmd "cd /mnt/repos/fstests && sudo TERM=dumb timeout -k 30s $para_timeout ./check -E EXCLUDE {}" \
-		--no-remote-timeout \
-		--task-timeout "$para_timeout" \
-		--task-grace 30s \
-		--dead-threshold 3 \
-		--probe-interval 5s \
+	-- "$wq_ssh" "$parallel_cfg" \
+	< "$parallel_tasks" \
 	| tee "$out_file" >/dev/null
 phase_end parallel
 
@@ -288,10 +295,6 @@ if [ -z "$retry_vms_str" ]; then
 	esac
 fi
 read -ra retry_vms <<<"$retry_vms_str"
-retry_worker_args=()
-for vm in "${retry_vms[@]}"; do
-	retry_worker_args+=(--worker "$vm")
-done
 
 if [ ${#retry_vms[@]} -eq 1 ]; then
 	echo "re-running on ${retry_vms[0]} (per-test timeout: $retry_timeout):"
@@ -300,20 +303,28 @@ else
 fi
 echo "$retry" | sed 's/^/    /'
 
+retry_cfg="$retry_file.retry.yaml"
+retry_tasks="$retry_file.retry.tasks"
+echo "$retry" > "$retry_tasks"
+cat > "$retry_cfg" <<EOF
+workers:
+$(printf '  - %s\n' "${retry_vms[@]}")
+cmd: 'cd /mnt/repos/fstests && sudo TERM=dumb timeout -k 30s $retry_timeout ./check -E EXCLUDE {}'
+no_remote_timeout: true
+task_timeout: $retry_timeout
+task_grace: 30s
+dead_threshold: 3
+probe_interval: 5s
+EOF
+
 # Retry phase: dispatch the retry list in a fresh cgroup with the
 # longer per-test timeout, using whichever worker pool the parallelism
 # policy above chose.
-echo "$retry" | systemd-run --user --scope --quiet --unit="$retry_scope" \
+systemd-run --user --scope --quiet --unit="$retry_scope" \
 	--property=TimeoutStopSec=10s \
 	--description="fstests retry ($patch_name @ $hash)" \
-	-- "$wq_ssh" \
-		"${retry_worker_args[@]}" \
-		--cmd "cd /mnt/repos/fstests && sudo TERM=dumb timeout -k 30s $retry_timeout ./check -E EXCLUDE {}" \
-		--no-remote-timeout \
-		--task-timeout "$retry_timeout" \
-		--task-grace 30s \
-		--dead-threshold 3 \
-		--probe-interval 5s \
+	-- "$wq_ssh" "$retry_cfg" \
+	< "$retry_tasks" \
 	| tee "$retry_file" >/dev/null
 phase_end retry
 
