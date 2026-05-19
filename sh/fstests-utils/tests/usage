@@ -7,3 +7,7 @@ fstests-utils tests <subcommand> [args]
                                 with per-task timeout budget on stdout
   fast [branch]                 read test names from stdin, emit only
                                 those whose budget is at the 60s floor
+  slow-tail [branch]            read test names from stdin, emit only
+                                those whose budget exceeds 30m (the
+                                two-pool dispatcher routes them to a
+                                dedicated slow_tail worker pool)

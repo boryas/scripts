@@ -61,21 +61,24 @@
 #   once the underlying issue is resolved.
 
 # ---------------------------------------------------------------------------
-# Suspected hangs with a generous 1h budget.  Previously schedule:
-# persistent_hang skipped these entirely; the new approach gives them
-# enough budget to actually finish if they're going to.  If they
-# really hang every time, the cost is N workers * 1h per run; cheap
-# enough to learn from.  Demote to a shorter budget once history
-# accumulates real (non-timeout) dur observations.
+# Tests that take >30m -- routed to the slow_tail dispatch pool so they
+# don't gate the wall-clock of the regular pool's results.  The split
+# threshold is "budget > 30m" so the operator override below is what
+# actually determines pool placement.
 # ---------------------------------------------------------------------------
 
 btrfs/187:
   slow: true
-  timeout_budget: 1h
+  # ~95 minutes observed on a fast droplet; 2h gives margin for slower ones.
+  timeout_budget: 2h
 
+# generic/166: previously thought to hang, passed in 14min on a fast
+# droplet.  Give it 30m so it lands in the *regular* pool (budget <=
+# 30m); after a few real-history runs the derivation should pin it
+# closer to 28m on its own and the override can be removed.
 generic/166:
   slow: true
-  timeout_budget: 1h
+  timeout_budget: 30m
 
 # ---------------------------------------------------------------------------
 # Tests reliably needing >8m but ≤30m -- give them the bigger budget up

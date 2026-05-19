@@ -32,11 +32,15 @@ phase_end() {
 
 # Maximum per-task budget envelope.  Sets wq-ssh's local-watchdog
 # ceiling; per-test budgets (encoded in the JSONL task stream) enforce
-# the real deadline via `timeout(1)` inside the cmd template.  Bumped
-# to 90m to accommodate the 1h operator override on btrfs/187 and
-# generic/166 -- those tests were previously skipped via schedule:
-# persistent_hang and now get a real chance to finish.
-max_task_timeout="${MAX_TASK_TIMEOUT:-90m}"
+# the real deadline via `timeout(1)` inside the cmd template.
+# Has to be >= the longest per-task budget; currently btrfs/187 at 2h.
+max_task_timeout="${MAX_TASK_TIMEOUT:-2h30m}"
+
+# Two-pool dispatch: tests with budget > 30m go to a dedicated
+# slow_tail pool with $SLOW_TAIL_WORKERS workers (default 1) so
+# the regular pool's results land at ~regular-pool wall-clock instead
+# of being gated by the slowest test.
+slow_tail_workers="${SLOW_TAIL_WORKERS:-1}"
 
 # Source kernel tree to build / boot from.  Defaults to the user's main
 # repo.  The for-next cron sets this to ~/repos/linux-fnext so the
@@ -117,8 +121,10 @@ fi
 # what prevents the "zombie para-fstests pounding deleted IPs for
 # an hour" failure mode that bit us earlier.
 para_scope="fstests-dispatch-$$"
+slow_tail_scope="fstests-slow-tail-$$"
 trap '
-	systemctl --user stop "$para_scope.scope"  2>/dev/null || true
+	systemctl --user stop "$para_scope.scope"      2>/dev/null || true
+	systemctl --user stop "$slow_tail_scope.scope" 2>/dev/null || true
 	"$B/down"
 ' EXIT INT TERM
 
@@ -176,36 +182,106 @@ if [ -n "$slow_tests" ]; then
 	echo "slow-first: $(echo "$slow_in_tests" | grep -c .) slow tests dispatched first"
 fi
 
-# Save the resolved YAML + task list next to the JSONL for forensic
-# value (you can eyeball what the run actually saw).
+# Two-pool partition: tests with budget > 30m go to a dedicated
+# "slow_tail" worker pool of $SLOW_TAIL_WORKERS workers, while the
+# rest go to the regular pool.  The regular pool's results land much
+# sooner (no longer gated by btrfs/187 at ~95min); the slow_tail
+# pool keeps churning until its long-runner finishes.
 #
-# Each task line carries its own `timeout:` field, derived from
-# tests.yaml + history.  wq-ssh exports that as $TASK_TIMEOUT on the
-# worker; the cmd template uses it to drive a per-test timeout(1)
-# invocation.
-#
-# cmd places sudo *outside* timeout so timeout owns the process group
-# and SIGTERM reaches ./check.  The opposite arrangement (timeout
-# outside sudo) leaks because sudo creates a fresh session.
-run_cfg="$out_file.yaml"
-run_tasks="$out_file.tasks"
-echo "$para_tests" | rcli fstests-utils tests budgets "$patch_name" > "$run_tasks"
-cat > "$run_cfg" <<EOF
+# Skipped (single-pool) when:
+#   - no slow_tail tests in the dispatched list, OR
+#   - $SLOW_TAIL_WORKERS is 0, OR
+#   - we'd need to give the regular pool fewer than 1 worker.
+slow_tail_tests=$(echo "$para_tests" | rcli fstests-utils tests slow-tail "$patch_name")
+use_two_pool=0
+if [ -n "$slow_tail_tests" ] \
+   && [ "$slow_tail_workers" -gt 0 ] \
+   && [ "$slow_tail_workers" -lt "${#vms[@]}" ]; then
+	use_two_pool=1
+fi
+
+# cmd template: sudo *outside* timeout so timeout owns the pgroup and
+# SIGTERM reaches ./check.  $TASK_TIMEOUT is exported per-task by
+# wq-ssh's env-var contract (driven by the JSONL `timeout` field).
+cmd_template='cd /mnt/repos/fstests && sudo TERM=dumb timeout -k 30s "$TASK_TIMEOUT" ./check -E EXCLUDE {}'
+
+if [ "$use_two_pool" -eq 0 ]; then
+	# Single-pool dispatch (slow_tail empty or not enabled).
+	run_cfg="$out_file.yaml"
+	run_tasks="$out_file.tasks"
+	echo "$para_tests" | rcli fstests-utils tests budgets "$patch_name" > "$run_tasks"
+	cat > "$run_cfg" <<EOF
 workers:
 $(printf '  - %s\n' "${vms[@]}")
-cmd: 'cd /mnt/repos/fstests && sudo TERM=dumb timeout -k 30s "\$TASK_TIMEOUT" ./check -E EXCLUDE {}'
+cmd: '$cmd_template'
+task_timeout: $max_task_timeout
+EOF
+	systemd-run --user --scope --quiet --unit="$para_scope" \
+		--property=TimeoutStopSec=10s \
+		--description="fstests run ($patch_name @ $hash)" \
+		-- "$wq_ssh" "$run_cfg" \
+		< "$run_tasks" \
+		| tee "$out_file" >/dev/null
+else
+	# Two-pool: partition tests and workers.  Filter para_tests in
+	# its existing (slow-first-sorted) order; grep -Fxv drops lines
+	# that appear in the slow_tail set.  (-F: fixed strings, -x:
+	# full-line, -v: invert.)
+	regular_tests=$(echo "$para_tests" | grep -Fxv -f <(echo "$slow_tail_tests"))
+	n_total=${#vms[@]}
+	n_slow=$slow_tail_workers
+	n_regular=$((n_total - n_slow))
+	regular_vms=("${vms[@]:0:$n_regular}")
+	slow_tail_vms=("${vms[@]:$n_regular}")
+
+	regular_cfg="$out_file.regular.yaml"
+	regular_tasks_file="$out_file.regular.tasks"
+	slow_tail_cfg="$out_file.slow-tail.yaml"
+	slow_tail_tasks_file="$out_file.slow-tail.tasks"
+	out_regular="$out_file.regular"
+	out_slow_tail="$out_file.slow-tail"
+
+	echo "$regular_tests"   | rcli fstests-utils tests budgets "$patch_name" > "$regular_tasks_file"
+	echo "$slow_tail_tests" | rcli fstests-utils tests budgets "$patch_name" > "$slow_tail_tasks_file"
+
+	cat > "$regular_cfg" <<EOF
+workers:
+$(printf '  - %s\n' "${regular_vms[@]}")
+cmd: '$cmd_template'
+task_timeout: $max_task_timeout
+EOF
+	cat > "$slow_tail_cfg" <<EOF
+workers:
+$(printf '  - %s\n' "${slow_tail_vms[@]}")
+cmd: '$cmd_template'
 task_timeout: $max_task_timeout
 EOF
 
-# Dispatch: single phase, per-task budgets, in a cgroup so the trap can
-# teardown every descendant on exit.  JSONL goes to $out_file;
-# digest/run reads it.
-systemd-run --user --scope --quiet --unit="$para_scope" \
-	--property=TimeoutStopSec=10s \
-	--description="fstests run ($patch_name @ $hash)" \
-	-- "$wq_ssh" "$run_cfg" \
-	< "$run_tasks" \
-	| tee "$out_file" >/dev/null
+	echo "two-pool dispatch: regular pool $n_regular workers, $(echo "$regular_tests" | grep -c .) tests"
+	echo "                   slow_tail pool $n_slow workers, $(echo "$slow_tail_tests" | grep -c .) tests"
+
+	# Both dispatches in their own scopes, in parallel.  Each writes
+	# its own JSONL; merged into $out_file after both finish (avoids
+	# byte-interleaving when concurrent task_done events have large
+	# stdout captures that exceed PIPE_BUF).
+	systemd-run --user --scope --quiet --unit="$para_scope" \
+		--property=TimeoutStopSec=10s \
+		--description="fstests regular ($patch_name @ $hash)" \
+		-- "$wq_ssh" "$regular_cfg" \
+		< "$regular_tasks_file" > "$out_regular" &
+	regular_pid=$!
+	systemd-run --user --scope --quiet --unit="$slow_tail_scope" \
+		--property=TimeoutStopSec=10s \
+		--description="fstests slow_tail ($patch_name @ $hash)" \
+		-- "$wq_ssh" "$slow_tail_cfg" \
+		< "$slow_tail_tasks_file" > "$out_slow_tail" &
+	slow_tail_pid=$!
+	wait "$regular_pid" "$slow_tail_pid"
+
+	# Merge.  Order doesn't matter for the digest -- it processes
+	# task_done events independently.
+	cat "$out_regular" "$out_slow_tail" > "$out_file"
+fi
 phase_end dispatch
 
 # Rsync failure artifacts off each worker for any failed/timed-out test.

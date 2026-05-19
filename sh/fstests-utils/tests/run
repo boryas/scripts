@@ -166,6 +166,9 @@ def _load_for_budget(args, name):
     return tests_meta, history_tests
 
 
+SLOW_TAIL_THRESHOLD_S = 30 * 60   # tests with budget > this go to slow_tail
+
+
 def cmd_fast(args):
     """`tests fast [branch]` -- read test names from stdin, emit those
     whose derived budget is at the 60s floor.  Used by test/run's
@@ -186,6 +189,25 @@ def cmd_fast(args):
         except ValueError:
             continue
         if secs == BUDGET_FLOOR_S:
+            print(name)
+
+
+def cmd_slow_tail(args):
+    """`tests slow-tail [branch]` -- read test names from stdin, emit
+    those whose derived budget exceeds SLOW_TAIL_THRESHOLD (30m).
+    test/run routes these to a dedicated slow_tail worker pool so they
+    don't gate the wall-clock of the regular pool's results."""
+    tests_meta, history_tests = _load_for_budget(args, "slow-tail")
+    for line in sys.stdin:
+        name = line.strip()
+        if not name or name.startswith("#"):
+            continue
+        budget = derive_budget(name, tests_meta, history_tests)
+        try:
+            secs = parse_humantime_to_s(budget)
+        except ValueError:
+            continue
+        if secs > SLOW_TAIL_THRESHOLD_S:
             print(name)
 
 
@@ -228,6 +250,7 @@ SUBCOMMANDS = {
     "meta": cmd_meta,
     "budgets": cmd_budgets,
     "fast": cmd_fast,
+    "slow-tail": cmd_slow_tail,
 }
 
 
