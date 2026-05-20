@@ -212,8 +212,26 @@ task_timeout: $max_task_timeout
 health:
   check: |
     set -eu
-    mountpoint -q /mnt/scratch && { echo 'unhealthy: /mnt/scratch still mounted' >&2; exit 1; }
-    mountpoint -q /mnt/test && { echo 'unhealthy: /mnt/test still mounted' >&2; exit 1; }
+    # Active probe: try to actually unmount /mnt/scratch.  A healthy
+    # worker has scratch either unmounted or mountable -- fstests'
+    # per-test setup expects to be able to umount, mkfs, remount it.
+    # If umount fails, the kernel is still holding the FS busy from
+    # a previous test's killed processes.  We leave scratch
+    # unmounted on the way out; fstests' next-test setup mkfs's and
+    # remounts it.
+    #
+    # NB: /mnt/test is persistent (fstests' TEST_DEV) and stays
+    # mounted across the run -- not something to check here.
+    if mountpoint -q /mnt/scratch; then
+      sudo umount /mnt/scratch 2>/dev/null || {
+        echo 'unhealthy: /mnt/scratch busy, umount returned EBUSY' >&2
+        exit 1
+      }
+    fi
+    # Catch a ./check still running -- which happens after a transport
+    # drop, since sudo gives the test its own session and sshd's
+    # session-close SIGHUP doesn't propagate.
+    pgrep -f 'check -E EXCLUDE' >/dev/null && { echo 'unhealthy: ./check still running' >&2; exit 1; }
     pgrep -x fsstress >/dev/null && { echo 'unhealthy: fsstress still running' >&2; exit 1; }
     pgrep -x fsx >/dev/null && { echo 'unhealthy: fsx still running' >&2; exit 1; }
     exit 0
@@ -237,15 +255,22 @@ health:
     # recheck will fail and we quarantine -- which is the right
     # answer for a truly stuck process.
     sudo pkill -f 'check -E EXCLUDE|fsstress|fsx|xfs_io|fio|btrfs (send|receive|balance|scrub)' 2>/dev/null || true
-    # Settle: let the kernel release inodes after the SIGTERMed
-    # processes are reaped, so umount won't see EBUSY from
-    # references that are about to disappear.
-    sleep 3
-    # Plain unmount.  No -l: if the FS is still busy, we want the
-    # recheck to fail and the worker to quarantine cleanly, not
-    # paper over it with a lazy detach that hides ongoing kernel work.
-    sudo umount /mnt/scratch 2>/dev/null || true
-    sudo umount /mnt/test 2>/dev/null || true
+    # Nudge the kernel to flush dirty data so btrfs background workers
+    # (delalloc, endio, ...) can wind down and release the mount.
+    sudo sync 2>/dev/null || true
+    # Poll-and-retry umount.  Empirically after a SIGKILL'd btrfs/187
+    # the FS stays busy in the kernel for ~5-15s while background
+    # workers drain -- a one-shot umount immediately after pkill
+    # returns EBUSY.  Retry up to ~30s; if scratch is still busy
+    # past that, give up and let the recheck quarantine the worker.
+    # Don't touch /mnt/test (TEST_DEV, persistent).
+    for _ in $(seq 30); do
+      if ! mountpoint -q /mnt/scratch; then
+        break
+      fi
+      sudo umount /mnt/scratch 2>/dev/null || true
+      sleep 1
+    done
 EOF
 
 systemd-run --user --scope --quiet --unit="$para_scope" \
