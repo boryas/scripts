@@ -264,7 +264,7 @@ health:
     # returns EBUSY.  Retry up to ~30s; if scratch is still busy
     # past that, give up and let the recheck quarantine the worker.
     # Don't touch /mnt/test (TEST_DEV, persistent).
-    for _ in $(seq 30); do
+    for _ in \$(seq 30); do
       if ! mountpoint -q /mnt/scratch; then
         break
       fi
