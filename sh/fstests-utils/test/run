@@ -218,22 +218,25 @@ health:
     pgrep -x fsx >/dev/null && { echo 'unhealthy: fsx still running' >&2; exit 1; }
     exit 0
   remediate: |
-    # By the time we run, ./check is already gone -- timeout(1) sent
-    # SIGKILL at the grace deadline and wq-ssh emitted task_done
-    # before this iteration started.  What's left to clean up is the
-    # test descendants that escaped the kill: ./check invokes the
-    # test scripts via sudo, which creates a new session, so the
-    # pgroup signal from timeout(1) doesn't reach them and they keep
-    # the filesystem busy.  (A cgroup wrap on the cmd template would
-    # eliminate this leak at the source; see task #94.)
+    # What's still running depends on how the previous task ended:
+    #   - timeout(1) fired: ./check is SIGKILLed and gone, but its
+    #     test-script descendants escaped the pgroup kill via sudo's
+    #     new session and are still busy on the mount.
+    #   - ssh transport drop: ./check itself may still be running --
+    #     the dispatcher gave up, but the remote process didn't get
+    #     the message and is happily continuing its test.
+    # So pkill both ./check and the known stressors.  pkill is a
+    # no-op for whatever's already dead, so this is safe in either
+    # case.  (A cgroup wrap on the cmd template would eliminate the
+    # leak at its source; see task #94.)
     #
-    # SIGTERM, not SIGKILL: these processes have no useful cleanup
-    # for fsstress-class workloads, but for btrfs send/balance/scrub
-    # a graceful exit lets them release kernel resources tidily.  If
-    # something ignores the term, the recheck will fail and we'll
-    # quarantine -- which is the right answer for a truly stuck
-    # process anyway.
-    sudo pkill -f 'fsstress|fsx|xfs_io|fio|btrfs (send|receive|balance|scrub)' 2>/dev/null || true
+    # SIGTERM, not SIGKILL: ./check has cleanup traps that try to
+    # unmount on the way out; the stressors don't need ceremony but
+    # for btrfs send/balance/scrub a graceful exit lets them release
+    # kernel resources tidily.  If something ignores the term, the
+    # recheck will fail and we quarantine -- which is the right
+    # answer for a truly stuck process.
+    sudo pkill -f 'check -E EXCLUDE|fsstress|fsx|xfs_io|fio|btrfs (send|receive|balance|scrub)' 2>/dev/null || true
     # Settle: let the kernel release inodes after the SIGTERMed
     # processes are reaped, so umount won't see EBUSY from
     # references that are about to disappear.
