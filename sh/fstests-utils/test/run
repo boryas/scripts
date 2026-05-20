@@ -230,8 +230,11 @@ health:
     fi
     # Catch a ./check still running -- which happens after a transport
     # drop, since sudo gives the test its own session and sshd's
-    # session-close SIGHUP doesn't propagate.
-    pgrep -f 'check -E EXCLUDE' >/dev/null && { echo 'unhealthy: ./check still running' >&2; exit 1; }
+    # session-close SIGHUP doesn't propagate.  Character class on the
+    # leading "c" avoids self-matching: the pattern is "[c]heck", whose
+    # regex matches the literal "check" -- the cmdline of pgrep itself
+    # (which contains "[c]heck") doesn't, since "[c]" isn't "c".
+    pgrep -f '[c]heck -E EXCLUDE' >/dev/null && { echo 'unhealthy: ./check still running' >&2; exit 1; }
     pgrep -x fsstress >/dev/null && { echo 'unhealthy: fsstress still running' >&2; exit 1; }
     pgrep -x fsx >/dev/null && { echo 'unhealthy: fsx still running' >&2; exit 1; }
     exit 0
@@ -254,7 +257,10 @@ health:
     # kernel resources tidily.  If something ignores the term, the
     # recheck will fail and we quarantine -- which is the right
     # answer for a truly stuck process.
-    sudo pkill -f 'check -E EXCLUDE|fsstress|fsx|xfs_io|fio|btrfs (send|receive|balance|scrub)' 2>/dev/null || true
+    # Each alternative uses a one-char character class so the regex
+    # matches real process cmdlines but not the pkill snippet's own
+    # cmdline (which contains the regex source literally).
+    sudo pkill -f '[c]heck -E EXCLUDE|[f]sstress|[f]sx|[x]fs_io|[f]io|btrfs ([s]end|[r]eceive|[b]alance|[s]crub)' 2>/dev/null || true
     # Nudge the kernel to flush dirty data so btrfs background workers
     # (delalloc, endio, ...) can wind down and release the mount.
     sudo sync 2>/dev/null || true
