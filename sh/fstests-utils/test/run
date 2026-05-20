@@ -194,11 +194,34 @@ fi
 run_cfg="$out_file.yaml"
 run_tasks="$out_file.tasks"
 echo "$para_tests" | rcli fstests-utils tests budgets "$patch_name" > "$run_tasks"
+# health.check / health.remediate: pre-pull gate that catches workers
+# left in a degraded state (scratch/test mount stuck, leftover test
+# processes).  The empirical case this fixes: when ./check is killed
+# mid-test by `timeout(1)` or by an ssh drop, it can leave
+# /mnt/scratch mounted on /dev/loop1.  Without this gate, the next
+# ~30 tests dispatched onto that worker fail fast with "/dev/loop1 is
+# mounted" -- a cascade that pollutes the digest.
+#
+# If remediate brings the worker back, it keeps pulling.  If not,
+# wq-ssh quarantines it and release-on-drain destroys the droplet.
 cat > "$run_cfg" <<EOF
 workers:
 $(printf '  - %s\n' "${vms[@]}")
 cmd: 'cd /mnt/repos/fstests && sudo TERM=dumb timeout -k 30s "\$TASK_TIMEOUT" ./check -E EXCLUDE {}'
 task_timeout: $max_task_timeout
+health:
+  check: |
+    set -eu
+    mountpoint -q /mnt/scratch && { echo 'unhealthy: /mnt/scratch still mounted' >&2; exit 1; }
+    mountpoint -q /mnt/test && { echo 'unhealthy: /mnt/test still mounted' >&2; exit 1; }
+    pgrep -x fsstress >/dev/null && { echo 'unhealthy: fsstress still running' >&2; exit 1; }
+    pgrep -x fsx >/dev/null && { echo 'unhealthy: fsx still running' >&2; exit 1; }
+    exit 0
+  remediate: |
+    sudo pkill -9 -f 'fsstress|fsx|xfs_io|fio' 2>/dev/null || true
+    sudo umount -l /mnt/scratch 2>/dev/null || true
+    sudo umount -l /mnt/test 2>/dev/null || true
+    sleep 1
 EOF
 
 systemd-run --user --scope --quiet --unit="$para_scope" \
