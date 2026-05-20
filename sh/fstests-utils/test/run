@@ -218,18 +218,28 @@ health:
     pgrep -x fsx >/dev/null && { echo 'unhealthy: fsx still running' >&2; exit 1; }
     exit 0
   remediate: |
-    # Stage 1: kill stragglers that hold the mounts busy.  When ./check
-    # is SIGKILLed (timeout fires, ssh drops, etc.), descendant test
-    # processes can escape -- sudo creates a new session so the
-    # process-group kill from timeout(1) doesn't reach them, and they
-    # keep the filesystem busy.
-    sudo pkill -9 -f 'fsstress|fsx|xfs_io|fio|btrfs send|btrfs receive|btrfs balance|btrfs scrub' 2>/dev/null || true
-    # Brief settle: give the kernel a moment to release inodes after
-    # SIGKILL'd processes are reaped, so umount won't see EBUSY from
-    # a stale descriptor that's about to disappear.
-    sleep 2
-    # Stage 2: plain unmount.  No -l: if the FS is still busy, we want
-    # the recheck to fail and the worker to quarantine cleanly, not
+    # By the time we run, ./check is already gone -- timeout(1) sent
+    # SIGKILL at the grace deadline and wq-ssh emitted task_done
+    # before this iteration started.  What's left to clean up is the
+    # test descendants that escaped the kill: ./check invokes the
+    # test scripts via sudo, which creates a new session, so the
+    # pgroup signal from timeout(1) doesn't reach them and they keep
+    # the filesystem busy.  (A cgroup wrap on the cmd template would
+    # eliminate this leak at the source; see task #94.)
+    #
+    # SIGTERM, not SIGKILL: these processes have no useful cleanup
+    # for fsstress-class workloads, but for btrfs send/balance/scrub
+    # a graceful exit lets them release kernel resources tidily.  If
+    # something ignores the term, the recheck will fail and we'll
+    # quarantine -- which is the right answer for a truly stuck
+    # process anyway.
+    sudo pkill -f 'fsstress|fsx|xfs_io|fio|btrfs (send|receive|balance|scrub)' 2>/dev/null || true
+    # Settle: let the kernel release inodes after the SIGTERMed
+    # processes are reaped, so umount won't see EBUSY from
+    # references that are about to disappear.
+    sleep 3
+    # Plain unmount.  No -l: if the FS is still busy, we want the
+    # recheck to fail and the worker to quarantine cleanly, not
     # paper over it with a lazy detach that hides ongoing kernel work.
     sudo umount /mnt/scratch 2>/dev/null || true
     sudo umount /mnt/test 2>/dev/null || true
