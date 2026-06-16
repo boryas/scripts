@@ -565,6 +565,7 @@ def render_job_chart(branch, job, runs, survey_row=None):
     # sit consistently with them; the other metrics use their own per-kernel
     # median + MAD.
     n_hits = {"R2": 0, "R3": 0, "R4": 0}
+    limits_by_metric = {}
     for metric in ("bw", "iops", "lat", "p99"):
         idxs = [i for i, b in enumerate(batches) if b[metric][2] is not None]
         meds = [batches[i][metric][2] for i in idxs]
@@ -573,6 +574,7 @@ def render_job_chart(branch, job, runs, survey_row=None):
         else:
             center = statistics.median(meds) if meds else 0.0
             madv = _mad(meds, center)
+        limits_by_metric[metric] = {"center": center, "mad": madv} if madv else None
         if madv:
             zs = [(m - center) / madv for m in meds]
             per_idx = we_hits(zs)
@@ -588,7 +590,7 @@ def render_job_chart(branch, job, runs, survey_row=None):
     data_json = json.dumps({
         "batches": batches,
         "raw": raw_points,
-        "bw_limits": bw_limits,
+        "limits": limits_by_metric,
     })
 
     body = [nav, f'<h1>{html.escape(job)} <span class="subtle">on {html.escape(slug)}</span> '
@@ -625,7 +627,7 @@ def render_job_chart(branch, job, runs, survey_row=None):
     body.append('<p class="charts-key">'
                 '<b class="k-med">●─ median</b> per kernel · '
                 '<b class="k-band">▒ shaded</b> = p25–p75 (dark) and min–max (light) spread · '
-                'bandwidth dashed lines: <b class="k-c">centerline</b> '
+                'dashed control limits (each chart): <b class="k-c">centerline</b> '
                 '<b class="k-a">±3 MAD (≈2σ)</b> <b class="k-r">±4.5 MAD (≈3σ)</b> · '
                 'hover for values; the crosshair is shared across all four charts.</p>')
     total_hits = n_hits["R2"] + n_hits["R3"] + n_hits["R4"]
@@ -647,10 +649,7 @@ def render_job_chart(branch, job, runs, survey_row=None):
            ' <span class="subtle">— no rule fires on this workload</span>')
         + '</div>')
     body.append('<div class="charts">')
-    bw_cap = ('<p class="chart-cap">dashed: median ± MAD control limits '
-              '(±3 ≈ 2σ, ±4.5 ≈ 3σ)</p>') if bw_limits else ''
-    body.append('<div class="chart-box"><h3>bandwidth (MB/s)</h3>'
-                f'<div id="chart-bw"></div>{bw_cap}</div>')
+    body.append('<div class="chart-box"><h3>bandwidth (MB/s)</h3><div id="chart-bw"></div></div>')
     body.append('<div class="chart-box"><h3>iops</h3><div id="chart-iops"></div></div>')
     body.append('<div class="chart-box"><h3>mean latency (µs)</h3><div id="chart-lat"></div></div>')
     body.append('<div class="chart-box"><h3>p99 latency (µs)</h3><div id="chart-p99"></div></div>')
@@ -702,12 +701,13 @@ function project(metric) {
 
 const RULE_COLORS = { R2: '#e8a200', R3: '#e85d00', R4: '#cc0000' };
 
-function makeChart(elId, label, metric, color, limits) {
+function makeChart(elId, label, metric, color) {
   const { xs, med, p25, p75, lo, hi, hits } = project(metric);
   if (xs.length === 0) {
     document.getElementById(elId).innerHTML = '<p class="empty">no data</p>';
     return null;
   }
+  const limits = (data.limits || {})[metric];
   // uPlot bands link two series; the area between them gets filled.
   // We use two bands: a tighter dark band for p25-p75, a lighter band
   // for min-max.  Median is the visible line through batch centers.
@@ -774,7 +774,7 @@ function makeChart(elId, label, metric, color, limits) {
 
 window.addEventListener('DOMContentLoaded', () => {
   const charts = [
-    makeChart('chart-bw',   'MB/s', 'bw',   '#0066cc', data.bw_limits),
+    makeChart('chart-bw',   'MB/s', 'bw',   '#0066cc'),
     makeChart('chart-iops', 'iops', 'iops', '#00aa33'),
     makeChart('chart-lat',  'µs',   'lat',  '#cc6600'),
     makeChart('chart-p99',  'µs',   'p99',  '#aa0044'),
