@@ -1,0 +1,16 @@
+survey [--branch B] [--window N] [--recent K] [--workload PAT] [--json] [--no-preamble]
+
+Standing review of accumulated nightly fsperf digests: a workload TIER
+TABLE (which workloads can be trusted for single-night gating vs which are
+trend-only) plus a RECENT section that flags only persistent, multi-night
+moves. Encodes the noise structure so it doesn't get re-derived by hand.
+
+  --branch B       results branch (default for-next)
+  --window N       trailing samples to consider (0 = all history)
+  --recent K       runs shown / persistence horizon (default 5; persist=3)
+  --workload PAT   glob filter on workload names
+  --json           structured output for downstream tools
+  --no-preamble    skip the explanatory header
+
+See `fsperf-utils trend` for change-point detection and `fsperf-utils
+evaluate` for patch-vs-baseline gating.

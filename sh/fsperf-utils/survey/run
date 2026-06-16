@@ -1,0 +1,291 @@
+#!/usr/bin/env python3
+"""
+fsperf-utils survey [--branch B] [--window N] [--recent K]
+                    [--workload PAT] [--json] [--no-preamble]
+
+Standing "can I trust this workload, and what did the last few nights do"
+review over the accumulated nightly digests.  Replaces re-deriving the
+noise structure by hand every time.
+
+WHY THIS EXISTS (the durable findings, so nobody re-litigates them):
+
+  * Nightly runs at K=1 (one sample per workload per run).  More samples
+    per run does NOT help: replicas within a run are pinned to the same
+    droplet, so K samples are K reads of ONE host draw.  The variance we
+    care about is *which droplet we landed on*, and only successive
+    independent nights draw that independently.  Hence K=1 by design.
+
+  * All gating downstream (evaluate/trend/compare) uses median + MAD, not
+    mean + stdev.  The DigitalOcean host lottery throws the odd wild
+    sample; mean/stdev get yanked by it, median/MAD shrug it off.  That is
+    why most workloads show an ugly pooled CV (~11-17%) but a tight robust
+    core (MAD/median ~1-3%): the CV is a handful of bad-host nights, which
+    MAD already neutralizes.
+
+  * MAD only rescues a workload when the bad samples are a MINORITY.  The
+    4K-random family (dio-randread*, dio-randwrite__nodatacow,
+    buffered-randread__default) is *bimodal* -- a large fraction of nights
+    land in a second mode -- so the robust band itself is wide and a real
+    regression hides inside it.  These can't produce a trustworthy
+    single-night verdict at K=1, no matter the stats.  They are TREND-ONLY:
+    judge them on a sustained step across many nights (`fsperf-utils
+    trend`), never on one night (`evaluate`/`compare`).
+
+TIERS (recomputed from the live data each run, thresholds below):
+
+  GATE        tight robust core -> single-night gating is trustworthy.
+  WATCH       borderline -> usable for big (>~15%) moves, noisy below.
+  TREND-ONLY  bimodal -> only believe a sustained multi-night step.
+
+Sections printed:
+  1. TIER TABLE  -- per-workload median, MAD%, CV%, bimodality, tier.
+  2. RECENT      -- Western Electric runs rules over the nightly series
+                    (R1..R4, MAD-calibrated, anchored at the newest night).
+                    The temporal counterpart to evaluate/run's within-run
+                    rules; a single host-lottery night can't fire them.
+
+--json emits the same data structured for downstream tools.
+"""
+
+import argparse
+import fnmatch
+import json
+import statistics
+import sys
+from pathlib import Path
+
+# --- tier thresholds (derived empirically 2026-06-15 over ~100 nights) -------
+# MAD% = median-absolute-deviation as a percent of the median (robust spread).
+# BIMODAL% = fraction of samples more than FAR_FRAC off the median.  A high
+# BIMODAL% with a non-tiny MAD% is the signature MAD cannot rescue.
+FAR_FRAC        = 0.25   # "far" = >25% off the median
+GATE_MAD_PCT    = 4.0
+GATE_BIMODAL    = 20.0
+TREND_MAD_PCT   = 5.5    # above this OR ...
+TREND_BIMODAL   = 22.0   # ... above this => TREND-ONLY
+
+# --- Western Electric runs rules, MAD-calibrated -----------------------------
+# The temporal counterpart to evaluate/run's within-run rules: applied across
+# consecutive nightly points, anchored at the newest point.  Same sigma->MAD
+# identity evaluate uses (sigma ~= 1.4826 x MAD), so the FP rates match.
+MAD_T1   = 1.5   # ~= 1 sigma
+MAD_T2   = 3.0   # ~= 2 sigma
+MAD_T3   = 4.5   # ~= 3 sigma
+WE_WINDOW = 8    # points needed for the longest rule (Rule 4)
+MIN_PCT  = 3.0   # suppress a fired rule if the recent move is below this
+
+
+def mad(values, med):
+    if not values:
+        return 0.0
+    return statistics.median(abs(v - med) for v in values)
+
+
+def western_electric(zs):
+    """Apply WE runs rules to chronological m-scores, anchored at the newest
+    point (standard SPC: a rule fires at point n using n and its predecessors).
+    Returns (rule_label, side) for the strongest rule that fires, else None.
+    side: +1 above centerline, -1 below.
+
+    NOTE: WE Rule 1 (a single point beyond 3 sigma) is intentionally OMITTED
+    here.  In this temporal series each nightly point is an independent
+    droplet, so a lone 3-sigma point is the host lottery, not signal -- we
+    verified it fires on single +14 MAD spikes that don't persist.  Rule 1
+    lives in evaluate/run instead, where the K samples share ONE host and a
+    single outlier really is anomalous.  Across nights we trust only the RUNS
+    rules (R2-R4), which require the move to persist past the lottery."""
+    if not zs:
+        return None
+    last = zs[-1]
+    # Rule 2: 2 of last 3 beyond +/-2 sigma, same side.
+    w3 = zs[-3:]
+    if len(w3) == 3:
+        if sum(z > MAD_T2 for z in w3) >= 2 and last > MAD_T1:
+            return ("R2 2/3>3MAD", +1)
+        if sum(z < -MAD_T2 for z in w3) >= 2 and last < -MAD_T1:
+            return ("R2 2/3>3MAD", -1)
+    # Rule 3: 4 of last 5 beyond +/-1 sigma, same side.
+    w5 = zs[-5:]
+    if len(w5) == 5:
+        if sum(z > MAD_T1 for z in w5) >= 4 and last > 0:
+            return ("R3 4/5>1.5MAD", +1)
+        if sum(z < -MAD_T1 for z in w5) >= 4 and last < 0:
+            return ("R3 4/5>1.5MAD", -1)
+    # Rule 4: 8 consecutive on the same side of the centerline.
+    w8 = zs[-8:]
+    if len(w8) == 8:
+        if all(z > 0 for z in w8):
+            return ("R4 8 same side", +1)
+        if all(z < 0 for z in w8):
+            return ("R4 8 same side", -1)
+    return None
+
+
+def tier_of(mad_pct, bimodal_pct):
+    if mad_pct > TREND_MAD_PCT or bimodal_pct > TREND_BIMODAL:
+        return "TREND-ONLY"
+    if mad_pct <= GATE_MAD_PCT and bimodal_pct <= GATE_BIMODAL:
+        return "GATE"
+    return "WATCH"
+
+
+def load_series(branch, window, pat):
+    """{workload: [(ts, sha, value), ...]} using the dominant I/O side."""
+    branch_dir = Path(f"~/fsperf-results/{branch}").expanduser()
+    # First pass: gather both sides so we can pick the dominant one per wl.
+    raw = {}  # wl -> {side: [(ts, sha, v)]}
+    for path in sorted(branch_dir.glob("*.json")):
+        try:
+            with open(path) as f:
+                d = json.load(f)
+        except Exception:
+            continue
+        ts = d.get("ended") or path.name
+        sha = d.get("sha", "?")
+        for w, e in (d.get("jobs") or {}).items():
+            if pat and not fnmatch.fnmatch(w, pat):
+                continue
+            for side in ("read", "write"):
+                sd = e.get(side) or {}
+                if not sd or sd.get("io_bytes", 0) == 0:
+                    continue
+                v = sd.get("bw_bytes")
+                if v is None:
+                    continue
+                raw.setdefault(w, {}).setdefault(side, []).append((ts, sha, v))
+    series = {}
+    for w, sides in raw.items():
+        side = max(sides, key=lambda s: len(sides[s]))  # dominant side
+        seq = sorted(sides[side], key=lambda r: r[0])
+        if window > 0:
+            seq = seq[-window:]
+        series[w] = (side, seq)
+    return series
+
+
+def summarize(seq):
+    vals = [v for _, _, v in seq]
+    n = len(vals)
+    med = statistics.median(vals)
+    m = mad(vals, med)
+    mean = statistics.mean(vals)
+    cv = statistics.pstdev(vals) / mean * 100 if mean else 0.0
+    mad_pct = m / med * 100 if med else 0.0
+    bimodal = sum(1 for v in vals if abs(v - med) / med > FAR_FRAC) / n * 100 if med else 0.0
+    return dict(n=n, median=med, mad=m, mad_pct=mad_pct, cv=cv, bimodal=bimodal)
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("branch_pos", nargs="?", default=None,
+                    help="branch (positional; same as --branch)")
+    ap.add_argument("--branch", default="for-next")
+    ap.add_argument("--window", type=int, default=0,
+                    help="trailing samples to consider (0 = all history)")
+    ap.add_argument("--recent", type=int, default=5,
+                    help="runs to show in the RECENT section (default 5)")
+    ap.add_argument("--workload", default="*", help="glob to filter workloads")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--no-preamble", action="store_true")
+    args = ap.parse_args()
+    branch = args.branch_pos or args.branch
+
+    series = load_series(branch, args.window, args.workload)
+    if not series:
+        print(f"no data for branch {branch!r}", file=sys.stderr)
+        return 1
+
+    rows = []
+    for w, (side, seq) in series.items():
+        s = summarize(seq)
+        s["workload"] = w
+        s["side"] = side
+        s["tier"] = tier_of(s["mad_pct"], s["bimodal"])
+        s["latest"] = seq[-1] if seq else None
+        s["seq"] = seq
+        rows.append(s)
+    rank = {"GATE": 0, "WATCH": 1, "TREND-ONLY": 2}
+    rows.sort(key=lambda r: (rank[r["tier"]], r["mad_pct"]))
+
+    # RECENT signal via Western Electric runs rules over the nightly series.
+    # The host lottery is per-droplet (digest collapses host_ip to "multi"),
+    # so a single wild night carries no signal -- but a real regression makes
+    # a RUN that the WE rules catch.  Anchored at the newest point; suppressed
+    # below MIN_PCT so tight-MAD workloads don't flag on trivial moves.
+    for r in rows:
+        tail = r["seq"][-WE_WINDOW:]
+        zs = [(v - r["median"]) / r["mad"] for _, _, v in tail] if r["mad"] else []
+        fire = western_electric(zs)
+        recent5 = [(v - r["median"]) / r["median"] * 100 for _, _, v in r["seq"][-5:]]
+        med_dev = statistics.median(recent5) if recent5 else 0.0
+        if fire and abs(med_dev) < MIN_PCT:
+            fire = None
+        r["we_rule"], r["we_side"] = (fire if fire else (None, 0))
+        r["tail_z"] = zs
+        r["med_dev"] = med_dev
+
+    if args.json:
+        out = [{k: v for k, v in r.items() if k != "seq"} for r in rows]
+        json.dump({"branch": branch, "window": args.window,
+                   "n_runs": max(r["n"] for r in rows),
+                   "thresholds": {"far_frac": FAR_FRAC, "gate_mad_pct": GATE_MAD_PCT,
+                                  "gate_bimodal": GATE_BIMODAL, "trend_mad_pct": TREND_MAD_PCT,
+                                  "trend_bimodal": TREND_BIMODAL},
+                   "workloads": out}, sys.stdout, indent=2, default=str)
+        print()
+        return 0
+
+    n_runs = max(r["n"] for r in rows)
+    if not args.no_preamble:
+        print(__doc__.strip().split("Sections printed:")[0].rstrip())
+        print()
+    print(f"=== fsperf survey  branch={branch}  "
+          f"{'window=' + str(args.window) if args.window else 'all'} "
+          f"({n_runs} runs) ===\n")
+
+    # 1. TIER TABLE
+    counts = {t: sum(1 for r in rows if r["tier"] == t) for t in rank}
+    print(f"TIER TABLE   GATE={counts['GATE']}  WATCH={counts['WATCH']}  "
+          f"TREND-ONLY={counts['TREND-ONLY']}")
+    print(f"  {'workload':32s} {'side':>5s} {'median':>9s} {'MAD%':>6s} "
+          f"{'CV%':>6s} {'bimod%':>7s}  tier")
+    print("  " + "-" * 78)
+    last_tier = None
+    for r in rows:
+        if r["tier"] != last_tier:
+            print(f"  -- {r['tier']} " + "-" * (74 - len(r["tier"])))
+            last_tier = r["tier"]
+        unit = "MB/s"
+        print(f"  {r['workload']:32s} {r['side']:>5s} {r['median']/1e6:9.1f} "
+              f"{r['mad_pct']:6.1f} {r['cv']:6.1f} {r['bimodal']:7.0f}  {r['tier']}")
+    print()
+
+    # 2. RECENT -- Western Electric runs rules over the nightly series
+    tip = rows[0]["seq"][-1] if rows[0]["seq"] else (None, "?", None)
+    print(f"RECENT   tip {tip[1]}.  Western Electric runs rules over the last "
+          f"{WE_WINDOW} nights")
+    print(f"         (runs rules R2 2/3>3MAD, R3 4/5>1.5MAD, R4 8-same-side;"
+          f" min move {MIN_PCT:.0f}%. R1/single-pt omitted: host lottery).")
+    fired = [r for r in rows if r["we_rule"]]
+    if not fired:
+        print(f"  no rule fired -- clean week.")
+    for r in sorted(fired, key=lambda r: -abs(r["med_dev"])):
+        # verdict: side(+1 above) x good-dir(bw higher=better, +1) -> improvement
+        good = r["we_side"] > 0  # all metrics here are bw (higher = better)
+        verdict = "IMPROVEMENT" if good else "REGRESSION"
+        if r["tier"] == "TREND-ONLY":
+            verdict += " (advisory)"
+        spark = " ".join(f"{z:+.0f}" for z in r["tail_z"][-5:])
+        print(f"  {verdict:22s} {r['workload']:30s} {r['we_rule']:14s} "
+              f"med {r['med_dev']:+5.0f}%  z[{spark}]")
+    print()
+    print("  GATE/WATCH firings are real candidates -- run `fsperf-utils trend`")
+    print("  to pin the change point + SHA range, or `evaluate` to retest.")
+    print("  TREND-ONLY firings stay advisory (bimodal host lottery).")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
