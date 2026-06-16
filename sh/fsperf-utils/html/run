@@ -55,11 +55,16 @@ th { background: #f4f4f4; font-weight: 600; }
 tr:hover td { background: #fafafa; }
 .sha { font-family: monospace; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
-.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 1em;
+.charts { display: grid; grid-template-columns: 1fr; gap: 1.2em;
           margin-top: 1em; }
-.chart-box { border: 1px solid #ddd; padding: 0.5em; background: #fff; }
-.chart-box h3 { margin: 0 0 0.5em; font-size: 0.85em; color: #555;
+.chart-box { border: 1px solid #ddd; padding: 0.6em 0.8em; background: #fff; }
+.chart-box h3 { margin: 0 0 0.4em; font-size: 0.95em; color: #333;
                 font-weight: 600; }
+.chart-box .uplot { width: 100%; }
+.charts-key { font-size: 0.8em; color: #666; margin: 0.3em 0 0; }
+.charts-key b { font-weight: 600; }
+.k-med { color: #0066cc; } .k-band { color: #8aa; }
+.k-c { color: #999; } .k-a { color: #d8a200; } .k-r { color: #cc2222; }
 .empty { color: #888; font-style: italic; }
 .badge { display: inline-block; padding: 0.05em 0.5em; border-radius: 0.8em;
          font-size: 0.78em; font-weight: 600; line-height: 1.6; white-space: nowrap; }
@@ -543,6 +548,12 @@ def render_job_chart(branch, job, runs, survey_row=None):
                         '"multi"), so a single night carries no signal. Judge it '
                         'on a sustained step across many nights, never one.</div>')
 
+    body.append('<p class="charts-key">'
+                '<b class="k-med">●─ median</b> per kernel · '
+                '<b class="k-band">▒ shaded</b> = p25–p75 (dark) and min–max (light) spread · '
+                'bandwidth dashed lines: <b class="k-c">centerline</b> '
+                '<b class="k-a">±3 MAD (≈2σ)</b> <b class="k-r">±4.5 MAD (≈3σ)</b> · '
+                'hover for values; the crosshair is shared across all four charts.</p>')
     body.append('<div class="charts">')
     bw_cap = ('<p class="chart-cap">dashed: median ± MAD control limits '
               '(±3 ≈ 2σ, ±4.5 ≈ 3σ)</p>') if bw_limits else ''
@@ -632,9 +643,10 @@ function makeChart(elId, label, metric, color, limits) {
       cols.push(flat(val));
     }
   }
+  const el = document.getElementById(elId);
   const opts = {
-    width: 540,
-    height: 240,
+    width: Math.max(320, el.clientWidth || 1100),
+    height: 320,
     scales: { x: { time: true }, y: { auto: true } },
     series,
     bands: [
@@ -642,17 +654,33 @@ function makeChart(elId, label, metric, color, limits) {
       { series: [5, 4], fill: color + '14' },  // min-max band (~8% alpha)
     ],
     axes: [{ stroke: '#888' }, { stroke: '#888' }],
-    cursor: { drag: { x: true, y: false } },
-    legend: { show: false },
+    // Shared crosshair: same key across all four charts syncs the x-cursor,
+    // so hovering lines the same kernel (sha) up across bw/iops/lat/p99.
+    cursor: { drag: { x: true, y: false },
+              sync: { key: 'jobcharts', scales: ['x', null] } },
+    legend: { show: true },
   };
-  return new uPlot(opts, cols, document.getElementById(elId));
+  return new uPlot(opts, cols, el);
 }
 
 window.addEventListener('DOMContentLoaded', () => {
-  makeChart('chart-bw',   'MB/s', 'bw',   '#0066cc', data.bw_limits);
-  makeChart('chart-iops', 'iops', 'iops', '#00aa33');
-  makeChart('chart-lat',  'µs',   'lat',  '#cc6600');
-  makeChart('chart-p99',  'µs',   'p99',  '#aa0044');
+  const charts = [
+    makeChart('chart-bw',   'MB/s', 'bw',   '#0066cc', data.bw_limits),
+    makeChart('chart-iops', 'iops', 'iops', '#00aa33'),
+    makeChart('chart-lat',  'µs',   'lat',  '#cc6600'),
+    makeChart('chart-p99',  'µs',   'p99',  '#aa0044'),
+  ].filter(Boolean);
+  // Keep charts full-width on resize.
+  let t;
+  window.addEventListener('resize', () => {
+    clearTimeout(t);
+    t = setTimeout(() => {
+      for (const u of charts) {
+        const w = Math.max(320, u.root.parentElement.clientWidth || 1100);
+        u.setSize({ width: w, height: 320 });
+      }
+    }, 100);
+  });
 });
 </script>
 """
