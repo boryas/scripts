@@ -1,0 +1,689 @@
+#!/usr/bin/env python3
+"""
+fsperf-utils html — render ~/fsperf-results/ to static HTML under $HTML_DIR.
+
+Reads:
+    ~/fsperf-results/<branch>/<run_id>.json       (summaries)
+    ~/fsperf-results/<branch>/<run_id>/<job>.json (raw fio JSONs; linked)
+
+Writes:
+    $HTML_DIR/index.html                          (branch picker)
+    $HTML_DIR/<branch>/index.html                 (per-branch dashboard)
+    $HTML_DIR/<branch>/jobs/<job>.html            (per-job timeline + 4 charts)
+    $HTML_DIR/<branch>/runs/<run_id>.html         (single-run detail, all jobs)
+
+Branches are discovered by walking ~/fsperf-results recursively; any
+directory with at least one *.json summary at the top level counts.
+Supports nested paths like adhoc/c8-variance-2026-05-22.
+
+Charts use uPlot from a CDN (no vendoring needed).  Each per-job page
+embeds the run data as JSON; uPlot renders client-side.
+"""
+import datetime as dt
+import html
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+RESULTS_ROOT = Path(os.path.expanduser("~/fsperf-results"))
+SURVEY_BIN = Path(__file__).resolve().parent.parent / "survey" / "run"
+HTML_DIR = Path(os.environ.get("HTML_DIR", "/usr/local/share/site/static/html/fsperf"))
+UPLOT_JS = "https://unpkg.com/uplot@1.6.30/dist/uPlot.iife.min.js"
+UPLOT_CSS = "https://unpkg.com/uplot@1.6.30/dist/uPlot.min.css"
+
+
+# ---------- shared CSS / page chrome ----------
+
+PAGE_CSS = """
+body { font-family: system-ui, -apple-system, sans-serif; max-width: 1200px;
+       margin: 1em auto; padding: 0 1em; color: #222; }
+h1 { font-size: 1.5em; margin: 0.5em 0; }
+h2 { font-size: 1.15em; margin: 1.5em 0 0.5em; border-bottom: 1px solid #eee;
+     padding-bottom: 0.2em; }
+nav { color: #666; font-size: 0.9em; margin-bottom: 1em; }
+nav a { color: #06c; text-decoration: none; margin-right: 0.5em; }
+nav a:hover { text-decoration: underline; }
+.subtle { color: #888; font-size: 0.85em; }
+table { border-collapse: collapse; font-size: 0.85em; width: 100%;
+        margin: 1em 0; }
+th, td { padding: 0.35em 0.6em; border-bottom: 1px solid #eee;
+         text-align: left; vertical-align: top; }
+th { background: #f4f4f4; font-weight: 600; }
+tr:hover td { background: #fafafa; }
+.sha { font-family: monospace; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 1em;
+          margin-top: 1em; }
+.chart-box { border: 1px solid #ddd; padding: 0.5em; background: #fff; }
+.chart-box h3 { margin: 0 0 0.5em; font-size: 0.85em; color: #555;
+                font-weight: 600; }
+.empty { color: #888; font-style: italic; }
+.badge { display: inline-block; padding: 0.05em 0.5em; border-radius: 0.8em;
+         font-size: 0.78em; font-weight: 600; line-height: 1.6; white-space: nowrap; }
+.tier-GATE { background: #e3f5e3; color: #1a7a1a; }
+.tier-WATCH { background: #fdf2d8; color: #9a6b00; }
+.tier-TREND-ONLY { background: #efe7f7; color: #6a3fa0; }
+.we-up { background: #e3f5e3; color: #1a7a1a; }
+.we-down { background: #fde3e3; color: #b01818; }
+.we-advisory { background: #f0f0f0; color: #777; }
+.note { background: #f7f9fb; border: 1px solid #e3e8ee; border-radius: 6px;
+        padding: 0.6em 0.9em; font-size: 0.85em; color: #555; margin: 1em 0; }
+.note code { background: #eef1f4; padding: 0 0.3em; border-radius: 3px; }
+.chart-cap { font-size: 0.75em; color: #888; margin: 0.3em 0 0; }
+footer { margin-top: 3em; color: #888; font-size: 0.8em; border-top: 1px solid #eee; padding-top: 0.5em; }
+"""
+
+
+def page(title, body, extra_head=""):
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{html.escape(title)}</title>
+<style>{PAGE_CSS}</style>
+{extra_head}
+</head>
+<body>
+{body}
+<footer>generated {dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} by fsperf-utils/html</footer>
+</body>
+</html>
+"""
+
+
+def write(path, content):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    print(f"  wrote {path.relative_to(HTML_DIR.parent) if path.is_relative_to(HTML_DIR.parent) else path}", file=sys.stderr)
+
+
+# ---------- data loading ----------
+
+def is_summary(path):
+    """A summary JSON has top-level 'jobs' as a *dict*.  Raw fio output
+    has 'jobs' as a list; the discriminator is reliable + cheap."""
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        return isinstance(data.get("jobs"), dict)
+    except (json.JSONDecodeError, OSError):
+        return False
+
+
+def find_branches():
+    """Return list of branch paths (relative to RESULTS_ROOT) that
+    contain at least one summary JSON.  Raw-fio subdirs (which also
+    contain *.json) are skipped via is_summary."""
+    branches = []
+    if not RESULTS_ROOT.exists():
+        return branches
+    for d in RESULTS_ROOT.rglob("*"):
+        if not d.is_dir():
+            continue
+        if any(is_summary(p) for p in d.glob("*.json")):
+            branches.append(d.relative_to(RESULTS_ROOT))
+    return sorted(branches, key=str)
+
+
+def load_survey(branch):
+    """Run `survey --json` for a branch and return {workload: row}.  This is
+    the single source of truth for tiers + Western Electric runs-rule flags;
+    we don't re-implement the stats here.  Returns {} on any failure so the
+    site still renders (just without the annotations)."""
+    if not SURVEY_BIN.exists():
+        return {}
+    try:
+        out = subprocess.run([str(SURVEY_BIN), str(branch), "--json"],
+                             capture_output=True, text=True, timeout=120)
+        if out.returncode != 0:
+            return {}
+        data = json.loads(out.stdout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {}
+    return {w["workload"]: w for w in data.get("workloads", [])}
+
+
+TIER_TITLE = {
+    "GATE": "tight robust core — single-night gating is trustworthy",
+    "WATCH": "borderline — good for >~15% moves, noisy below",
+    "TREND-ONLY": "bimodal host lottery — judge only on a sustained trend",
+}
+
+
+def tier_badge(tier):
+    if not tier:
+        return ""
+    return (f'<span class="badge tier-{html.escape(tier)}" '
+            f'title="{html.escape(TIER_TITLE.get(tier, ""))}">{html.escape(tier)}</span>')
+
+
+def we_badge(row):
+    """Render a Western Electric runs-rule firing as a verdict badge."""
+    rule = row.get("we_rule")
+    if not rule:
+        return ""
+    good = row.get("we_side", 0) > 0   # all metrics here are bw: higher = better
+    verdict = "improvement" if good else "regression"
+    advisory = row.get("tier") == "TREND-ONLY"
+    cls = "we-advisory" if advisory else ("we-up" if good else "we-down")
+    md = row.get("med_dev")
+    md_s = f' {md:+.0f}%' if isinstance(md, (int, float)) else ""
+    label = f'{verdict}{md_s} · {rule}' + (' (advisory)' if advisory else '')
+    return f'<span class="badge {cls}" title="recent median move{md_s}">{html.escape(label)}</span>'
+
+
+def load_branch_runs(branch):
+    """Return list of summary dicts for a branch, newest-first.  Skips
+    raw fio JSONs (jobs is a list, not a dict)."""
+    runs = []
+    branch_dir = RESULTS_ROOT / branch
+    for p in branch_dir.glob("*.json"):
+        try:
+            with open(p) as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+        if not isinstance(data.get("jobs"), dict):
+            continue
+        data["_run_id"] = p.stem
+        runs.append(data)
+    runs.sort(key=lambda r: r.get("started", ""), reverse=True)
+    return runs
+
+
+# ---------- formatting helpers ----------
+
+def fmt_ts(ts):
+    if not ts:
+        return "-"
+    return ts.replace("T", " ")[:19]
+
+
+def fmt_short_ts(ts):
+    if not ts:
+        return "-"
+    return ts.replace("T", " ")[:16]
+
+
+def short_sha(s):
+    return (s or "")[:12]
+
+
+def fmt_bw_mb(b):
+    if b is None:
+        return "-"
+    return f"{b/1e6:.2f}"
+
+
+def fmt_us(ns):
+    if ns is None:
+        return "-"
+    return f"{ns/1000:.1f}"
+
+
+def fmt_iops(i):
+    if i is None:
+        return "-"
+    return f"{int(i)}"
+
+
+def fmt_s(ms):
+    if ms is None:
+        return "-"
+    return f"{ms/1000:.1f}"
+
+
+def pick_side(job_entry):
+    for side in ("read", "write"):
+        s = job_entry.get(side)
+        if s and s.get("io_bytes", 0) > 0:
+            return side
+    return None
+
+
+# ---------- renderers ----------
+
+def render_index(branches):
+    rows = []
+    rows.append('<h1>fsperf</h1>')
+    rows.append('<p class="subtle">fio perf runs, per-branch.  Pick a branch:</p>')
+    if not branches:
+        rows.append('<p class="empty">(no branches with data yet)</p>')
+    else:
+        rows.append('<ul>')
+        for b in branches:
+            slug = str(b)
+            runs = load_branch_runs(b)
+            last = runs[0] if runs else None
+            last_meta = ""
+            if last:
+                last_meta = (f' <span class="subtle">latest: '
+                             f'{short_sha(last.get("sha"))} '
+                             f'on {html.escape(last.get("host_class", ""))} '
+                             f'@ {fmt_short_ts(last.get("started"))} '
+                             f'· {len(runs)} run{"s" if len(runs)!=1 else ""}</span>')
+            rows.append(f'<li><a href="{html.escape(slug)}/">{html.escape(slug)}</a>{last_meta}</li>')
+        rows.append('</ul>')
+    write(HTML_DIR / "index.html", page("fsperf", "\n".join(rows)))
+
+
+def render_branch(branch, runs, survey):
+    """Branch dashboard: list of runs + per-job links."""
+    slug = str(branch)
+    # links into ../ go up the same number of levels as the slug depth
+    depth = len(branch.parts)
+    up = "../" * depth
+    nav = f'<nav><a href="{up}">all branches</a><a>{html.escape(slug)}</a></nav>'
+
+    body = [nav, f'<h1>{html.escape(slug)}</h1>']
+    if not runs:
+        body.append('<p class="empty">no runs yet.</p>')
+        write(HTML_DIR / slug / "index.html", page(f"fsperf: {slug}", "\n".join(body)))
+        return
+
+    # Tier legend + any fired Western Electric runs rules across the series.
+    if survey:
+        counts = {t: sum(1 for r in survey.values() if r.get("tier") == t)
+                  for t in ("GATE", "WATCH", "TREND-ONLY")}
+        fired = [r for r in survey.values() if r.get("we_rule")]
+        body.append('<div class="note">')
+        body.append('Workloads are tiered by robust noise (median + MAD over '
+                    'all nightly runs): '
+                    f'{tier_badge("GATE")} {counts["GATE"]} · '
+                    f'{tier_badge("WATCH")} {counts["WATCH"]} · '
+                    f'{tier_badge("TREND-ONLY")} {counts["TREND-ONLY"]}. '
+                    'Recent signal uses Western Electric runs rules over the '
+                    'nightly series; single-night swings are host-lottery noise.')
+        if fired:
+            body.append('<br>Recent rule firings: ' + ' '.join(
+                f'{html.escape(r["workload"])} {we_badge(r)}'
+                for r in sorted(fired, key=lambda r: -abs(r.get("med_dev") or 0))))
+        else:
+            body.append('<br>No runs rule fired recently — clean.')
+        body.append('</div>')
+
+    # Per-job table — one row per job, with latest-run metrics + link to chart page
+    body.append('<h2>jobs</h2>')
+    jobs = sorted({j for r in runs for j in r.get("jobs", {})})
+    body.append('<table><thead><tr>'
+                '<th>job</th><th>tier</th>'
+                '<th class="num">latest bw</th><th class="num">iops</th>'
+                '<th class="num">lat (µs)</th><th class="num">p99 (µs)</th>'
+                '<th class="num">noise (MAD%)</th><th>recent</th><th>chart</th>'
+                '</tr></thead><tbody>')
+    latest = runs[0]
+    for job in jobs:
+        e = latest.get("jobs", {}).get(job, {})
+        side = pick_side(e)
+        s = e.get(side, {}) if side else {}
+        sv = survey.get(job, {})
+        mad_pct = sv.get("mad_pct")
+        mad_s = f"{mad_pct:.1f}" if isinstance(mad_pct, (int, float)) else "-"
+        body.append(
+            f'<tr><td>{html.escape(job)}</td>'
+            f'<td>{tier_badge(sv.get("tier"))}</td>'
+            f'<td class="num">{fmt_bw_mb(s.get("bw_bytes"))} MB/s</td>'
+            f'<td class="num">{fmt_iops(s.get("iops"))}</td>'
+            f'<td class="num">{fmt_us(s.get("lat_ns_mean"))}</td>'
+            f'<td class="num">{fmt_us(s.get("clat_ns_p99"))}</td>'
+            f'<td class="num">{mad_s}</td>'
+            f'<td>{we_badge(sv)}</td>'
+            f'<td><a href="jobs/{html.escape(job)}.html">timeline</a></td>'
+            f'</tr>'
+        )
+    body.append('</tbody></table>')
+
+    # Runs list
+    body.append('<h2>runs</h2>')
+    body.append('<table><thead><tr>'
+                '<th>started</th><th>sha</th><th>host</th><th>ip</th>'
+                '<th class="num">jobs</th><th>detail</th>'
+                '</tr></thead><tbody>')
+    for r in runs:
+        body.append(
+            f'<tr><td>{fmt_short_ts(r.get("started"))}</td>'
+            f'<td class="sha">{short_sha(r.get("sha"))}</td>'
+            f'<td>{html.escape(r.get("host_class", ""))}</td>'
+            f'<td>{html.escape(r.get("host_ip", ""))}</td>'
+            f'<td class="num">{len(r.get("jobs", {}))}</td>'
+            f'<td><a href="runs/{html.escape(r["_run_id"])}.html">view</a></td>'
+            f'</tr>'
+        )
+    body.append('</tbody></table>')
+
+    write(HTML_DIR / slug / "index.html", page(f"fsperf: {slug}", "\n".join(body)))
+
+
+def render_run_detail(branch, run):
+    slug = str(branch)
+    depth = len(branch.parts)
+    up = "../" * (depth + 1)  # +1 because we're under <branch>/runs/
+    nav = (f'<nav><a href="{up}">all branches</a>'
+           f'<a href="../">{html.escape(slug)}</a>'
+           f'<a>{html.escape(run["_run_id"])}</a></nav>')
+
+    body = [nav, f'<h1>{html.escape(run["_run_id"])}</h1>']
+    body.append('<p class="subtle">')
+    body.append(f'sha <span class="sha">{short_sha(run.get("sha"))}</span> · ')
+    body.append(f'kernel <code>{html.escape(run.get("kernel", ""))}</code> · ')
+    body.append(f'host <code>{html.escape(run.get("host_class", ""))}</code> '
+                f'<code>{html.escape(run.get("host_ip", ""))}</code> · ')
+    body.append(f'started {fmt_ts(run.get("started"))} · ended {fmt_ts(run.get("ended"))}')
+    body.append('</p>')
+
+    body.append('<h2>jobs</h2>')
+    body.append('<table><thead><tr>'
+                '<th>job</th><th>side</th><th class="num">bw</th>'
+                '<th class="num">iops</th><th class="num">io (GB)</th>'
+                '<th class="num">lat mean</th><th class="num">p50</th>'
+                '<th class="num">p99</th><th class="num">p999</th>'
+                '<th class="num">elapsed</th><th>raw</th>'
+                '</tr></thead><tbody>')
+    for job, e in sorted(run.get("jobs", {}).items()):
+        elapsed = fmt_s(e.get("elapsed_ms"))
+        for side in ("read", "write"):
+            s = e.get(side)
+            if not s or not s.get("io_bytes"):
+                continue
+            io_gb = s.get("io_bytes", 0) / 1e9
+            raw_link = ""
+            raw = e.get("raw_file")
+            if raw:
+                # raw_file path is relative to RESULTS_ROOT; convert to a link
+                # that the static site can serve.  Since we don't actually
+                # rsync raw/ subdirs into HTML_DIR, link out to the s1
+                # results dir (served alongside or available via ssh).
+                raw_link = f'<code class="subtle">{html.escape(raw)}</code>'
+            body.append(
+                f'<tr><td>{html.escape(job)}</td>'
+                f'<td>{side}</td>'
+                f'<td class="num">{fmt_bw_mb(s.get("bw_bytes"))} MB/s</td>'
+                f'<td class="num">{fmt_iops(s.get("iops"))}</td>'
+                f'<td class="num">{io_gb:.1f}</td>'
+                f'<td class="num">{fmt_us(s.get("lat_ns_mean"))}</td>'
+                f'<td class="num">{fmt_us(s.get("clat_ns_p50"))}</td>'
+                f'<td class="num">{fmt_us(s.get("clat_ns_p99"))}</td>'
+                f'<td class="num">{fmt_us(s.get("clat_ns_p999"))}</td>'
+                f'<td class="num">{elapsed} s</td>'
+                f'<td>{raw_link}</td>'
+                f'</tr>'
+            )
+    body.append('</tbody></table>')
+
+    write(HTML_DIR / slug / "runs" / f'{run["_run_id"]}.html',
+          page(f"fsperf: {slug} {run['_run_id']}", "\n".join(body)))
+
+
+def quantiles(vals):
+    """Return (min, p25, median, p75, max) for a list of numbers.
+    Linear interpolation per IEEE NIST.  Returns Nones for an empty list."""
+    if not vals:
+        return (None, None, None, None, None)
+    xs = sorted(vals)
+    n = len(xs)
+    def q(p):
+        if n == 1: return xs[0]
+        k = (n - 1) * p
+        lo, hi = int(k), min(int(k) + 1, n - 1)
+        return xs[lo] + (xs[hi] - xs[lo]) * (k - lo)
+    return (xs[0], q(0.25), q(0.5), q(0.75), xs[-1])
+
+
+def render_job_chart(branch, job, runs, survey_row=None):
+    """Per-job chart page: four metrics over time, one batch per sha.
+    Each batch shows median line + p25/p75 shaded band + raw samples as
+    dots (so single-sample batches are still legible)."""
+    survey_row = survey_row or {}
+    slug = str(branch)
+    depth = len(branch.parts)
+    up = "../" * (depth + 1)
+    nav = (f'<nav><a href="{up}">all branches</a>'
+           f'<a href="../">{html.escape(slug)}</a>'
+           f'<a>{html.escape(job)}</a></nav>')
+
+    # Group runs by sha; each sha is a "batch".  Batch x = median timestamp.
+    matching = [r for r in runs if job in r.get("jobs", {})]
+    by_sha = {}
+    for r in matching:
+        by_sha.setdefault(r.get("sha", ""), []).append(r)
+
+    batches = []  # [{"sha", "ts_epoch", "samples": {"bw":[...],...}}, ...]
+    raw_points = {"xs": [], "bw": [], "iops": [], "lat": [], "p99": []}
+    table_rows = []
+    for sha, group in by_sha.items():
+        sample = {"bw": [], "iops": [], "lat": [], "p99": [], "ts": []}
+        for r in group:
+            e = r["jobs"][job]
+            side = pick_side(e)
+            s = e.get(side, {}) if side else {}
+            try:
+                ts_epoch = dt.datetime.fromisoformat(r.get("started", "").replace("Z", "+00:00")).timestamp()
+            except (ValueError, TypeError):
+                ts_epoch = 0
+            sample["ts"].append(ts_epoch)
+            sample["bw"].append((s.get("bw_bytes") or 0) / 1e6)
+            sample["iops"].append(s.get("iops") or 0)
+            sample["lat"].append((s.get("lat_ns_mean") or 0) / 1000)
+            sample["p99"].append((s.get("clat_ns_p99") or 0) / 1000)
+            # raw points overlay (one dot per sample)
+            raw_points["xs"].append(int(ts_epoch))
+            raw_points["bw"].append((s.get("bw_bytes") or 0) / 1e6)
+            raw_points["iops"].append(s.get("iops") or 0)
+            raw_points["lat"].append((s.get("lat_ns_mean") or 0) / 1000)
+            raw_points["p99"].append((s.get("clat_ns_p99") or 0) / 1000)
+            table_rows.append({
+                "ts": fmt_short_ts(r.get("started")),
+                "sha": short_sha(sha),
+                "host": r.get("host_class", ""),
+                "ip": r.get("host_ip", ""),
+                "side": side or "-",
+                "bw_MB": fmt_bw_mb(s.get("bw_bytes")),
+                "iops": fmt_iops(s.get("iops")),
+                "lat_us": fmt_us(s.get("lat_ns_mean")),
+                "p99_us": fmt_us(s.get("clat_ns_p99")),
+                "run_id": r.get("_run_id", ""),
+            })
+        # Batch summary
+        ts_mid = sample["ts"][len(sample["ts"]) // 2] if sample["ts"] else 0
+        batches.append({
+            "sha": short_sha(sha),
+            "n": len(group),
+            "ts": int(ts_mid),
+            **{k: quantiles(sample[k]) for k in ("bw", "iops", "lat", "p99")},
+        })
+    batches.sort(key=lambda b: b["ts"])
+    # Sort table_rows by ts ascending so the table tells the same story
+    table_rows.sort(key=lambda r: r["ts"])
+
+    # MAD control limits for the bw chart (in MB/s, matching the chart units).
+    # survey reports median/mad in bytes/s for the dominant side's bw.
+    bw_limits = None
+    sv_median = survey_row.get("median")
+    sv_mad = survey_row.get("mad")
+    if isinstance(sv_median, (int, float)) and isinstance(sv_mad, (int, float)) and sv_mad:
+        bw_limits = {"center": sv_median / 1e6, "mad": sv_mad / 1e6}
+
+    data_json = json.dumps({
+        "batches": batches,
+        "raw": raw_points,
+        "bw_limits": bw_limits,
+    })
+
+    body = [nav, f'<h1>{html.escape(job)} <span class="subtle">on {html.escape(slug)}</span> '
+            f'{tier_badge(survey_row.get("tier"))}</h1>']
+    if not matching:
+        body.append('<p class="empty">no runs with this job yet.</p>')
+        write(HTML_DIR / slug / "jobs" / f"{job}.html", page(f"fsperf: {job} on {slug}",
+              "\n".join(body)))
+        return
+
+    # Noise / signal summary line.
+    if survey_row:
+        mad_pct = survey_row.get("mad_pct")
+        cv = survey_row.get("cv")
+        bim = survey_row.get("bimodal")
+        bits = []
+        if isinstance(mad_pct, (int, float)):
+            bits.append(f'MAD {mad_pct:.1f}%')
+        if isinstance(cv, (int, float)):
+            bits.append(f'CV {cv:.0f}%')
+        if isinstance(bim, (int, float)):
+            bits.append(f'{bim:.0f}% of nights >25% off median')
+        body.append('<p class="subtle">robust noise: ' + ' · '.join(bits) + '</p>')
+        if survey_row.get("we_rule"):
+            body.append(f'<div class="note">Recent: {we_badge(survey_row)} '
+                        '— run <code>fsperf-utils trend</code> to pin the change '
+                        'point + SHA range, or <code>evaluate</code> to retest.</div>')
+        if survey_row.get("tier") == "TREND-ONLY":
+            body.append('<div class="note">This workload is <b>TREND-ONLY</b>: '
+                        'bimodal host lottery (digest collapses host_ip to '
+                        '"multi"), so a single night carries no signal. Judge it '
+                        'on a sustained step across many nights, never one.</div>')
+
+    body.append('<div class="charts">')
+    bw_cap = ('<p class="chart-cap">dashed: median ± MAD control limits '
+              '(±3 ≈ 2σ, ±4.5 ≈ 3σ)</p>') if bw_limits else ''
+    body.append('<div class="chart-box"><h3>bandwidth (MB/s)</h3>'
+                f'<div id="chart-bw"></div>{bw_cap}</div>')
+    body.append('<div class="chart-box"><h3>iops</h3><div id="chart-iops"></div></div>')
+    body.append('<div class="chart-box"><h3>mean latency (µs)</h3><div id="chart-lat"></div></div>')
+    body.append('<div class="chart-box"><h3>p99 latency (µs)</h3><div id="chart-p99"></div></div>')
+    body.append('</div>')
+
+    body.append('<h2>data</h2>')
+    body.append('<table><thead><tr>'
+                '<th>started</th><th>sha</th><th>host</th><th>ip</th><th>side</th>'
+                '<th class="num">bw (MB/s)</th><th class="num">iops</th>'
+                '<th class="num">lat (µs)</th><th class="num">p99 (µs)</th>'
+                '<th>run</th>'
+                '</tr></thead><tbody>')
+    for tr in table_rows:
+        body.append(
+            f'<tr><td>{html.escape(tr["ts"])}</td>'
+            f'<td class="sha">{html.escape(tr["sha"])}</td>'
+            f'<td>{html.escape(tr["host"])}</td>'
+            f'<td>{html.escape(tr["ip"])}</td>'
+            f'<td>{html.escape(tr["side"])}</td>'
+            f'<td class="num">{html.escape(tr["bw_MB"])}</td>'
+            f'<td class="num">{html.escape(tr["iops"])}</td>'
+            f'<td class="num">{html.escape(tr["lat_us"])}</td>'
+            f'<td class="num">{html.escape(tr["p99_us"])}</td>'
+            f'<td><a href="../runs/{html.escape(tr["run_id"])}.html">view</a></td>'
+            f'</tr>'
+        )
+    body.append('</tbody></table>')
+
+    extra_head = (f'<link rel="stylesheet" href="{UPLOT_CSS}">'
+                  f'<script src="{UPLOT_JS}"></script>')
+
+    script = """
+<script>
+const data = """ + data_json + """;
+
+// Each batch has quantiles = [min, p25, median, p75, max] per metric.
+// Build parallel arrays for uPlot: x, median, p25, p75, min, max.
+function project(metric) {
+  const xs = [], med = [], p25 = [], p75 = [], lo = [], hi = [];
+  for (const b of data.batches) {
+    const q = b[metric];  // [min, p25, median, p75, max]
+    if (!q || q[2] == null) continue;
+    xs.push(b.ts);
+    lo.push(q[0]); p25.push(q[1]); med.push(q[2]); p75.push(q[3]); hi.push(q[4]);
+  }
+  return [xs, med, p25, p75, lo, hi];
+}
+
+function makeChart(elId, label, metric, color, limits) {
+  const [xs, med, p25, p75, lo, hi] = project(metric);
+  if (xs.length === 0) {
+    document.getElementById(elId).innerHTML = '<p class="empty">no data</p>';
+    return;
+  }
+  // uPlot bands link two series; the area between them gets filled.
+  // We use two bands: a tighter dark band for p25-p75, a lighter band
+  // for min-max.  Median is the visible line through batch centers.
+  const series = [
+    {},
+    { label: label + ' (median)', stroke: color, width: 2,
+      points: { show: true, size: 5, fill: color } },
+    { label: 'p25', stroke: 'transparent', show: true },
+    { label: 'p75', stroke: 'transparent', show: true },
+    { label: 'min', stroke: 'transparent', show: true },
+    { label: 'max', stroke: 'transparent', show: true },
+  ];
+  const cols = [xs, med, p25, p75, lo, hi];
+  // MAD control limits (bw only): flat dashed reference lines across x.
+  // center (gray), ±3 MAD ≈ 2σ (amber), ±4.5 MAD ≈ 3σ (red).
+  if (limits) {
+    const flat = v => xs.map(() => v);
+    const lim = [
+      ['centerline',  limits.center,                 '#999', [6, 4]],
+      ['+3 MAD',      limits.center + 3 * limits.mad, '#d8a200', [3, 3]],
+      ['-3 MAD',      limits.center - 3 * limits.mad, '#d8a200', [3, 3]],
+      ['+4.5 MAD',    limits.center + 4.5 * limits.mad, '#cc2222', [2, 4]],
+      ['-4.5 MAD',    limits.center - 4.5 * limits.mad, '#cc2222', [2, 4]],
+    ];
+    for (const [lbl, val, stroke, dash] of lim) {
+      series.push({ label: lbl, stroke, width: 1, dash,
+                    points: { show: false } });
+      cols.push(flat(val));
+    }
+  }
+  const opts = {
+    width: 540,
+    height: 240,
+    scales: { x: { time: true }, y: { auto: true } },
+    series,
+    bands: [
+      { series: [3, 2], fill: color + '33' },  // p25-p75 band (~20% alpha hex suffix)
+      { series: [5, 4], fill: color + '14' },  // min-max band (~8% alpha)
+    ],
+    axes: [{ stroke: '#888' }, { stroke: '#888' }],
+    cursor: { drag: { x: true, y: false } },
+    legend: { show: false },
+  };
+  return new uPlot(opts, cols, document.getElementById(elId));
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  makeChart('chart-bw',   'MB/s', 'bw',   '#0066cc', data.bw_limits);
+  makeChart('chart-iops', 'iops', 'iops', '#00aa33');
+  makeChart('chart-lat',  'µs',   'lat',  '#cc6600');
+  makeChart('chart-p99',  'µs',   'p99',  '#aa0044');
+});
+</script>
+"""
+    body.append(script)
+    write(HTML_DIR / slug / "jobs" / f"{job}.html",
+          page(f"fsperf: {job} on {slug}", "\n".join(body), extra_head=extra_head))
+
+
+# ---------- main ----------
+
+def main():
+    HTML_DIR.mkdir(parents=True, exist_ok=True)
+    branches = find_branches()
+    print(f"rendering {len(branches)} branch{'es' if len(branches)!=1 else ''}", file=sys.stderr)
+
+    render_index(branches)
+
+    for branch in branches:
+        runs = load_branch_runs(branch)
+        survey = load_survey(branch)
+        render_branch(branch, runs, survey)
+        # per-job chart pages
+        jobs = sorted({j for r in runs for j in r.get("jobs", {})})
+        for job in jobs:
+            render_job_chart(branch, job, runs, survey.get(job))
+        # per-run detail
+        for run in runs:
+            render_run_detail(branch, run)
+
+    print(f"done. browse {HTML_DIR}/index.html", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
