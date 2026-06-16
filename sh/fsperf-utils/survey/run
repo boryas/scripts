@@ -50,9 +50,17 @@ Sections printed:
 import argparse
 import fnmatch
 import json
+import re
 import statistics
 import sys
 from pathlib import Path
+
+# Replica-suffixed digests (<sha>-<ts>-r<N>.json) are K-sample burst runs,
+# not the nightly singleton series.  Several of these from one old config
+# regime once leaked into for-next and skewed every workload's tier to
+# TREND-ONLY (bimodal).  A branch's standing tiers come from the nightly
+# series only; skip replicas so a stray one can never poison the branch.
+REPLICA_RE = re.compile(r"-r\d+$")
 
 # --- tier thresholds (derived empirically 2026-06-15 over ~100 nights) -------
 # MAD% = median-absolute-deviation as a percent of the median (robust spread).
@@ -135,6 +143,8 @@ def load_series(branch, window, pat):
     # First pass: gather both sides so we can pick the dominant one per wl.
     raw = {}  # wl -> {side: [(ts, sha, v)]}
     for path in sorted(branch_dir.glob("*.json")):
+        if REPLICA_RE.search(path.stem):
+            continue  # K-sample burst replica, not part of the nightly series
         try:
             with open(path) as f:
                 d = json.load(f)
