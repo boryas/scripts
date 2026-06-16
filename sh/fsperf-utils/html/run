@@ -23,6 +23,7 @@ import datetime as dt
 import html
 import json
 import os
+import statistics
 import subprocess
 import sys
 from pathlib import Path
@@ -65,6 +66,13 @@ tr:hover td { background: #fafafa; }
 .charts-key b { font-weight: 600; }
 .k-med { color: #0066cc; } .k-band { color: #8aa; }
 .k-c { color: #999; } .k-a { color: #d8a200; } .k-r { color: #cc2222; }
+.hit-selector { margin: 1em 0 0.4em; font-size: 0.85em; color: #444;
+                background: #f7f9fb; border: 1px solid #e3e8ee;
+                border-radius: 6px; padding: 0.5em 0.8em; }
+.hit-selector label { margin: 0 0.2em; padding: 0.1em 0.3em; cursor: pointer;
+                      white-space: nowrap; }
+.hit-selector input[disabled] + b { opacity: 0.4; }
+.r-R2 { color: #e8a200; } .r-R3 { color: #e85d00; } .r-R4 { color: #cc0000; }
 .empty { color: #888; font-style: italic; }
 .badge { display: inline-block; padding: 0.05em 0.5em; border-radius: 0.8em;
          font-size: 0.78em; font-weight: 600; line-height: 1.6; white-space: nowrap; }
@@ -437,6 +445,45 @@ def quantiles(vals):
     return (xs[0], q(0.25), q(0.5), q(0.75), xs[-1])
 
 
+# Western Electric runs-rule thresholds, MAD-calibrated (mirror survey/run).
+# Single-point Rule 1 is omitted on purpose: across kernels each point is a
+# different droplet, so a lone 3σ point is the host lottery, not signal.
+WE_T1, WE_T2, WE_T3 = 1.5, 3.0, 4.5
+
+
+def _mad(vals, med):
+    return statistics.median(abs(v - med) for v in vals) if vals else 0.0
+
+
+def we_hits(zs):
+    """For a chronological m-score series (one point per kernel), return a
+    list of the runs rules firing anchored at each index (using that index
+    and its predecessors).  A point may satisfy more than one rule."""
+    out = []
+    for i, last in enumerate(zs):
+        s = []
+        w3 = zs[max(0, i - 2):i + 1]
+        if len(w3) == 3:
+            if sum(z > WE_T2 for z in w3) >= 2 and last > WE_T1:
+                s.append("R2")
+            elif sum(z < -WE_T2 for z in w3) >= 2 and last < -WE_T1:
+                s.append("R2")
+        w5 = zs[max(0, i - 4):i + 1]
+        if len(w5) == 5:
+            if sum(z > WE_T1 for z in w5) >= 4 and last > 0:
+                s.append("R3")
+            elif sum(z < -WE_T1 for z in w5) >= 4 and last < 0:
+                s.append("R3")
+        w8 = zs[max(0, i - 7):i + 1]
+        if len(w8) == 8:
+            if all(z > 0 for z in w8):
+                s.append("R4")
+            elif all(z < 0 for z in w8):
+                s.append("R4")
+        out.append(s)
+    return out
+
+
 def render_job_chart(branch, job, runs, survey_row=None):
     """Per-job chart page: four metrics over time, one batch per sha.
     Each batch shows median line + p25/p75 shaded band + raw samples as
@@ -511,6 +558,33 @@ def render_job_chart(branch, job, runs, survey_row=None):
     if isinstance(sv_median, (int, float)) and isinstance(sv_mad, (int, float)) and sv_mad:
         bw_limits = {"center": sv_median / 1e6, "mad": sv_mad / 1e6}
 
+    # Shewhart runs-rule hits per metric, anchored at each kernel point — this
+    # is what the highlighter selector toggles.  One control point per kernel
+    # (the batch median); m-scores against the all-history median + MAD.  For
+    # bw we reuse the same center/MAD that draws the limit lines so the rings
+    # sit consistently with them; the other metrics use their own per-kernel
+    # median + MAD.
+    n_hits = {"R2": 0, "R3": 0, "R4": 0}
+    for metric in ("bw", "iops", "lat", "p99"):
+        idxs = [i for i, b in enumerate(batches) if b[metric][2] is not None]
+        meds = [batches[i][metric][2] for i in idxs]
+        if metric == "bw" and bw_limits:
+            center, madv = bw_limits["center"], bw_limits["mad"]
+        else:
+            center = statistics.median(meds) if meds else 0.0
+            madv = _mad(meds, center)
+        if madv:
+            zs = [(m - center) / madv for m in meds]
+            per_idx = we_hits(zs)
+        else:
+            per_idx = [[] for _ in idxs]
+        hitmap = dict(zip(idxs, per_idx))
+        for i, b in enumerate(batches):
+            rules = hitmap.get(i, [])
+            b.setdefault("hits", {})[metric] = rules
+            for r in rules:
+                n_hits[r] += 1
+
     data_json = json.dumps({
         "batches": batches,
         "raw": raw_points,
@@ -554,6 +628,24 @@ def render_job_chart(branch, job, runs, survey_row=None):
                 'bandwidth dashed lines: <b class="k-c">centerline</b> '
                 '<b class="k-a">±3 MAD (≈2σ)</b> <b class="k-r">±4.5 MAD (≈3σ)</b> · '
                 'hover for values; the crosshair is shared across all four charts.</p>')
+    total_hits = n_hits["R2"] + n_hits["R3"] + n_hits["R4"]
+    body.append(
+        '<div class="hit-selector">Highlight kernels that fire a Western '
+        'Electric runs rule '
+        '<span class="subtle">(across all four metrics; single points are '
+        'never flagged)</span>: '
+        f'<label><input type="checkbox" class="we-toggle" value="R2"'
+        f'{" disabled" if not n_hits["R2"] else ""}> '
+        f'<b class="r-R2">R2</b> 2/3&gt;3 MAD <span class="subtle">({n_hits["R2"]})</span></label> '
+        f'<label><input type="checkbox" class="we-toggle" value="R3"'
+        f'{" disabled" if not n_hits["R3"] else ""}> '
+        f'<b class="r-R3">R3</b> 4/5&gt;1.5 MAD <span class="subtle">({n_hits["R3"]})</span></label> '
+        f'<label><input type="checkbox" class="we-toggle" value="R4"'
+        f'{" disabled" if not n_hits["R4"] else ""}> '
+        f'<b class="r-R4">R4</b> 8 one side <span class="subtle">({n_hits["R4"]})</span></label>'
+        + ('' if total_hits else
+           ' <span class="subtle">— no rule fires on this workload</span>')
+        + '</div>')
     body.append('<div class="charts">')
     bw_cap = ('<p class="chart-cap">dashed: median ± MAD control limits '
               '(±3 ≈ 2σ, ±4.5 ≈ 3σ)</p>') if bw_limits else ''
@@ -597,21 +689,24 @@ const data = """ + data_json + """;
 // Each batch has quantiles = [min, p25, median, p75, max] per metric.
 // Build parallel arrays for uPlot: x, median, p25, p75, min, max.
 function project(metric) {
-  const xs = [], med = [], p25 = [], p75 = [], lo = [], hi = [];
+  const xs = [], med = [], p25 = [], p75 = [], lo = [], hi = [], hits = [];
   for (const b of data.batches) {
     const q = b[metric];  // [min, p25, median, p75, max]
     if (!q || q[2] == null) continue;
     xs.push(b.ts);
     lo.push(q[0]); p25.push(q[1]); med.push(q[2]); p75.push(q[3]); hi.push(q[4]);
+    hits.push((b.hits && b.hits[metric]) || []);
   }
-  return [xs, med, p25, p75, lo, hi];
+  return { xs, med, p25, p75, lo, hi, hits };
 }
 
+const RULE_COLORS = { R2: '#e8a200', R3: '#e85d00', R4: '#cc0000' };
+
 function makeChart(elId, label, metric, color, limits) {
-  const [xs, med, p25, p75, lo, hi] = project(metric);
+  const { xs, med, p25, p75, lo, hi, hits } = project(metric);
   if (xs.length === 0) {
     document.getElementById(elId).innerHTML = '<p class="empty">no data</p>';
-    return;
+    return null;
   }
   // uPlot bands link two series; the area between them gets filled.
   // We use two bands: a tighter dark band for p25-p75, a lighter band
@@ -643,6 +738,20 @@ function makeChart(elId, label, metric, color, limits) {
       cols.push(flat(val));
     }
   }
+  // Shewhart-hit overlays: one points-only series per runs rule, drawn as a
+  // ring around the median dots that fire it.  Hidden until the selector
+  // turns them on.  hitIdx maps rule -> series index for toggling.
+  const hitIdx = {};
+  for (const rule of ['R2', 'R3', 'R4']) {
+    hitIdx[rule] = series.length;
+    series.push({
+      label: rule + ' hit', stroke: RULE_COLORS[rule], width: 0,
+      paths: () => null, show: false,
+      points: { show: true, size: 13, width: 2.5,
+                stroke: RULE_COLORS[rule], fill: 'rgba(255,255,255,0)' },
+    });
+    cols.push(med.map((m, i) => hits[i].includes(rule) ? m : null));
+  }
   const el = document.getElementById(elId);
   const opts = {
     width: Math.max(320, el.clientWidth || 1100),
@@ -660,7 +769,7 @@ function makeChart(elId, label, metric, color, limits) {
               sync: { key: 'jobcharts', scales: ['x', null] } },
     legend: { show: true },
   };
-  return new uPlot(opts, cols, el);
+  return { u: new uPlot(opts, cols, el), hitIdx };
 }
 
 window.addEventListener('DOMContentLoaded', () => {
@@ -670,14 +779,20 @@ window.addEventListener('DOMContentLoaded', () => {
     makeChart('chart-lat',  'µs',   'lat',  '#cc6600'),
     makeChart('chart-p99',  'µs',   'p99',  '#aa0044'),
   ].filter(Boolean);
+  // Selector: toggle each rule's ring overlay across all four charts at once.
+  document.querySelectorAll('.we-toggle').forEach(cb => {
+    cb.addEventListener('change', () => {
+      for (const c of charts) c.u.setSeries(c.hitIdx[cb.value], { show: cb.checked });
+    });
+  });
   // Keep charts full-width on resize.
   let t;
   window.addEventListener('resize', () => {
     clearTimeout(t);
     t = setTimeout(() => {
-      for (const u of charts) {
-        const w = Math.max(320, u.root.parentElement.clientWidth || 1100);
-        u.setSize({ width: w, height: 320 });
+      for (const c of charts) {
+        const w = Math.max(320, c.u.root.parentElement.clientWidth || 1100);
+        c.u.setSize({ width: w, height: 320 });
       }
     }, 100);
   });
