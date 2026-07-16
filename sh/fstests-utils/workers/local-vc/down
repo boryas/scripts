@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# workers/local-vc/down [HOST]: shut down vc* VMs.  Idempotent.
+#
+# With no args: shut down vc0..vc4 (full teardown).
+# With one HOST arg ("fstests@vcN", matching what `list` emits): just that VM.
+set -eu
+
+if [ $# -eq 0 ]; then
+    for vm in vc0 vc1 vc2 vc3 vc4; do
+        rcli vm down "$vm" || true
+    done
+    exit 0
+fi
+
+host=$1
+vm=${host#fstests@}
+exec rcli vm down "$vm"

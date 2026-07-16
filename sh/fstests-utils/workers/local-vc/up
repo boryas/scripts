@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# workers/local-vc/up: bring up the vc* VM fleet (cloud-image variant)
+# using the current host's KERNEL_SRC.  Idempotent: rcli vm up is a
+# no-op per VM if it's already up.
+#
+# vc0..vc4 share /dev/vm/d0..d4 with v0..v4 respectively, so the v*
+# family must not be running at the same time.
+set -eu
+# Single `rcli vm list` (which sshes to every VM) then up just the vc*
+# that are DOWN.  rcli vm list is the slow part (5×1s per ssh), so
+# calling it once vs once-per-VM is ~5x faster.
+state=$(rcli vm list)
+for vm in vc0 vc1 vc2 vc3 vc4; do
+    s=$(echo "$state" | awk -v v="$vm" '$1==v {print $2}')
+    [ "$s" = "DOWN" ] && rcli vm up "$vm"
+done
+true

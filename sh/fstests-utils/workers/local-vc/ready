@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# workers/local-vc/ready <host>: block until <host> is reachable via ssh.
+set -eu
+if [ $# -ne 1 ]; then
+    echo "usage: workers/local-vc/ready <host>" >&2
+    exit 22
+fi
+exec rcli vm ready "$1"

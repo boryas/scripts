@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# workers/local-vc/list: print the hostnames of the vc* fleet, one per
+# line.  Hostnames must be ssh-resolvable (see ~/.ssh/config).
+set -eu
+printf 'vc0\nvc1\nvc2\nvc3\nvc4\n'
