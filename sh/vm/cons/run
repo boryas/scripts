@@ -1,20 +1,40 @@
 #!/usr/bin/env bash
+# rcli vm cons <vm>: attach to <vm>'s serial console.
+#
+# The qemu run scripts use `-chardev socket,...` (unix socket) for serial
+# -- more robust than pty for the "nobody attached at startup" case where
+# pty silently drops data.  socat does the actual relay; we wrap it in a
+# detachable screen session so you can leave the console running and
+# come back (Ctrl-a d to detach, `rcli vm cons <vm>` again to reattach).
+#
+# Exit shortcuts:
+#   Ctrl-a d   - detach (vm keeps running, screen session persists)
+#   Ctrl-a k   - kill the screen session entirely (also disconnects socat)
+set -eu
 
 SCRIPT=$(readlink -f "$0")
 DIR=$(dirname "$SCRIPT")
 CMD_ROOT=$(dirname "$DIR")
 source "$CMD_ROOT/common"
 
-if [ $# -ne 1 ]
-then
-	_usage
+if [ $# -ne 1 ]; then
+    _usage
 fi
 
 vm=$1
-cons_f="$VM_DIR/vm/console"
+sock=/var/run/${vm}-cons.sock
+if [ ! -S "$sock" ]; then
+    echo "no console socket at $sock; is $vm up?" >&2
+    exit 1
+fi
 
-if [ -f $cons_f ]
-then
-	cons=$(cat $VM_DIR/$vm/console)
-	sudo minicom -D $cons
+session="vmcons-$vm"
+
+# If a session already exists, reattach.  Otherwise create one running
+# socat.  socat is invoked with sudo because the qemu socket is
+# root-owned (qemu runs as root).
+if sudo screen -ls 2>/dev/null | grep -q "\.$session\s"; then
+    exec sudo screen -r "$session"
+else
+    exec sudo screen -S "$session" socat - "UNIX-CONNECT:$sock"
 fi

@@ -8,15 +8,18 @@ FOREGROUND=0
 
 _up_fg() {
 	local vm=$1
-	sudo $VM_DIR/$vm/run | awk '{print $5}' > /$VM_DIR/$vm/console
+	sudo --preserve-env=KERNEL_SRC,ZNS_IMG,ZNS_IOPS_WRITE,ZNS_ZONE_SIZE $VM_DIR/$vm/run
 }
 
 _up_bg() {
 	local vm=$1
 	# phony background sudo task to trigger pw prompt
-	# the qemu invocation gets piped and backgrounded, so it can't prompt
+	# the qemu invocation gets backgrounded, so it can't prompt
 	sudo -b true
-	(sudo $VM_DIR/$vm/run | awk '{print $5}' > /$VM_DIR/$vm/console) &
+	# Serial console is a unix socket created by run (server=on,wait=off).
+	# qemu's stdout/stderr go to qemu.log for debugging; the interactive
+	# console is `rcli vm cons <vm>` (which screens socat into the socket).
+	(sudo --preserve-env=KERNEL_SRC,ZNS_IMG,ZNS_IOPS_WRITE,ZNS_ZONE_SIZE $VM_DIR/$vm/run > /$VM_DIR/$vm/qemu.log 2>&1) &
 }
 
 _up_one() {
