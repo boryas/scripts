@@ -1,0 +1,813 @@
+#!/usr/bin/env python3
+"""
+commit-to-series: Map git commits to their mailing list patch series.
+
+Given a commit (or range of commits), finds the original patch email on
+lore.kernel.org via lei, identifies the full series via b4, and maps each
+series patch back to a commit in the tree.
+
+Usage:
+    commit-to-series <hash> [<hash>...]
+    commit-to-series --range <range> [--path <path>]
+
+Requires: git, lei (from public-inbox), b4
+"""
+
+import argparse
+import email
+import email.policy
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from collections import OrderedDict
+from dataclasses import dataclass, field, asdict
+from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
+from typing import Optional
+
+
+FUZZY_THRESHOLD = 0.70
+LEI_DELAY = 0.2  # seconds between lei queries
+B4_DELAY = 0.5   # seconds between b4 queries
+
+
+@dataclass
+class CommitInfo:
+    hash: str
+    subject: str
+    author_email: str
+    author_date: str  # ISO format
+    files: list = field(default_factory=list)
+
+
+@dataclass
+class PatchInfo:
+    subject: str  # cleaned of [PATCH x/y] prefix
+    raw_subject: str
+    message_id: str
+    patch_num: Optional[int] = None
+    total_patches: Optional[int] = None
+    files: list = field(default_factory=list)
+    matched_commit: Optional[str] = None
+
+
+@dataclass
+class SeriesInfo:
+    series_id: str  # cover letter message-id or first patch message-id
+    series_subject: str  # cover letter subject or first patch subject
+    version: Optional[int] = None
+    patches: list = field(default_factory=list)  # list of PatchInfo
+    commits: list = field(default_factory=list)  # matched commit hashes
+    unmatched_patches: list = field(default_factory=list)
+    unmatched_commits: list = field(default_factory=list)
+
+
+def run(cmd, **kwargs):
+    """Run a command and return stdout. Raises on non-zero exit."""
+    result = subprocess.run(
+        cmd, capture_output=True, text=True,
+        timeout=kwargs.pop("timeout", 60),
+        **kwargs,
+    )
+    return result.stdout, result.stderr, result.returncode
+
+
+def git_commit_info(commit_hash, repo=None):
+    """Extract commit metadata from git."""
+    cmd = ["git"]
+    if repo:
+        cmd.extend(["-C", repo])
+    cmd.extend(["log", "-1", "--format=%H|%ae|%aI|%s", commit_hash])
+
+    stdout, _, rc = run(cmd)
+    if rc != 0:
+        return None
+
+    line = stdout.strip()
+    if not line:
+        return None
+
+    parts = line.split("|", 3)
+    if len(parts) < 4:
+        return None
+
+    full_hash, author, date, subject = parts
+
+    # Get files changed
+    cmd2 = ["git"]
+    if repo:
+        cmd2.extend(["-C", repo])
+    cmd2.extend(["show", "--stat", "--format=", full_hash])
+    stdout2, _, _ = run(cmd2)
+    files = []
+    for fline in stdout2.strip().split("\n"):
+        fline = fline.strip()
+        if "|" in fline:
+            fname = fline.split("|")[0].strip()
+            if fname:
+                files.append(fname)
+
+    return CommitInfo(
+        hash=full_hash,
+        subject=subject,
+        author_email=author,
+        author_date=date,
+        files=files,
+    )
+
+
+def git_range_commits(git_range, path_filter=None, repo=None):
+    """Get all commits in a range."""
+    cmd = ["git"]
+    if repo:
+        cmd.extend(["-C", repo])
+    cmd.extend(["log", "--format=%H", git_range])
+    if path_filter:
+        cmd.extend(["--", path_filter])
+
+    stdout, _, rc = run(cmd, timeout=120)
+    if rc != 0:
+        return []
+
+    return [h.strip() for h in stdout.strip().split("\n") if h.strip()]
+
+
+def parse_mboxrd(data):
+    """Parse mboxrd format data into a list of email messages."""
+    messages = []
+    # Split on mboxrd From line
+    chunks = re.split(r'^From [^\n]*\n', data, flags=re.MULTILINE)
+    for chunk in chunks:
+        if not chunk.strip():
+            continue
+        try:
+            msg = email.message_from_string(chunk, policy=email.policy.default)
+            if msg.get("Subject"):
+                messages.append(msg)
+        except Exception:
+            continue
+    return messages
+
+
+def strip_patch_prefix(subject):
+    """Remove [PATCH v2 3/5] style prefixes from subject."""
+    if not subject:
+        return ""
+    return re.sub(r"^\s*\[PATCH[^\]]*\]\s*", "", subject).strip()
+
+
+def extract_patch_version(subject):
+    """Extract version number from [PATCH vN ...] prefix."""
+    if not subject:
+        return None
+    m = re.search(r"\[PATCH\s+v(\d+)", subject)
+    return int(m.group(1)) if m else None
+
+
+def extract_patch_nums(subject):
+    """Extract patch number and total from [PATCH 3/5] prefix."""
+    if not subject:
+        return None, None
+    m = re.search(r"\[PATCH[^\]]*\s+(\d+)/(\d+)\]", subject)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    return None, None
+
+
+def extract_files_from_email(msg):
+    """Extract changed file paths from an email's diff content."""
+    body = msg.get_payload()
+    if isinstance(body, list):
+        # multipart - try to get the text part
+        for part in body:
+            payload = part.get_payload(decode=True)
+            if payload:
+                body = payload.decode("utf-8", errors="replace")
+                break
+        else:
+            return []
+    elif isinstance(body, bytes):
+        body = body.decode("utf-8", errors="replace")
+
+    if not isinstance(body, str):
+        return []
+
+    return list(set(re.findall(r"^diff --git a/(.+?) b/", body, re.MULTILINE)))
+
+
+def lei_search(subject, author_email, author_date, list_name=None):
+    """Search lei for a patch email matching the given commit info.
+
+    Returns list of (message_id, clean_subject, from_addr, date_str) tuples.
+    """
+    # Build query: search by subject keywords and author
+    # Use key words from the subject to avoid quoting issues
+    query_parts = []
+
+    # Use the full subject in quotes for best precision
+    escaped_subject = subject.replace('"', '\\"')
+    query_parts.append(f's:"{escaped_subject}"')
+
+    # Add author filter
+    if author_email:
+        # Use just the username part for more flexible matching
+        user = author_email.split("@")[0]
+        query_parts.append(f"f:{user}")
+
+    # Add date filter (search from 2 months before the commit date)
+    if author_date:
+        try:
+            dt = datetime.fromisoformat(author_date)
+            start = dt - timedelta(days=60)
+            query_parts.append(f"d:{start.strftime('%Y%m%d')}..")
+        except (ValueError, TypeError):
+            pass
+
+    query = " AND ".join(query_parts)
+
+    cmd = ["lei", "q", "-f", "mboxrd"]
+    if list_name:
+        cmd.extend(["--only", f"https://lore.kernel.org/{list_name}/"])
+    cmd.append(query)
+
+    stdout, stderr, rc = run(cmd, timeout=30)
+    if not stdout.strip():
+        # Try a broader search without author
+        query = f's:"{escaped_subject}"'
+        cmd = ["lei", "q", "-f", "mboxrd"]
+        if list_name:
+            cmd.extend(["--only", f"https://lore.kernel.org/{list_name}/"])
+        cmd.append(query)
+        stdout, stderr, rc = run(cmd, timeout=30)
+
+    if not stdout.strip():
+        return []
+
+    messages = parse_mboxrd(stdout)
+    results = []
+    for msg in messages:
+        msg_subject = str(msg.get("Subject", ""))
+        msg_id = str(msg.get("Message-ID", "")).strip("<>")
+        msg_from = str(msg.get("From", ""))
+        msg_date = str(msg.get("Date", ""))
+        msg_irt = str(msg.get("In-Reply-To", "")).strip("<>")
+
+        if not msg_id:
+            continue
+
+        results.append({
+            "message_id": msg_id,
+            "subject": msg_subject,
+            "clean_subject": strip_patch_prefix(msg_subject),
+            "from": msg_from,
+            "date": msg_date,
+            "in_reply_to": msg_irt,
+            "is_patch": bool(re.search(r"\[PATCH", msg_subject)),
+        })
+
+    return results
+
+
+def pick_best_lei_match(results, target_subject, target_author):
+    """Pick the best matching email from lei results."""
+    if not results:
+        return None
+
+    # Prefer actual patch emails over replies
+    patch_results = [r for r in results if r["is_patch"]]
+    search_pool = patch_results if patch_results else results
+
+    best = None
+    best_score = 0.0
+
+    for r in search_pool:
+        clean = r["clean_subject"]
+        score = SequenceMatcher(None, target_subject.lower(), clean.lower()).ratio()
+
+        # Bonus for author match
+        if target_author and target_author.split("@")[0] in r["from"]:
+            score += 0.1
+
+        # Penalty for replies (Re:)
+        if r["subject"].startswith("Re:"):
+            score -= 0.2
+
+        if score > best_score:
+            best_score = score
+            best = r
+
+    if best_score < FUZZY_THRESHOLD:
+        return None
+
+    return best
+
+
+def b4_get_series(message_id):
+    """Use b4 to get the full series for a message-id.
+
+    Returns a SeriesInfo with patch details.
+    """
+    cmd = ["b4", "am", "-o", "-", message_id]
+    stdout, stderr, rc = run(cmd, timeout=60)
+
+    if not stdout.strip():
+        return None
+
+    # Parse the mbox output for patch emails
+    messages = parse_mboxrd(stdout)
+
+    patches = []
+    cover_subject = None
+    cover_msgid = None
+    version = None
+
+    for msg in messages:
+        subj = str(msg.get("Subject", ""))
+        msg_id = str(msg.get("Message-ID", "")).strip("<>")
+
+        if not re.search(r"\[PATCH", subj):
+            continue
+
+        pnum, ptotal = extract_patch_nums(subj)
+        v = extract_patch_version(subj)
+        if v:
+            version = v
+
+        clean = strip_patch_prefix(subj)
+        files = extract_files_from_email(msg)
+
+        if pnum == 0 or (pnum is None and "0/" in subj):
+            # Cover letter
+            cover_subject = clean
+            cover_msgid = msg_id
+            continue
+
+        patches.append(PatchInfo(
+            subject=clean,
+            raw_subject=subj,
+            message_id=msg_id,
+            patch_num=pnum,
+            total_patches=ptotal,
+            files=files,
+        ))
+
+    if not patches:
+        return None
+
+    # Sort by patch number
+    patches.sort(key=lambda p: p.patch_num or 0)
+
+    series_id = cover_msgid or patches[0].message_id
+    series_subject = cover_subject or patches[0].subject
+
+    # Also parse b4's stderr for series info
+    cover_match = re.search(r"Cover: (.+)", stderr)
+    total_match = re.search(r"Total patches: (\d+)", stderr)
+
+    return SeriesInfo(
+        series_id=series_id,
+        series_subject=series_subject,
+        version=version,
+        patches=patches,
+    )
+
+
+def _grep_terms_for_subject(subject):
+    """Generate a list of grep search terms from a patch subject.
+
+    Returns terms from most specific to least specific:
+    1. Function name (foo_bar()) if present
+    2. Longest distinctive word sequence (3+ words, no common prefixes)
+    3. The full subject as last resort
+    """
+    terms = []
+
+    # Strip common prefixes like "btrfs: " or "btrfs: subsys: "
+    stripped = re.sub(r"^(?:btrfs:\s*)+(?:\w+:\s+)?", "", subject)
+
+    # 1. Function names: look for word() patterns
+    func_names = re.findall(r"\b(\w{4,}(?:::\w+)?)\(\)", subject)
+    for fn in func_names:
+        terms.append(fn)
+
+    # 2. Extract a distinctive multi-word phrase (skip very common words)
+    noise = {"the", "a", "an", "in", "on", "for", "of", "to", "and", "or",
+             "is", "it", "we", "do", "if", "be", "by", "at", "as", "up",
+             "btrfs", "after", "when", "from", "with", "not", "don't"}
+    words = stripped.split()
+    # Find the longest run of non-noise words
+    best_run = ""
+    for start in range(len(words)):
+        for end in range(len(words), start + 1, -1):
+            phrase = " ".join(words[start:end])
+            meaningful = [w for w in words[start:end] if w.lower() not in noise]
+            if len(meaningful) >= 2 and len(phrase) > len(best_run):
+                best_run = phrase
+                break
+    if best_run:
+        terms.append(best_run)
+
+    # 3. Full subject as fallback
+    terms.append(subject)
+
+    return terms
+
+
+def match_patch_to_commit(patch, commit_pool, repo=None):
+    """Find the commit that best matches a series patch.
+
+    commit_pool: dict of {subject: CommitInfo}
+    First tries the pool, then falls back to git log --grep across the repo.
+    """
+    target = patch.subject
+
+    # 1. Exact match in pool
+    if target in commit_pool:
+        return commit_pool[target]
+
+    # 2. Fuzzy match on pool subjects
+    best_score = 0.0
+    best_commit = None
+    candidates = []
+
+    for subj, ci in commit_pool.items():
+        score = SequenceMatcher(None, target.lower(), subj.lower()).ratio()
+        if score > best_score:
+            best_score = score
+            best_commit = ci
+            candidates = [(ci, score)]
+        elif score == best_score and score > FUZZY_THRESHOLD:
+            candidates.append((ci, score))
+
+    # Use a higher bar for pool-only matches to avoid false positives
+    # when the pool is small; strong matches (>=0.85) are returned immediately,
+    # weaker ones are held as a candidate while we try git grep
+    STRONG_THRESHOLD = 0.85
+
+    if best_score >= STRONG_THRESHOLD:
+        if len(candidates) > 1 and patch.files:
+            patch_files = set(patch.files)
+            best_overlap = -1
+            for ci, score in candidates:
+                commit_files = set(ci.files)
+                overlap = len(patch_files & commit_files)
+                if overlap > best_overlap:
+                    best_overlap = overlap
+                    best_commit = ci
+        return best_commit
+
+    pool_candidate = best_commit if best_score >= FUZZY_THRESHOLD else None
+
+    # 4. Fallback: search the repo with git log --grep
+    #    Use distinctive substrings — try the longest word sequence that
+    #    looks like a unique identifier (function name, specific noun phrase)
+    grep_terms = _grep_terms_for_subject(target)
+
+    for grep_term in grep_terms:
+        cmd = ["git"]
+        if repo:
+            cmd.extend(["-C", repo])
+        cmd.extend([
+            "log", "--all", "--format=%H|%s",
+            f"--grep={grep_term}", "--fixed-strings", "-20",
+        ])
+
+        stdout, _, rc = run(cmd, timeout=15)
+        if rc != 0 or not stdout.strip():
+            continue
+
+        grep_best_score = 0.0
+        grep_best = None
+        for line in stdout.strip().split("\n"):
+            parts = line.split("|", 1)
+            if len(parts) < 2:
+                continue
+            h, subj = parts
+            score = SequenceMatcher(None, target.lower(), subj.lower()).ratio()
+            if score > grep_best_score:
+                grep_best_score = score
+                grep_best = (h, subj)
+
+        if grep_best and grep_best_score >= FUZZY_THRESHOLD:
+            # Only use grep result if it's better than the pool candidate
+            if pool_candidate is None or grep_best_score > best_score:
+                h, subj = grep_best
+                ci = git_commit_info(h, repo=repo)
+                if ci:
+                    # Add to pool for future lookups
+                    commit_pool[ci.subject] = ci
+                    return ci
+
+    return pool_candidate
+
+
+def find_series_for_commit(commit_hash, commit_pool, list_name=None, repo=None):
+    """Full pipeline: commit → lei → b4 → series with matched commits."""
+    ci = git_commit_info(commit_hash, repo=repo)
+    if not ci:
+        eprint(f"  Could not get info for {commit_hash}")
+        return None
+
+    eprint(f"  Searching lei for: {ci.subject}")
+    results = lei_search(ci.subject, ci.author_email, ci.author_date, list_name)
+    time.sleep(LEI_DELAY)
+
+    match = pick_best_lei_match(results, ci.subject, ci.author_email)
+    if not match:
+        eprint(f"  No match on lore")
+        return None
+
+    eprint(f"  Found: {match['message_id']}")
+    eprint(f"  Fetching series via b4...")
+
+    series = b4_get_series(match["message_id"])
+    time.sleep(B4_DELAY)
+
+    if not series:
+        # If the email has an In-Reply-To, it might be a reply to the cover
+        if match.get("in_reply_to"):
+            eprint(f"  Retrying with In-Reply-To: {match['in_reply_to']}")
+            series = b4_get_series(match["in_reply_to"])
+            time.sleep(B4_DELAY)
+
+    if not series:
+        # Treat as standalone patch
+        series = SeriesInfo(
+            series_id=match["message_id"],
+            series_subject=ci.subject,
+            patches=[PatchInfo(
+                subject=ci.subject,
+                raw_subject=match["subject"],
+                message_id=match["message_id"],
+                patch_num=1,
+                total_patches=1,
+                matched_commit=ci.hash,
+            )],
+        )
+        series.commits = [ci.hash]
+        return series
+
+    # Match each patch to a commit
+    seen_hashes = set()
+    for patch in series.patches:
+        matched = match_patch_to_commit(patch, commit_pool, repo=repo)
+        if matched:
+            patch.matched_commit = matched.hash
+            if matched.hash not in seen_hashes:
+                series.commits.append(matched.hash)
+                seen_hashes.add(matched.hash)
+        else:
+            series.unmatched_patches.append(patch.subject)
+
+    return series
+
+
+def eprint(*args, **kwargs):
+    """Print to stderr."""
+    print(*args, file=sys.stderr, **kwargs)
+
+
+def format_series_human(series, pool=None, repo=None):
+    """Format a series for human-readable output."""
+    lines = []
+    version_str = f"v{series.version}, " if series.version else ""
+    n = len(series.patches)
+    lines.append(f"Series: {series.series_subject}")
+    lines.append(f"  ID: {series.series_id}  ({version_str}{n} patch{'es' if n != 1 else ''})")
+
+    if series.commits:
+        lines.append("  Commits:")
+        # Build reverse lookup for commit hash → subject from pool
+        hash_to_subject = {}
+        if pool:
+            for subj, ci in pool.items():
+                hash_to_subject[ci.hash] = subj
+
+        for patch in series.patches:
+            if patch.matched_commit:
+                short = patch.matched_commit[:12]
+                commit_subj = hash_to_subject.get(patch.matched_commit, patch.subject)
+                lines.append(f"    {short} {commit_subj}")
+            else:
+                lines.append(f"    (unmatched) {patch.subject}")
+
+    if series.unmatched_patches:
+        lines.append("  Unmatched patches:")
+        for subj in series.unmatched_patches:
+            lines.append(f"    - {subj}")
+
+    return "\n".join(lines)
+
+
+def format_series_json(series):
+    """Format a series for JSON output."""
+    return {
+        "series_id": series.series_id,
+        "series_subject": series.series_subject,
+        "version": series.version,
+        "patch_count": len(series.patches),
+        "commits": [
+            {
+                "hash": p.matched_commit,
+                "subject": p.subject,
+                "patch_num": p.patch_num,
+            }
+            for p in series.patches
+            if p.matched_commit
+        ],
+        "unmatched_patches": series.unmatched_patches,
+    }
+
+
+def build_commit_pool(commit_hashes=None, git_range=None, path_filter=None, repo=None):
+    """Build a subject → CommitInfo lookup dict for matching.
+
+    Uses a single git log call for efficiency when git_range is provided.
+    """
+    pool = {}
+
+    if git_range:
+        # Bulk mode: single git log call with --stat
+        cmd = ["git"]
+        if repo:
+            cmd.extend(["-C", repo])
+        cmd.extend([
+            "log", "--format=COMMIT_SEP%n%H|%ae|%aI|%s",
+            "--stat", "--stat-width=300", git_range,
+        ])
+        if path_filter:
+            cmd.extend(["--", path_filter])
+
+        stdout, _, rc = run(cmd, timeout=120)
+        if rc != 0:
+            return pool
+
+        # Parse the combined output
+        for block in stdout.split("COMMIT_SEP\n"):
+            block = block.strip()
+            if not block:
+                continue
+            lines = block.split("\n")
+            header = lines[0]
+            parts = header.split("|", 3)
+            if len(parts) < 4:
+                continue
+
+            full_hash, author, date, subject = parts
+            files = []
+            for fline in lines[1:]:
+                fline = fline.strip()
+                if "|" in fline and not fline.startswith("|"):
+                    fname = fline.split("|")[0].strip()
+                    if fname and not fname.startswith(("(", " ")):
+                        files.append(fname)
+
+            ci = CommitInfo(
+                hash=full_hash,
+                subject=subject,
+                author_email=author,
+                author_date=date,
+                files=files,
+            )
+            pool[ci.subject] = ci
+
+        return pool
+
+    # Fallback: individual git calls
+    if commit_hashes:
+        for h in commit_hashes:
+            ci = git_commit_info(h, repo=repo)
+            if ci:
+                pool[ci.subject] = ci
+
+    return pool
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Map git commits to their mailing list patch series.",
+    )
+    parser.add_argument(
+        "commits", nargs="*",
+        help="Commit hashes to look up",
+    )
+    parser.add_argument(
+        "--range",
+        help="Git range to process in batch mode (e.g. v6.19..btrfs/for-next)",
+    )
+    parser.add_argument(
+        "--path",
+        help="Path filter for --range (e.g. fs/btrfs/)",
+    )
+    parser.add_argument(
+        "--repo",
+        help="Path to git repository (default: cwd)",
+    )
+    parser.add_argument(
+        "--list", dest="list_name",
+        help="Lore mailing list name (default: auto-detect)",
+    )
+    parser.add_argument(
+        "--json", dest="output_json", action="store_true",
+        help="Output JSON instead of human-readable format",
+    )
+    parser.add_argument(
+        "--resolve-only", action="store_true",
+        help="Only output commits that resolved to a series",
+    )
+
+    args = parser.parse_args()
+
+    if not args.commits and not args.range:
+        parser.error("Provide commit hashes or --range")
+
+    # Determine commit list
+    if args.range:
+        eprint(f"Getting commits from range: {args.range}")
+        target_hashes = args.commits if args.commits else git_range_commits(
+            args.range, args.path, args.repo,
+        )
+        eprint(f"Processing {len(target_hashes)} commits")
+
+        # Build commit pool using optimized bulk query
+        eprint("Building commit pool...")
+        pool = build_commit_pool(
+            git_range=args.range, path_filter=args.path, repo=args.repo,
+        )
+    else:
+        target_hashes = args.commits
+
+        # For single commit mode, no range pool available
+        eprint("Building commit pool...")
+        pool = build_commit_pool(commit_hashes=args.commits, repo=args.repo)
+
+    eprint(f"Pool: {len(pool)} commits")
+
+    # Process each target commit
+    seen_series = OrderedDict()  # series_id → SeriesInfo
+    commit_to_series = {}  # commit_hash → series_id (for dedup)
+    unlinked = []  # commits that couldn't be found on lore
+
+    for i, h in enumerate(target_hashes):
+        ci = git_commit_info(h, repo=args.repo)
+        if not ci:
+            eprint(f"[{i+1}/{len(target_hashes)}] Could not read commit {h}")
+            continue
+
+        # Skip if this commit was already matched via a previous series lookup
+        if ci.hash in commit_to_series:
+            sid = commit_to_series[ci.hash]
+            eprint(f"[{i+1}/{len(target_hashes)}] {ci.hash[:12]} (already in series {sid[:40]}...)")
+            continue
+
+        eprint(f"[{i+1}/{len(target_hashes)}] {ci.hash[:12]} {ci.subject}")
+
+        series = find_series_for_commit(h, pool, args.list_name, args.repo)
+
+        if series is None:
+            unlinked.append(ci)
+            continue
+
+        # Check if this series overlaps with an already-seen series
+        # (same series found via different message-ids)
+        merged = False
+        for existing_sid, existing in seen_series.items():
+            overlap = set(series.commits) & set(existing.commits)
+            if overlap:
+                # Merge into existing
+                for c in series.commits:
+                    if c not in existing.commits:
+                        existing.commits.append(c)
+                    commit_to_series[c] = existing_sid
+                merged = True
+                eprint(f"  (merged into existing series)")
+                break
+
+        if not merged:
+            seen_series[series.series_id] = series
+            for c in series.commits:
+                commit_to_series[c] = series.series_id
+
+    # Output
+    if args.output_json:
+        output = {
+            "series": [format_series_json(s) for s in seen_series.values()],
+            "unlinked": [{"hash": c.hash, "subject": c.subject} for c in unlinked],
+        }
+        print(json.dumps(output, indent=2))
+    else:
+        for series in seen_series.values():
+            print(format_series_human(series, pool=pool, repo=args.repo))
+            print()
+
+        if unlinked and not args.resolve_only:
+            print("Unlinked commits (not found on lore):")
+            for ci in unlinked:
+                print(f"  {ci.hash[:12]} {ci.subject}")
+
+
+if __name__ == "__main__":
+    main()
