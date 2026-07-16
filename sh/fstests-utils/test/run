@@ -81,13 +81,20 @@ fi
 # KMAKE_ARGS (from the backend env file; empty for the classic
 # backends) carries cross-build flags like "LLVM=1 ARCH=arm64".
 # Intentionally unquoted: it's a word list.
-make ${KMAKE_ARGS:-} olddefconfig
+#
+# Abort on build failure.  2026-07-09..13 the nightly sailed past a
+# failed tarzst-pkg (stale gcc dep files in tools/ after a toolchain
+# upgrade): kernel.release and the newest tarball were both stale but
+# mutually consistent, so workers/up happily shipped the Jul 7 kernel
+# five nights running while the digests were labeled with each night's
+# fresh sha.  Wrong-kernel results are worse than no results.
+make ${KMAKE_ARGS:-} olddefconfig || exit 1
 # tarzst-pkg builds the kernel and packages it into
 # $KERNEL_SRC/linux-<release>-<arch>.tar.zst.  Local-vm boots from
 # arch/x86/boot/bzImage and ignores the tarball; cloud workers/cloud/up
 # globs the tarball and ships it onto each droplet.  Always producing it
 # avoids "wrong build target" footguns when switching backends.
-make ${KMAKE_ARGS:-} -j$(nproc) tarzst-pkg
+make ${KMAKE_ARGS:-} -j$(nproc) tarzst-pkg || exit 1
 hash=$(git log -1 --pretty=format:"%h")
 # Per-run unique id: kernel sha + start timestamp.  Lets the nightly
 # cron run repeatedly against the same for-next sha (when upstream
