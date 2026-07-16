@@ -36,22 +36,31 @@ phase_end() {
 # Has to be >= the longest per-task budget; currently btrfs/187 at 2h.
 max_task_timeout="${MAX_TASK_TIMEOUT:-2h30m}"
 
-# Source kernel tree to build / boot from.  Defaults to the user's main
-# repo.  The for-next cron sets this to ~/repos/linux-fnext so the
-# automation runs against a dedicated worktree without touching the
-# user's checkout.
-kernel_src="${KERNEL_SRC:-$HOME/repos/linux}"
-export KERNEL_SRC="$kernel_src"
-
 # Worker backend.  `local-vm` drives the v0..v4 qemu fleet on this host;
 # `cloud` drives instances under a systemd-managed scope.  Each backend
 # is a directory of one-script-per-verb under workers/<name>/.
+# (Selected before the kernel-tree default below so a backend env file
+# can redirect KERNEL_SRC.)
 workers="${WORKERS:-local-vm}"
 B="$CMD_ROOT/workers/$workers"
 if [ ! -x "$B/up" ]; then
 	echo "no such worker backend: $workers ($B)" >&2
 	exit 1
 fi
+
+# Backend-specific defaults (optional).  aws-arm64 ships an env file
+# setting KERNEL_SRC (dedicated cross-build worktree), KMAKE_ARGS
+# (LLVM=1 ARCH=arm64) and RESULTS_SUFFIX (-arm64-64k); the classic
+# backends have none and behave as before.  The env file uses
+# ${VAR:-default} throughout, so ambient env still wins.
+[ -r "$B/env" ] && . "$B/env"
+
+# Source kernel tree to build / boot from.  Defaults to the user's main
+# repo.  The for-next cron sets this to ~/repos/linux-fnext so the
+# automation runs against a dedicated worktree without touching the
+# user's checkout.
+kernel_src="${KERNEL_SRC:-$HOME/repos/linux}"
+export KERNEL_SRC="$kernel_src"
 
 cd "$kernel_src"
 # If HEAD is detached, the caller has already positioned us at a
@@ -69,13 +78,16 @@ if git symbolic-ref -q HEAD >/dev/null; then
 		git checkout --detach "$patch_name"
 	fi
 fi
-make olddefconfig
+# KMAKE_ARGS (from the backend env file; empty for the classic
+# backends) carries cross-build flags like "LLVM=1 ARCH=arm64".
+# Intentionally unquoted: it's a word list.
+make ${KMAKE_ARGS:-} olddefconfig
 # tarzst-pkg builds the kernel and packages it into
 # $KERNEL_SRC/linux-<release>-<arch>.tar.zst.  Local-vm boots from
 # arch/x86/boot/bzImage and ignores the tarball; cloud workers/cloud/up
 # globs the tarball and ships it onto each droplet.  Always producing it
 # avoids "wrong build target" footguns when switching backends.
-make -j$(nproc) tarzst-pkg
+make ${KMAKE_ARGS:-} -j$(nproc) tarzst-pkg
 hash=$(git log -1 --pretty=format:"%h")
 # Per-run unique id: kernel sha + start timestamp.  Lets the nightly
 # cron run repeatedly against the same for-next sha (when upstream
@@ -84,7 +96,15 @@ hash=$(git log -1 --pretty=format:"%h")
 run_id="${hash}-$(date -u +%Y%m%dT%H%M%SZ)"
 phase_end build
 
-out_dir=~/fstests-results/$patch_name
+# RESULTS_SUFFIX (from the backend env file, e.g. "-arm64-64k")
+# namespaces everything downstream -- results dir, digest, history
+# fold, KP tiers -- so alternate-arch runs don't pollute the x86
+# timeline (64k/subpage has its own flake population).  Empty for the
+# classic backends, where results_name == patch_name as before.
+# `tests budgets`/`tests fast` fall back to for-next's history while
+# the new namespace is empty, so day-one budgets stay sane.
+results_name="${patch_name}${RESULTS_SUFFIX:-}"
+out_dir=~/fstests-results/$results_name
 mkdir -p $out_dir
 out_file="$out_dir/$run_id"
 # Per-run dir where the artifacts step rsyncs failure files (.out.bad,
@@ -120,14 +140,40 @@ trap '
 	"$B/down"
 ' EXIT INT TERM
 
-"$B/down"
-"$B/up"
+# SKIP_PROVISION=1: reuse whatever workers are already up.  Useful when
+# `workers/cloud/up` succeeded but you killed the rcli wrapper, or when
+# you want to keep an expensive provision around for multiple
+# back-to-back runs.  The `$B/list` call below will read the existing
+# hosts file; if it's empty the script will catch that via the
+# ready-check loop and abort.
+if [ "${SKIP_PROVISION:-0}" != "1" ]; then
+	"$B/down"
+	"$B/up"
+fi
 vms=($("$B/list"))
+# Filter out workers that aren't reachable after `up` succeeded.  A
+# droplet can die between up's host-file write and our ready probe
+# (saw this on cloud 2026-05-22), and historically the unbounded
+# ready loop would wedge the run forever.  Now ready exits non-zero
+# on its own timeout; we drop the bad host and proceed with the rest.
+ready_vms=()
+for vm in "${vms[@]}"; do
+	if "$B/ready" "$vm"; then
+		ready_vms+=("$vm")
+	else
+		echo "  $vm unreachable, dropping from worker pool" >&2
+	fi
+done
+if [ ${#ready_vms[@]} -eq 0 ]; then
+	echo "no workers reachable after ready check; aborting" >&2
+	exit 1
+fi
+if [ ${#ready_vms[@]} -lt ${#vms[@]} ]; then
+	echo "  dropped $((${#vms[@]} - ${#ready_vms[@]}))/${#vms[@]} workers; proceeding with ${#ready_vms[@]}" >&2
+fi
+vms=("${ready_vms[@]}")
 all_vms=${vms[*]}
 echo "running fstests on: $all_vms (per-task timeouts derived from history; max envelope: $max_task_timeout)"
-for vm in $vms; do
-	"$B/ready" "$vm"
-done
 phase_end provision
 
 # Per-test operator metadata: consolidated in fstests-utils/tests.yaml,
@@ -159,7 +205,7 @@ echo "dispatch test list: $nbefore -> $nafter tests after filtering"
 # (the medium- and long-tail tests).
 if [ "${FAST_ONLY:-0}" = "1" ]; then
 	nfast_before=$(echo "$para_tests" | wc -l)
-	para_tests=$(echo "$para_tests" | rcli fstests-utils tests fast "$patch_name")
+	para_tests=$(echo "$para_tests" | rcli fstests-utils tests fast "$results_name")
 	nfast_after=$(echo "$para_tests" | wc -l)
 	echo "FAST_ONLY: dropped $((nfast_before - nfast_after)) slow/medium tests; running $nfast_after"
 fi
@@ -193,7 +239,7 @@ fi
 # droplet was already gone.
 run_cfg="$out_file.yaml"
 run_tasks="$out_file.tasks"
-echo "$para_tests" | rcli fstests-utils tests budgets "$patch_name" > "$run_tasks"
+echo "$para_tests" | rcli fstests-utils tests budgets "$results_name" > "$run_tasks"
 # health.check / health.remediate: pre-pull gate that catches workers
 # left in a degraded state (scratch/test mount stuck, leftover test
 # processes).  The empirical case this fixes: when ./check is killed
@@ -298,19 +344,28 @@ for tst in $persistent_hang_tests; do
 		"$synth_ts" "$tst" >> "$out_file"
 done
 
-# Produce the structured digest for long-term tracking.  Fold into the
-# branch's history.json so cross-run queries see this run.
+# Produce the structured digest for long-term tracking.  Always written
+# locally so the operator can inspect this run's results -- the gate
+# below controls whether it propagates to shared state.
 echo
 echo "=== writing structured digest ==="
-rcli fstests-utils digest "$patch_name" "$run_id"
-rcli fstests-utils state "$patch_name"
+rcli fstests-utils digest "$results_name" "$run_id"
 
-# Push to s1: ships current scripts + this branch's digests/details, then
-# re-renders the site directly into the nginx-served dir.  Replaces the
-# old "render locally, rsync HTML" path; s1 is now the canonical store.
-echo
-echo "=== publishing to s1 ==="
-rcli fstests-utils publish "$patch_name"
+# PUBLISH=1 opt-in gates both the history.json fold AND the s1 push.
+# Default is OFF so ad-hoc / local runs don't pollute the public site
+# or the per-test history timeline (parallel-flake on local makes the
+# fail counts misleading).  The for-next cron sets PUBLISH=1 explicitly.
+if [ "${PUBLISH:-0}" = "1" ]; then
+	rcli fstests-utils state "$results_name"
+
+	echo
+	echo "=== publishing to s1 ==="
+	rcli fstests-utils publish "$results_name"
+else
+	echo
+	echo "PUBLISH=0 (default): skipping history-fold + s1 publish."
+	echo "  set PUBLISH=1 to land this run in shared state."
+fi
 
 echo
 echo "=== run timing ==="
