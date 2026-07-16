@@ -48,10 +48,36 @@ echo "for-next prev=$prev_sha new=$new_sha (short=$short_sha)"
 # don't overwrite prior data -- exactly what flake / cross-run
 # regression detection wants.
 
-# Run the test pipeline.  test/run handles git checkout (no-op since we
-# already checked out btrfs/for-next), build, parallel + retry, digest,
-# state fold, and (via its publish tail step) pushing to s1 and
+# Run the fstests pipeline.  test/run handles git checkout (no-op since
+# we already checked out btrfs/for-next), build, parallel + retry,
+# digest, state fold, and (via its publish tail step) pushing to s1 and
 # re-rendering the site there.
-rcli fstests-utils test for-next
+PUBLISH=1 rcli fstests-utils test for-next
+
+# Chain into the fsperf pipeline: reuses the kernel tarball just built,
+# adds ~10 min wall + ~$0.60.  Sequential rather than a parallel timer
+# so there's no scheduling-time guesswork and the tarball is guaranteed
+# fresh.  If you want to skip fsperf for a given run, set SKIP_FSPERF=1.
+if [ "${SKIP_FSPERF:-0}" != "1" ]; then
+    echo "cron/for-next: chaining into fsperf bench"
+    PUBLISH=1 rcli fsperf-utils bench for-next || \
+        echo "cron/for-next: fsperf bench failed (continuing; fstests already wrote its digest)" >&2
+fi
+
+# Chain into the arm64/64k run (AWS Graviton workers, subpage btrfs:
+# 4k sectorsize on 64k pages).  Own worktree pinned to the sha the x86
+# leg just tested, cross-built kernel, results namespaced to
+# for-next-arm64-64k via workers-aws-arm64/env.  ~25 min wall
+# (Graviton dispatch is ~6 min; there is no btrfs/187 long pole on
+# that backend), ~$0.40.  KERNEL_SRC is pinned explicitly because this
+# unit's ambient KERNEL_SRC (linux-fnext) would otherwise win over the
+# env file's worktree default.  Escape hatch: SKIP_ARM64=1.
+if [ "${SKIP_ARM64:-0}" != "1" ]; then
+    echo "cron/for-next: chaining into arm64/64k fstests"
+    arm64_src="$HOME/repos/linux-arm64-64k"
+    git -C "$arm64_src" checkout --detach "$new_sha" 2>&1 | tail -1
+    KERNEL_SRC="$arm64_src" WORKERS=aws-arm64 PUBLISH=1 rcli fstests-utils test for-next || \
+        echo "cron/for-next: arm64 run failed (continuing; x86 digest already written)" >&2
+fi
 
 echo "cron/for-next: done"
