@@ -146,24 +146,37 @@ def derive_budget(test_name, tests_meta, history_tests):
 
 def _load_for_budget(args, name):
     """Common arg-parse + file-load for `budgets` and `fast`.  Returns
-    (tests_meta, history_tests)."""
+    (tests_meta, history_tests).
+
+    Branch fallback: if the requested branch has no history.json (e.g.
+    a fresh patch_name like `folio-fixes`), fall back to for-next's
+    history.  A patch series is effectively for-next + small delta;
+    using for-next's per-test durations gives a sensible budget /
+    fast-set on day one of a new branch.  Without this fallback,
+    `tests fast` would degenerate to empty (every test stuck at the
+    8m default budget, nothing at the 60s floor)."""
     branch = args[0] if args else "for-next"
     if len(args) > 1:
         print(f"{name}: at most one argument (branch name)", file=sys.stderr)
         sys.exit(2)
     path = os.environ.get("TESTS_FILE", str(DEFAULT_TESTS_PATH))
     tests_meta = load(path)
+    history_tests = _load_history(branch)
+    if not history_tests and branch != "for-next":
+        history_tests = _load_history("for-next")
+    return tests_meta, history_tests
+
+
+def _load_history(branch):
     history_path = Path(os.path.expanduser(
         f"~/fstests-results/{branch}/history.json"))
-    history_tests = {}
-    if history_path.exists():
-        try:
-            with open(history_path) as f:
-                history = json.load(f)
-            history_tests = history.get("tests", {})
-        except (json.JSONDecodeError, OSError):
-            pass
-    return tests_meta, history_tests
+    if not history_path.exists():
+        return {}
+    try:
+        with open(history_path) as f:
+            return json.load(f).get("tests", {})
+    except (json.JSONDecodeError, OSError):
+        return {}
 
 
 SLOW_TAIL_THRESHOLD_S = 30 * 60   # tests with budget > this go to slow_tail

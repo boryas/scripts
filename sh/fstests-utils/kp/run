@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""
+fstests-utils kp [--branch B] [--window N] [--format FMT]
+
+Classify each test in the baseline history into a known-problem tier so
+ad-hoc runs can tell which failures are real signal vs expected noise.
+
+Source of truth: ~/fstests-results/<branch>/history.json.  The classifier
+runs over the N most-recent runs in that file (default 12 -- the post-
+harness-stabilization window as of 2026-05).  As more runs accumulate,
+bump --window.
+
+Tiers (bad rate = (fail+flake+flake-from-timeout+hang) / runs_with_verdict):
+  persistent_fail   bad >= 90%       always expected to fail in adhoc
+  flaky_unreliable  50% <= bad < 90% low diagnostic value; need K>=3 reps
+  flaky_occasional   0% <  bad < 50% expected to occasionally fail
+  reliable_pass     bad == 0%        any failure is a real signal (not listed)
+
+Formats:
+  plain      human-readable, tier-grouped (default)
+  json       {test: {tier, bad_rate, n_runs}, ...}
+  test-list  one test per line, suitable for piping into adhoc -E or skiplists
+"""
+
+import argparse
+import json
+import os
+import sys
+from datetime import datetime
+
+BAD_VERDICTS = {"fail", "flake", "flake-from-timeout", "hang"}
+SKIP_VERDICTS = {"skip"}
+
+# Tier thresholds.  Tunable as data accumulates; defaults calibrated against
+# the post-2026-05-19 clean window (~12 runs, ~16 persistent fails).
+T_PERSISTENT = 0.90
+T_UNRELIABLE = 0.50
+N_MIN_FOR_PERSISTENT = 5  # require enough data before calling something persistent
+
+
+def classify(verdicts):
+    """Return (tier, bad_rate, n_runs). n_runs excludes skips."""
+    skip = sum(1 for v in verdicts if v in SKIP_VERDICTS)
+    n_runs = len(verdicts) - skip
+    if n_runs == 0:
+        return "always_skipped", 0.0, 0
+    bad = sum(1 for v in verdicts if v in BAD_VERDICTS)
+    rate = bad / n_runs
+    if rate >= T_PERSISTENT and n_runs >= N_MIN_FOR_PERSISTENT:
+        return "persistent_fail", rate, n_runs
+    if rate >= T_UNRELIABLE:
+        return "flaky_unreliable", rate, n_runs
+    if rate > 0:
+        return "flaky_occasional", rate, n_runs
+    return "reliable_pass", 0.0, n_runs
+
+
+def build_classification(history_path, window):
+    with open(history_path) as f:
+        state = json.load(f)
+    out = {}
+    for test, tdata in state["tests"].items():
+        verdicts = [e["verdict"] for e in tdata["history"][:window]]
+        tier, rate, n = classify(verdicts)
+        out[test] = {"tier": tier, "bad_rate": rate, "n_runs": n}
+    return out, state.get("updated_at"), state.get("last_sha")
+
+
+def fmt_plain(cls, updated_at, last_sha, window, branch):
+    by_tier = {"persistent_fail": [], "flaky_unreliable": [], "flaky_occasional": []}
+    for test, info in cls.items():
+        if info["tier"] in by_tier:
+            by_tier[info["tier"]].append((test, info))
+
+    out = []
+    out.append(
+        f"# KP classification: branch={branch} window={window} "
+        f"updated_at={updated_at} last_sha={last_sha}"
+    )
+    out.append("")
+
+    def emit(tier, header):
+        items = sorted(by_tier[tier])
+        out.append(f"{header} ({len(items)}):")
+        if not items:
+            out.append("  (none)")
+        else:
+            for t, info in items:
+                out.append(f"  {t:25}  bad={info['bad_rate']:.0%}  n={info['n_runs']}")
+        out.append("")
+
+    emit("persistent_fail",
+         "PERSISTENT_FAIL  -- bad>=90%, expected to fail")
+    emit("flaky_unreliable",
+         "FLAKY_UNRELIABLE -- 50%<=bad<90%, low diagnostic value (need K>=3 reps)")
+    emit("flaky_occasional",
+         "FLAKY_OCCASIONAL --  0%<bad<50%, occasional fail, single fail = probably flake")
+
+    n_reliable = sum(1 for info in cls.values() if info["tier"] == "reliable_pass")
+    n_skip = sum(1 for info in cls.values() if info["tier"] == "always_skipped")
+    out.append(f"# {n_reliable} reliable-pass tests; {n_skip} always-skipped.")
+    out.append("# Tests not listed above are reliable -- any fail is a real signal.")
+    return "\n".join(out)
+
+
+def fmt_json(cls, updated_at, last_sha, window, branch):
+    return json.dumps(
+        {
+            "branch": branch,
+            "window": window,
+            "updated_at": updated_at,
+            "last_sha": last_sha,
+            "tests": cls,
+        },
+        indent=2,
+        sort_keys=True,
+    )
+
+
+def fmt_test_list(cls, include_tiers):
+    return "\n".join(sorted(t for t, info in cls.items() if info["tier"] in include_tiers))
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="fstests-utils kp", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--branch", default="for-next")
+    ap.add_argument("--window", type=int, default=12,
+                    help="number of most-recent runs per test (default 12)")
+    ap.add_argument("--format", choices=("plain", "json", "test-list"), default="plain")
+    ap.add_argument("--include", default="persistent_fail,flaky_unreliable",
+                    help="comma-separated tiers for --format=test-list "
+                         "(default: persistent_fail,flaky_unreliable)")
+    args = ap.parse_args()
+
+    history_path = os.path.expanduser(f"~/fstests-results/{args.branch}/history.json")
+    if not os.path.isfile(history_path):
+        print(f"FAIL: no history at {history_path}", file=sys.stderr)
+        print(f"      run `rcli fstests-utils state {args.branch}` first.", file=sys.stderr)
+        sys.exit(1)
+
+    cls, updated_at, last_sha = build_classification(history_path, args.window)
+
+    if args.format == "plain":
+        print(fmt_plain(cls, updated_at, last_sha, args.window, args.branch))
+    elif args.format == "json":
+        print(fmt_json(cls, updated_at, last_sha, args.window, args.branch))
+    elif args.format == "test-list":
+        include = set(args.include.split(","))
+        print(fmt_test_list(cls, include))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,1 +1,8 @@
 fstests-utils test <branch-name>
+
+Env vars:
+  WORKERS=<backend>  worker backend (default: local-vm; also: local-vc, cloud)
+  FAST_ONLY=1        drop slow/medium tests, only run budget-at-floor ones
+  PUBLISH=1          fold this run into history.json + push to s1 (default OFF;
+                     local + ad-hoc runs stay private. The for-next cron sets
+                     PUBLISH=1 explicitly so nightly runs land in shared state.)

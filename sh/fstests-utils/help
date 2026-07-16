@@ -19,6 +19,20 @@ Subcommands:
   digest   <branch> <sha>          build <sha>.json from <sha> + <sha>.retry.
   state    <branch>                fold new digests into history.json.
   backfill                         one-time bootstrap: generate missing digests.
+  kp       [-- --branch B --window N --format plain|json|test-list]
+                                   derive known-problem test tiers from
+                                   history.json: persistent fails, high-flake
+                                   tests, occasional flakes.  Source of truth
+                                   for "is this fail expected?" -- updates as
+                                   the baseline shifts.  (Use `--` to pass
+                                   long options through the rcli dispatcher.)
+  interpret [-- --branch B --window N]
+                                   read wq-ssh task_done JSONL on stdin and
+                                   annotate each result against the KP
+                                   baseline.  Surfaces POTENTIAL REGRESSION /
+                                   POTENTIAL FIX rows.  Typical use:
+                                     rcli fstests-utils adhoc TESTS \
+                                       | rcli fstests-utils interpret
 
 The for-next cron (~/.config/systemd/user/fstests-for-next.{timer,service})
 invokes cron/for-next directly to do a daily fetch + test + fold against

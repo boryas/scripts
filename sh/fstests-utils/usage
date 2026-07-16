@@ -9,3 +9,5 @@ digest      build a structured <sha>.json from a raw result file
 state       fold per-test verdict history (history.json) for a branch
 backfill    one-time bootstrap: generate missing <sha>.json digests
 cron        wrappers for systemd-user timer (cron/for-next runs daily)
+kp          classify tests into known-problem tiers from history.json
+interpret   read adhoc JSONL on stdin, annotate against KP baseline

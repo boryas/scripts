@@ -1,0 +1,1 @@
+fstests-utils interpret [--branch B] [--window N]   (reads wq-ssh JSONL from stdin)

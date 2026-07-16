@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""
+fstests-utils interpret [--branch B] [--window N]
+
+Read wq-ssh task_done JSONL events from stdin, annotate each result against
+the KP baseline (`fstests-utils kp`), and print a tabular reading.
+
+Typical use, immediately after an adhoc run:
+
+    rcli fstests-utils adhoc btrfs/321 generic/275 generic/679 | \\
+        rcli fstests-utils interpret
+
+For each task_done event, compute the per-test verdict (pass/fail/timeout)
+from the wq-ssh fields and the test's stdout, look up its baseline tier, and
+output one of:
+  normal                test was reliable, came back pass: nothing to do
+  expected fail         test is persistently broken, came back fail: ignore
+  POTENTIAL FIX         test is persistently broken, came back pass: investigate
+  flake match           flaky test, result consistent with baseline
+  POTENTIAL REGRESSION  reliable-pass or low-flake test, came back fail
+  noise                 result fits within baseline flake budget
+
+Aggregates by (test, verdict) so repeat dispatches collapse into a single row.
+"""
+
+import argparse
+import json
+import os
+import sys
+from collections import Counter, defaultdict
+
+# Load kp/run by path (it's a script, not a .py module so the default
+# spec_from_file_location refuses it -- pass an explicit SourceFileLoader).
+import importlib.util  # noqa: E402
+from importlib.machinery import SourceFileLoader  # noqa: E402
+_kp_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "kp", "run")
+_loader = SourceFileLoader("kp_run", _kp_path)
+_spec = importlib.util.spec_from_loader("kp_run", _loader)
+_kp = importlib.util.module_from_spec(_spec)
+_loader.exec_module(_kp)
+build_classification = _kp.build_classification
+
+
+def verdict_from_event(ev):
+    """Map a wq-ssh task_done event to a fstests verdict."""
+    if ev.get("timeout"):
+        return "timeout"
+    if ev.get("transport_error"):
+        return "transport_error"
+    stdout = ev.get("stdout", "") or ""
+    if ev.get("exit", 0) == 0 and "Passed all" in stdout:
+        return "pass"
+    if "[not run]" in stdout or "Not run:" in stdout:
+        return "skip"
+    if ev.get("exit", 0) != 0 or "Failures:" in stdout or "[failed" in stdout:
+        return "fail"
+    return "unknown"
+
+
+def interpret(test, verdict, baseline_info):
+    tier = baseline_info.get("tier", "unknown")
+    rate = baseline_info.get("bad_rate", 0.0)
+    if verdict in ("pass",):
+        if tier == "reliable_pass":
+            return "normal"
+        if tier == "persistent_fail":
+            return f"POTENTIAL FIX (baseline always fails)"
+        return f"pass; baseline {tier} {rate:.0%}"
+    if verdict == "skip":
+        return "skip"
+    if verdict in ("fail", "timeout"):
+        if tier == "persistent_fail":
+            return "expected fail"
+        if tier == "flaky_unreliable":
+            return f"flake match (baseline {rate:.0%})"
+        if tier == "flaky_occasional":
+            return f"noise? (baseline {rate:.0%}, single fail = likely flake)"
+        if tier == "reliable_pass":
+            return "POTENTIAL REGRESSION"
+        return f"fail; baseline {tier}"
+    if verdict == "transport_error":
+        return "transport error (worker side)"
+    return verdict
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="fstests-utils interpret", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--branch", default="for-next")
+    ap.add_argument("--window", type=int, default=12)
+    args = ap.parse_args()
+
+    history_path = os.path.expanduser(f"~/fstests-results/{args.branch}/history.json")
+    if not os.path.isfile(history_path):
+        print(f"FAIL: no history at {history_path}", file=sys.stderr)
+        sys.exit(1)
+    cls, _, _ = build_classification(history_path, args.window)
+
+    # Collect verdicts per test from stdin.
+    per_test = defaultdict(Counter)  # test -> Counter({verdict: n})
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if ev.get("event") != "task_done":
+            continue
+        test = ev.get("task")
+        if not test:
+            continue
+        per_test[test][verdict_from_event(ev)] += 1
+
+    if not per_test:
+        print("no task_done events on stdin", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"# interpreted against {args.branch} baseline "
+          f"(window={args.window}); {len(per_test)} tests")
+    print(f"{'test':25} {'reps':>4} {'verdicts':25} {'baseline':18} {'reading'}")
+    print("-" * 100)
+
+    real_signals = []
+    for test in sorted(per_test):
+        counts = per_test[test]
+        reps = sum(counts.values())
+        v_str = ", ".join(f"{v}={n}" for v, n in counts.most_common())
+        baseline = cls.get(test, {"tier": "unknown", "bad_rate": 0.0, "n_runs": 0})
+        bl_str = f"{baseline['tier']}"
+        if baseline["tier"] not in ("reliable_pass", "always_skipped", "unknown"):
+            bl_str += f" ({baseline['bad_rate']:.0%})"
+
+        # Aggregate reading per test: worst-case (if any fail, interpret fail)
+        if "fail" in counts or "timeout" in counts:
+            primary_v = "fail"
+        elif "pass" in counts:
+            primary_v = "pass"
+        else:
+            primary_v = next(iter(counts))
+        reading = interpret(test, primary_v, baseline)
+
+        print(f"{test:25} {reps:>4} {v_str:25} {bl_str:18} {reading}")
+
+        if "POTENTIAL REGRESSION" in reading or "POTENTIAL FIX" in reading:
+            real_signals.append((test, reading, dict(counts)))
+
+    print("-" * 100)
+    if real_signals:
+        print(f"# SIGNALS WORTH CHECKING ({len(real_signals)}):")
+        for test, reading, counts in real_signals:
+            print(f"#   {test}  {reading}  {counts}")
+    else:
+        print("# no signals — everything matches baseline expectations.")
+
+
+if __name__ == "__main__":
+    main()
