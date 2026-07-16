@@ -583,8 +583,16 @@ def load_run_artifacts(branch_dir, run_id, test_name):
     if not details_root.is_dir():
         return None
     group, num = test_name.split("/", 1)
-    for phase in ("parallel", "retry"):
-        phase_dir = details_root / phase / group
+    # Two layouts: runs through 2026-05 have a phase level
+    # (parallel/retry, written by the old post-dispatch artifacts
+    # sweep); release-on-drain rsyncs straight to <group>/<num>.* with
+    # no phase level.  Try the old layout first (those dirs can't
+    # collide with group names), then the flat one with phase=None --
+    # the template omits the phase note when it's absent.
+    candidates = [("parallel", details_root / "parallel" / group),
+                  ("retry", details_root / "retry" / group),
+                  (None, details_root / group)]
+    for phase, phase_dir in candidates:
         out_bad = phase_dir / f"{num}.out.bad"
         dmesg = phase_dir / f"{num}.dmesg"
         if out_bad.exists() or dmesg.exists():
