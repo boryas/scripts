@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Periodic for-next fsperf bench: fetch upstream btrfs/for-next, build
+# in linux-fnext if not already built at that sha, then run a K=1
+# session of the workload matrix (N=27, K=1 → ~7 min wall, ~$0.15).
+# Each session contributes one sample per workload to the Shewhart
+# baseline pool at ~/fsperf-results/for-next/.  Re-publishes /fiolog.
+#
+# Triggered by:
+#   * the chained fsperf step in fstests-for-next.service at ~01:30 PDT
+#     (after fstests finishes)
+#   * fsperf-for-next.timer at 04, 08, 12, 16, 20:00 PDT
+# = 6 sessions/day, ~5 days to a working Shewhart baseline.
+set -eu
+set -o pipefail
+
+KERNEL_SRC="${KERNEL_SRC:-$HOME/repos/linux-fnext}"
+export KERNEL_SRC
+
+results_dir="$HOME/fsperf-results/for-next"
+lock_file="$results_dir/.cron.lock"
+mkdir -p "$results_dir"
+
+# Single-flight: refuse to run if another fsperf cron is already going.
+exec 9>"$lock_file"
+if ! flock -n 9; then
+    echo "fsperf-utils cron/for-next: another run already holds $lock_file; exiting"
+    exit 0
+fi
+
+cd "$KERNEL_SRC"
+
+echo "fetching btrfs remote..."
+git fetch btrfs 2>&1 | tail -5
+
+current_sha=$(git rev-parse HEAD)
+remote_sha=$(git rev-parse btrfs/for-next)
+short_sha=$(git rev-parse --short=12 btrfs/for-next)
+
+if [ "$current_sha" != "$remote_sha" ]; then
+    echo "fsperf cron: worktree at $current_sha; remote for-next at $remote_sha — checking out"
+    git checkout --detach btrfs/for-next
+fi
+
+# Ensure a kernel tarball exists at the current sha.  The fstests cron
+# built one at ~00:00 PDT; if its sha matches the current one, reuse it.
+# Otherwise rebuild incrementally (cheap when most files unchanged).
+tarball=$(ls linux-*-x86.tar.* 2>/dev/null | head -1 || true)
+if [ -z "$tarball" ]; then
+    echo "fsperf cron: no kernel tarball found, building..."
+    make -j"$(nproc)" tarxz-pkg 2>&1 | tail -5
+fi
+
+echo "fsperf cron: launching bench for $short_sha"
+PUBLISH=1 rcli fsperf-utils bench for-next
+
+echo "fsperf cron/for-next: done"

@@ -1,0 +1,1 @@
+fsperf-utils trend [-- --branch B --window N --workload PAT --metric bw|iops|lat|p99 --threshold K --inject WL=PCT@IDX --json]

@@ -1,0 +1,314 @@
+#!/usr/bin/env python3
+"""
+fsperf-utils evaluate <patch-glob> [--baseline-glob ...]
+
+Apply Shewhart-style rules to a candidate run's K samples vs an
+accumulated historical baseline.  Designed for patch review (and for
+nightly drift detection if you call it with the new nightly as the
+"patch").
+
+Baseline noise is summarized with **median + MAD** (median absolute
+deviation), not mean + stdev.  This is intentional: the DigitalOcean
+neighbor lottery occasionally hands us a session 40-50% faster than
+the median, and mean/stdev get yanked around hard by that single sample.
+Median/MAD ignore those outliers, so the noise band reflects the typical
+sample, not the worst-case one.  Rules below use MAD-equivalent
+multipliers calibrated to ~the same FP rate as their σ-based originals
+(via the identity σ ≈ 1.4826 × MAD for Gaussian data, so 1σ ≈ 1.5 MAD,
+2σ ≈ 3 MAD, 3σ ≈ 4.5 MAD).
+
+For each (workload, side, metric):
+  hist_pool                    = all baseline samples
+  hist_median, hist_mad        = robust stats
+  m-score(v) = (v - hist_median) / hist_mad
+  patch                        = K candidate samples
+
+Three rules (one-sided where applicable):
+  STRONG      : any patch sample with |m| > 4.5    (≈ 3σ)
+  DIRECTIONAL : ceil(3K/4) samples on SAME side outside ±1.5 MAD  (≈ 1σ)
+  VARIANCE    : ceil(K/2) samples outside ±3 MAD EITHER direction (≈ 2σ)
+
+Direction labeling uses per-metric "good direction" semantics (bw/iops
+up = improvement; lat/p99 down = improvement).
+
+Reports symmetrically: REGRESSIONS / IMPROVEMENTS / VARIANCE-CHANGES,
+each tagged with which rule fired.
+
+Usage:
+  fsperf-utils evaluate <patch-glob> [--baseline-glob <glob>]
+                                     [--min-history N]
+                                     [--json]
+"""
+import argparse
+import glob
+import json
+import math
+import statistics
+import sys
+from pathlib import Path
+
+
+METRICS = {
+    "bw_bytes":    {"dir": +1, "label": "bw",   "unit_div": 1e6, "unit": "MB/s"},
+    "iops":        {"dir": +1, "label": "iops", "unit_div": 1.0, "unit": "iops"},
+    "lat_ns_mean": {"dir": -1, "label": "lat",  "unit_div": 1e3, "unit": "µs"},
+    "clat_ns_p99": {"dir": -1, "label": "p99",  "unit_div": 1e3, "unit": "µs"},
+}
+
+
+def load_summaries(pattern):
+    paths = sorted(glob.glob(pattern))
+    if not paths:
+        return []
+    out = []
+    for p in paths:
+        try:
+            with open(p) as f:
+                out.append(json.load(f))
+        except (json.JSONDecodeError, OSError):
+            continue
+    return out
+
+
+def pool_samples(summaries):
+    """{(workload, side, metric): [values, ...]}"""
+    pool = {}
+    for s in summaries:
+        for w, e in s.get("jobs", {}).items():
+            for side in ("read", "write"):
+                d = e.get(side) or {}
+                if not d or d.get("io_bytes", 0) == 0:
+                    continue
+                for m in METRICS:
+                    v = d.get(m)
+                    if v is None:
+                        continue
+                    pool.setdefault((w, side, m), []).append(v)
+    return pool
+
+
+# MAD-equivalent multipliers for the σ-based rules.  σ ≈ 1.4826 × MAD for
+# Gaussian data, so multiplying by 1.5 / 3 / 4.5 gives the same false-
+# positive rate at the rule thresholds as the original 1/2/3-σ rules did.
+MAD_T1 = 1.5  # ≈ 1σ
+MAD_T2 = 3.0  # ≈ 2σ
+MAD_T3 = 4.5  # ≈ 3σ
+
+
+def mad(values, med):
+    """Median absolute deviation.  Returns 0 if all values are identical."""
+    return statistics.median(abs(v - med) for v in values)
+
+
+def evaluate(baseline, patch, min_history, min_pct):
+    """Apply 3 Shewhart rules per (workload, side, metric).  Yields dicts."""
+    out = []
+    keys = sorted(set(baseline) | set(patch))
+    for key in keys:
+        w, side, m = key
+        b_vals = baseline.get(key, [])
+        p_vals = patch.get(key, [])
+        if len(b_vals) < min_history or len(p_vals) < 1:
+            continue
+        b_median = statistics.median(b_vals)
+        b_mad = mad(b_vals, b_median)
+        if b_mad == 0 or b_median == 0:
+            # All baseline samples identical (artificial) or zero (no I/O).
+            # Skip rather than divide by zero.
+            continue
+        K = len(p_vals)
+        meta = METRICS[m]
+        good_dir = meta["dir"]  # +1 if higher is better, -1 otherwise
+
+        m_scores = [(v - b_median) / b_mad for v in p_vals]
+        n_above_1 = sum(1 for z in m_scores if z >  MAD_T1)
+        n_below_1 = sum(1 for z in m_scores if z < -MAD_T1)
+        n_above_2 = sum(1 for z in m_scores if z >  MAD_T2)
+        n_below_2 = sum(1 for z in m_scores if z < -MAD_T2)
+        n_above_3 = sum(1 for z in m_scores if z >  MAD_T3)
+        n_below_3 = sum(1 for z in m_scores if z < -MAD_T3)
+
+        ceil_3k4 = math.ceil(3 * K / 4)
+        ceil_k2 = math.ceil(K / 2)
+
+        verdicts = []
+        # STRONG: any single sample > 4.5 MAD (≈ 3σ)
+        if n_above_3 >= 1:
+            verdicts.append(("strong", "above"))
+        if n_below_3 >= 1:
+            verdicts.append(("strong", "below"))
+        # DIRECTIONAL: ≥3K/4 samples outside ±1.5 MAD (≈ 1σ) same side
+        if n_above_1 >= ceil_3k4:
+            verdicts.append(("directional", "above"))
+        if n_below_1 >= ceil_3k4:
+            verdicts.append(("directional", "below"))
+        # VARIANCE: ≥K/2 outside ±3 MAD (≈ 2σ) either direction
+        if (n_above_2 + n_below_2) >= ceil_k2 and not (n_above_3 or n_below_3):
+            verdicts.append(("variance", "either"))
+
+        if not verdicts:
+            continue
+
+        p_med = statistics.median(p_vals)
+        delta_pct = (p_med - b_median) / b_median * 100.0
+
+        # Absolute delta floor: suppress flags where the patch median moved
+        # less than min_pct, even if m-scores are high.  Tight-MAD workloads
+        # otherwise flag on every measurement.
+        if abs(delta_pct) < min_pct:
+            continue
+
+        for rule, side_dir in verdicts:
+            if side_dir == "either":
+                tag = "variance"
+            else:
+                deviation_is_good = (side_dir == "above" and good_dir > 0) or \
+                                    (side_dir == "below" and good_dir < 0)
+                tag = "improvement" if deviation_is_good else "regression"
+            out.append({
+                "workload": w,
+                "side": side,
+                "metric": m,
+                "metric_label": meta["label"],
+                "unit_div": meta["unit_div"],
+                "unit": meta["unit"],
+                "rule": rule,
+                "tag": tag,
+                "side_dir": side_dir,
+                "n_baseline": len(b_vals),
+                "n_patch": K,
+                "baseline_median": b_median,
+                "baseline_mad": b_mad,
+                "baseline_mad_pct": b_mad / b_median * 100.0,
+                "patch_median": p_med,
+                "delta_pct": delta_pct,
+                "m_scores": m_scores,
+                "n_above_1": n_above_1, "n_below_1": n_below_1,
+                "n_above_2": n_above_2, "n_below_2": n_below_2,
+                "n_above_3": n_above_3, "n_below_3": n_below_3,
+            })
+    return out
+
+
+def fmt_val(v, div):
+    return f"{v/div:.2f}"
+
+
+def print_section(title, rows):
+    if not rows:
+        return
+    print(f"=== {title} ({len(rows)}) ===")
+    hdr = f"  {'workload+side':<46s}  {'metric':<5s}  {'rule':<11s}  {'baseline':>10s}  {'patch':>10s}  {'Δ%':>7s}  {'K out':>10s}"
+    print(hdr)
+    print("  " + "-" * (len(hdr) - 2))
+    for r in rows:
+        ws = f"{r['workload']}.{r['side']}"
+        b = fmt_val(r["baseline_median"], r["unit_div"])
+        p = fmt_val(r["patch_median"], r["unit_div"])
+        d = f"{r['delta_pct']:+.1f}%"
+        # K-out summary: e.g. "3/4 >1.5M" for directional, "1/4 >4.5M" for strong
+        if r["rule"] == "strong":
+            n = r[f"n_{r['side_dir']}_3"]
+            kout = f"{n}/{r['n_patch']} >4.5M"
+        elif r["rule"] == "directional":
+            n = r[f"n_{r['side_dir']}_1"]
+            kout = f"{n}/{r['n_patch']} >1.5M"
+        else:  # variance
+            n = r["n_above_2"] + r["n_below_2"]
+            kout = f"{n}/{r['n_patch']} >3M"
+        print(f"  {ws:<46s}  {r['metric_label']:<5s}  {r['rule']:<11s}  {b:>10s}  {p:>10s}  {d:>7s}  {kout:>10s}")
+    print()
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("patch_glob",
+                    help="glob matching the candidate run's summary JSONs")
+    ap.add_argument("--baseline-glob", default=None,
+                    help="glob for baseline summaries (default: all *.json under same branch as patch_glob, excluding patch)")
+    ap.add_argument("--min-history", type=int, default=8,
+                    help="minimum baseline samples per workload to apply rules (default 8)")
+    ap.add_argument("--min-pct", type=float, default=2.0,
+                    help=("absolute median-delta floor in percent (default 2.0); cuts "
+                          "spurious flags on tight-CV workloads where z-score is high "
+                          "but the actual move is sub-noise"))
+    ap.add_argument("--json", action="store_true", help="emit structured JSON")
+    args = ap.parse_args()
+
+    patch_summaries = load_summaries(args.patch_glob)
+    if not patch_summaries:
+        print(f"evaluate: no summaries match patch glob {args.patch_glob!r}", file=sys.stderr)
+        sys.exit(1)
+
+    # If --baseline-glob isn't set, default to all summaries under the same
+    # branch as the patch, excluding the patch's own files.
+    patch_paths = set(sorted(glob.glob(args.patch_glob)))
+    if args.baseline_glob:
+        baseline_summaries = load_summaries(args.baseline_glob)
+        baseline_paths = set(sorted(glob.glob(args.baseline_glob))) - patch_paths
+        baseline_summaries = [json.load(open(p)) for p in baseline_paths]
+    else:
+        # Branch of patch = parent dir
+        any_patch_path = next(iter(patch_paths))
+        branch_dir = Path(any_patch_path).parent
+        all_paths = set(str(p) for p in sorted(branch_dir.glob("*.json")))
+        baseline_paths = all_paths - patch_paths
+        baseline_summaries = [json.load(open(p)) for p in sorted(baseline_paths)]
+
+    if not baseline_summaries:
+        print(f"evaluate: no baseline summaries (need at least {args.min_history})", file=sys.stderr)
+        sys.exit(1)
+
+    baseline_pool = pool_samples(baseline_summaries)
+    patch_pool = pool_samples(patch_summaries)
+
+    flagged = evaluate(baseline_pool, patch_pool, args.min_history, args.min_pct)
+
+    # Summary stats
+    base_sha = baseline_summaries[0].get("sha", "?")
+    patch_sha = patch_summaries[0].get("sha", "?")
+    n_workload_metric_keys = len({(r["workload"], r["side"], r["metric"]) for r in flagged})
+
+    if args.json:
+        json.dump({
+            "baseline_paths": sorted(baseline_paths),
+            "patch_paths": sorted(patch_paths),
+            "baseline_sha": base_sha,
+            "patch_sha": patch_sha,
+            "n_baseline_summaries": len(baseline_summaries),
+            "n_patch_summaries": len(patch_summaries),
+            "flagged": flagged,
+        }, sys.stdout, indent=2, default=float)
+        sys.stdout.write("\n")
+        return
+
+    # Human report
+    print(f"fsperf evaluate")
+    print(f"  baseline: {len(baseline_summaries)} summaries (sha {base_sha}, ~{len(next(iter(baseline_pool.values())))} samples/workload/metric)")
+    print(f"  patch:    {len(patch_summaries)} summaries (sha {patch_sha}, K={len(next(iter(patch_pool.values())))} per workload/metric)")
+    print(f"  rules:    STRONG (|m|>4.5 MAD, 1-of-K), DIRECTIONAL (⌈3K/4⌉ >1.5 MAD same side), VARIANCE (⌈K/2⌉ >3 MAD either)")
+    print(f"  min_history: {args.min_history}")
+    print()
+
+    if not flagged:
+        print("no workloads flagged.")
+        return
+
+    # Sort + section
+    regressions = [r for r in flagged if r["tag"] == "regression"]
+    improvements = [r for r in flagged if r["tag"] == "improvement"]
+    variance = [r for r in flagged if r["tag"] == "variance"]
+
+    # Sort: strong first, then directional, then by |delta|
+    rule_order = {"strong": 0, "directional": 1, "variance": 2}
+    for lst in (regressions, improvements, variance):
+        lst.sort(key=lambda r: (rule_order[r["rule"]], -abs(r["delta_pct"])))
+
+    print_section("REGRESSIONS", regressions)
+    print_section("IMPROVEMENTS", improvements)
+    print_section("VARIANCE CHANGES", variance)
+
+
+if __name__ == "__main__":
+    main()

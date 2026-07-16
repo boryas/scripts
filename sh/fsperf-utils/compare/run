@@ -1,0 +1,248 @@
+#!/usr/bin/env python3
+"""
+fsperf-utils compare — diff two sets of replica summaries.
+
+A "set" is one or more summary JSONs sharing the same sha (e.g.
+<sha>-<ts>-r1.json, <sha>-<ts>-r2.json, ...).  We load them as K
+samples per cell, then compare baseline vs patch:
+
+  * median shift:  flag if |Δmedian| > 3 × max(CV_base, CV_patch)
+  * variance shift: flag if max(CV)/min(CV) > 2.0 (CV doubled)
+
+Reports symmetrically: REGRESSIONS, IMPROVEMENTS, VARIANCE CHANGES.
+Direction (improvement vs regression) is derived from the metric's
+"good direction": up for bw/iops, down for lat/p99/CV.
+
+Usage:
+  fsperf-utils compare <baseline-glob> <patch-glob>
+  fsperf-utils compare ~/fsperf-results/for-next/2c69a1aa89d5-*.json \\
+                       ~/fsperf-results/for-next/d73091b1bb5e-*.json
+
+Flags:
+  --json         emit structured JSON instead of human table
+  --threshold N  median-delta sigma multiplier (default 3.0)
+  --min-pct N    ignore cells with |Δmedian| < N% even if statistically
+                 significant (default 1.0; cuts pure-noise flags on
+                 cells with extremely tight CV)
+"""
+import argparse
+import glob
+import json
+import statistics
+import sys
+from pathlib import Path
+
+
+# Metric direction.  +1 = higher is better (bw, iops); -1 = lower is
+# better (latencies).
+METRICS = {
+    "bw_bytes":    {"dir": +1, "label": "bw",        "unit_div": 1e6, "unit": "MB/s"},
+    "iops":        {"dir": +1, "label": "iops",      "unit_div": 1.0, "unit": "iops"},
+    "lat_ns_mean": {"dir": -1, "label": "lat",       "unit_div": 1e3, "unit": "µs"},
+    "clat_ns_p99": {"dir": -1, "label": "p99",       "unit_div": 1e3, "unit": "µs"},
+}
+
+
+def load_set(pattern):
+    """Glob pattern → list of summary dicts (one per replica)."""
+    paths = sorted(glob.glob(pattern))
+    if not paths:
+        print(f"compare: no summaries match {pattern}", file=sys.stderr)
+        sys.exit(1)
+    out = []
+    for p in paths:
+        with open(p) as f:
+            out.append(json.load(f))
+    return out
+
+
+def pick_side(entry):
+    """Return ('read'|'write', side_dict) or (None, None) if neither has activity."""
+    for s in ("read", "write"):
+        d = entry.get(s) or {}
+        if d.get("io_bytes", 0) > 0:
+            return s, d
+    return None, None
+
+
+def collect_samples(summaries):
+    """{cell: {side: {metric: [val1, val2, ...]}}} aggregated across replicas."""
+    out = {}
+    for s in summaries:
+        for cell, entry in s.get("jobs", {}).items():
+            side, side_data = pick_side(entry)
+            if side is None:
+                continue
+            cell_out = out.setdefault(cell, {})
+            side_out = cell_out.setdefault(side, {})
+            for m in METRICS:
+                v = side_data.get(m)
+                if v is None:
+                    continue
+                side_out.setdefault(m, []).append(v)
+    return out
+
+
+def stats(vals):
+    """Return (median, mean, stdev, cv) or all-None if empty."""
+    if not vals:
+        return None, None, None, None
+    med = statistics.median(vals)
+    mean = statistics.mean(vals)
+    stdev = statistics.stdev(vals) if len(vals) > 1 else 0.0
+    cv = stdev / mean if mean > 0 else 0.0
+    return med, mean, stdev, cv
+
+
+def compare(base_samples, patch_samples, threshold, min_pct):
+    """Yield dicts describing each flagged cell-metric pair."""
+    out = []
+    for cell in sorted(set(base_samples) | set(patch_samples)):
+        base = base_samples.get(cell, {})
+        patch = patch_samples.get(cell, {})
+        for side in ("read", "write"):
+            if side not in base and side not in patch:
+                continue
+            for m, meta in METRICS.items():
+                b_vals = base.get(side, {}).get(m, [])
+                p_vals = patch.get(side, {}).get(m, [])
+                if not b_vals or not p_vals:
+                    continue
+                b_med, _, _, b_cv = stats(b_vals)
+                p_med, _, _, p_cv = stats(p_vals)
+                if b_med == 0:
+                    continue
+                delta_pct = (p_med - b_med) / b_med * 100.0
+                max_cv = max(b_cv, p_cv)
+                threshold_pct = threshold * max_cv * 100.0  # 3 × CV in percent
+
+                median_significant = (
+                    abs(delta_pct) > threshold_pct and abs(delta_pct) >= min_pct
+                )
+                # is it good?  delta direction × metric direction → +1 improvement
+                is_improvement = (delta_pct > 0) == (meta["dir"] > 0)
+
+                # variance shift: only meaningful when BOTH sides have
+                # nonzero spread.  K=2 commonly gives CV=0% (two samples
+                # happen to match) → don't trigger on 0%→X% transitions.
+                min_cv = min(b_cv, p_cv)
+                variance_shifted = (
+                    min_cv > 0.02
+                    and max_cv > 0.05
+                    and (max_cv / min_cv) > 2.0
+                )
+
+                if not (median_significant or variance_shifted):
+                    continue
+                out.append({
+                    "cell": cell,
+                    "side": side,
+                    "metric": m,
+                    "metric_label": meta["label"],
+                    "unit": meta["unit"],
+                    "unit_div": meta["unit_div"],
+                    "base_median": b_med,
+                    "patch_median": p_med,
+                    "base_cv": b_cv,
+                    "patch_cv": p_cv,
+                    "delta_pct": delta_pct,
+                    "threshold_pct": threshold_pct,
+                    "n_base": len(b_vals),
+                    "n_patch": len(p_vals),
+                    "median_significant": median_significant,
+                    "variance_shifted": variance_shifted,
+                    "is_improvement": is_improvement,
+                })
+    return out
+
+
+def fmt_val(v, div):
+    return f"{v/div:.2f}"
+
+
+def print_section(title, rows):
+    if not rows:
+        return
+    print(f"=== {title} ({len(rows)}) ===")
+    # cell+side+metric           base    patch    Δ%      CV
+    hdr = f"  {'cell+side':<46s}  {'metric':<5s}  {'base':>10s}  {'patch':>10s}  {'Δ%':>7s}  {'CVb→p':>11s}"
+    print(hdr)
+    print("  " + "-" * (len(hdr) - 2))
+    for r in rows:
+        cell_side = f"{r['cell']}.{r['side']}"
+        b_str = fmt_val(r["base_median"], r["unit_div"])
+        p_str = fmt_val(r["patch_median"], r["unit_div"])
+        delta_str = f"{r['delta_pct']:+.1f}%"
+        cv_str = f"{r['base_cv']*100:.1f}→{r['patch_cv']*100:.1f}%"
+        print(f"  {cell_side:<46s}  {r['metric_label']:<5s}  {b_str:>10s}  {p_str:>10s}  {delta_str:>7s}  {cv_str:>11s}")
+    print()
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ap.add_argument("baseline", help="glob for baseline summaries (e.g. .../2c69a1a-*.json)")
+    ap.add_argument("patch", help="glob for patch summaries")
+    ap.add_argument("--json", action="store_true", help="emit structured JSON")
+    ap.add_argument("--threshold", type=float, default=3.0,
+                    help="median-delta significance: |Δ%%| > T × max(CV) (default 3.0)")
+    ap.add_argument("--min-pct", type=float, default=1.0,
+                    help="ignore cells with |Δmedian| below this %% (default 1.0)")
+    args = ap.parse_args()
+
+    base_set = load_set(args.baseline)
+    patch_set = load_set(args.patch)
+    base_samples = collect_samples(base_set)
+    patch_samples = collect_samples(patch_set)
+
+    base_sha = base_set[0].get("sha", "?")
+    patch_sha = patch_set[0].get("sha", "?")
+    base_kernel = base_set[0].get("kernel", "?")
+    patch_kernel = patch_set[0].get("kernel", "?")
+
+    flagged = compare(base_samples, patch_samples, args.threshold, args.min_pct)
+
+    if args.json:
+        json.dump({
+            "baseline_sha": base_sha,
+            "patch_sha": patch_sha,
+            "baseline_kernel": base_kernel,
+            "patch_kernel": patch_kernel,
+            "n_base_replicas": len(base_set),
+            "n_patch_replicas": len(patch_set),
+            "threshold": args.threshold,
+            "min_pct": args.min_pct,
+            "flagged": flagged,
+        }, sys.stdout, indent=2, default=float)
+        sys.stdout.write("\n")
+        return
+
+    # Human report
+    print(f"fsperf compare")
+    print(f"  baseline: {base_sha} ({base_kernel}, {len(base_set)} replicas)")
+    print(f"  patch:    {patch_sha} ({patch_kernel}, {len(patch_set)} replicas)")
+    print(f"  threshold: |Δ%| > {args.threshold}× CV  AND  ≥ {args.min_pct}%")
+    print()
+
+    regressions = [r for r in flagged if r["median_significant"] and not r["is_improvement"]]
+    improvements = [r for r in flagged if r["median_significant"] and r["is_improvement"]]
+    variance_only = [r for r in flagged if r["variance_shifted"] and not r["median_significant"]]
+
+    if not flagged:
+        print("no flagged cells.")
+        return
+
+    # Sort: largest absolute delta first
+    regressions.sort(key=lambda r: -abs(r["delta_pct"]))
+    improvements.sort(key=lambda r: -abs(r["delta_pct"]))
+    variance_only.sort(key=lambda r: -(r["patch_cv"] / max(r["base_cv"], 1e-6)))
+
+    print_section("REGRESSIONS", regressions)
+    print_section("IMPROVEMENTS", improvements)
+    print_section("VARIANCE CHANGES", variance_only)
+
+
+if __name__ == "__main__":
+    main()

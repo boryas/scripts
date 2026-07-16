@@ -1,0 +1,15 @@
+; Direct-IO O_APPEND writes: extends file at EOF, no pagecache.
+[global]
+direct=1
+ioengine=libaio
+iodepth=32
+size=8G
+runtime=180
+time_based=1
+ramp_time=10
+group_reporting=1
+fallocate=none
+
+[dio-append]
+rw=write
+file_append=1

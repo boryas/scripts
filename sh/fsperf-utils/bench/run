@@ -1,0 +1,252 @@
+#!/usr/bin/env bash
+# fsperf-utils bench [<branch>]
+#
+# Provision N droplets from the fsperf-runner snapshot, dispatch the
+# workload matrix (each workload sampled K times) via wq-ssh, collect
+# raw fio outputs, digest one summary per sample.  All K samples share
+# one sha and one ts, distinguished by per-sample id (s1..sK in files).
+#
+# Env:
+#   KERNEL_SRC            kernel tree with linux-*-x86.tar.* (default ~/repos/linux)
+#   DO_FSPERF_SNAPSHOT_ID DO image id for the fsperf-runner snapshot
+#   DO_SSH_KEY_ID         DO ssh key id
+#   N                     droplets to provision (default 27 = one per workload at K=1).
+#                         Setup is small vs cell time; scaling N up is mostly a wall-
+#                         clock win — droplet-minutes ≈ constant.
+#   K                     samples per workload (default 1 = nightly singleton).
+#                         For patch review use K=4 (or higher); the Shewhart rules
+#                         in `compare` test each of the K samples against the
+#                         historical nightly band.
+#   FAST                  1 = 6 default-profile workloads, K=2, N=12 — for iteration.
+#                         ~9 min wall, ~$0.20.
+#   DO_SIZE               droplet size (default c-4 — cheapest with the 50 GB disk
+#                         floor required by the fsperf-runner snapshot)
+#   PUBLISH               1 to push to s1 + re-render fiolog (default 0)
+#   PATCH_LIVE            1 to scp latest jobs/profiles/fio-runner to each
+#                         worker after provisioning (default 1; safety net
+#                         for when the snapshot's catalog lags the repo's)
+#
+# Output: K summaries at
+#   ~/fsperf-results/<branch>/<sha>-<ts>-r<N>.json
+# (the -rN suffix is kept for backward compat with existing data; if K==1 the
+# single output is named -r1.json).  Raw fio JSONs in <run_id>/.
+set -euo pipefail
+
+branch=${1:-for-next}
+FAST=${FAST:-0}
+
+# fsperf-specific defaults FIRST -- our DO_SIZE must beat the c-fstests
+# default of s-2vcpu-4gb (shared CPU = noisy; we need dedicated c-4 for
+# usable CV).  Setting it before sourcing config.sh ensures the c-fstests
+# `:-` defaults are no-ops on these vars.
+if [ "$FAST" = "1" ]; then
+    : "${N:=12}"
+    : "${K:=2}"
+    : "${FAST_FILTER:=buffered-randread__default,buffered-randwrite__default,buffered-seqread__default,buffered-seqwrite__default,dio-randread__default,dio-randwrite__default}"
+else
+    : "${N:=27}"
+    : "${K:=1}"
+fi
+KERNEL_SRC=${KERNEL_SRC:-$HOME/repos/linux}
+DO_SIZE=${DO_SIZE:-c-4}
+PATCH_LIVE=${PATCH_LIVE:-1}
+
+# Now source cloud-fstests config.sh for DO_SSH_KEY_ID, DO_REGION etc.
+# (workers/up does this too; we mirror so the systemd service only has
+# to set fsperf-specific overrides like DO_FSPERF_SNAPSHOT_ID).
+__cf_config=$HOME/repos/cloud-fstests/config.sh
+[ -r "$__cf_config" ] && . "$__cf_config"
+unset __cf_config
+
+: "${DO_FSPERF_SNAPSHOT_ID:?must be set to the fsperf-runner snapshot id}"
+: "${DO_SSH_KEY_ID:?must be set}"
+
+cf_root=$HOME/repos/cloud-fstests
+fsperf_root=$HOME/repos/scripts/sh/fsperf-utils
+wq_ssh=${WQ_SSH_BIN:-$HOME/repos/wq-ssh/target/release/wq-ssh}
+[ -x "$wq_ssh" ] || { echo "wq-ssh not built at $wq_ssh"; exit 1; }
+
+SSH_OPTS=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes)
+
+# --- kernel artifact ---
+kernel_tarball=$(ls "$KERNEL_SRC"/linux-*-x86.tar.* 2>/dev/null | head -1 || true)
+if [ -z "$kernel_tarball" ]; then
+    echo "no kernel tarball in $KERNEL_SRC -- build it: cd $KERNEL_SRC && make tarxz-pkg" >&2
+    exit 1
+fi
+sha=$(cd "$KERNEL_SRC" && git rev-parse --short=12 HEAD)
+kernel=$(basename "$kernel_tarball" | sed -E 's/^linux-(.*)-x86\.tar\..*$/\1/')
+
+run_ts=$(date -u +%Y%m%dT%H%M%SZ)
+results_root=$HOME/fsperf-results/$branch
+work_dir=$(mktemp -d /tmp/fsperf-bench.XXXXXX)
+echo "bench: branch=$branch sha=$sha N=$N K=$K size=$DO_SIZE"
+echo "  KERNEL_SRC=$KERNEL_SRC"
+echo "  work_dir=$work_dir"
+
+# --- generate cells JSONL (override with $CELLS_JSONL for smoke runs) ---
+if [ -n "${CELLS_JSONL:-}" ]; then
+    cells_jsonl=$CELLS_JSONL
+    echo "  using CELLS_JSONL override: $cells_jsonl"
+else
+    cells_jsonl=$work_dir/cells.jsonl
+    cells_args=(--k "$K")
+    [ -n "${FAST_FILTER:-}" ] && cells_args+=(--filter "$FAST_FILTER")
+    "$fsperf_root/cells/run" "${cells_args[@]}" > "$cells_jsonl"
+fi
+ncells=$(wc -l < "$cells_jsonl")
+echo "  $ncells tasks in matrix (workloads × K)"
+
+# --- provision droplets (fsperf snapshot) ---
+echo "=== provisioning $N droplets ==="
+# DO_BROAD_TAG separates fsperf droplets from fstests droplets at the
+# DO tag level — so an "nuke all fsperf droplets" sweep can't accidentally
+# tear down an in-flight fstests run, and vice versa.
+export KERNEL_SRC DO_SIZE N DO_BROAD_TAG=fsperf-cloud-worker
+DO_SNAPSHOT_ID=$DO_FSPERF_SNAPSHOT_ID "$cf_root/workers/up"
+trap '"$cf_root/workers/down" >&2 || true; rm -rf "$work_dir"' EXIT INT TERM
+
+mapfile -t workers < <("$cf_root/workers/list")
+if [ "${#workers[@]}" -eq 0 ]; then
+    echo "no workers came up; aborting" >&2
+    exit 1
+fi
+echo "  workers: ${workers[*]}"
+
+ready=()
+for w in "${workers[@]}"; do
+    "$cf_root/workers/ready" "$w" && ready+=("$w") || \
+        echo "  $w not ready, dropping" >&2
+done
+[ "${#ready[@]}" -eq 0 ] && { echo "no ready workers"; exit 1; }
+workers=("${ready[@]}")
+
+# --- patch live droplets (so the catalog matches the repo regardless of snapshot age) ---
+if [ "$PATCH_LIVE" = "1" ]; then
+    echo "=== patching workers with latest jobs/profiles/fio-runner ==="
+    for w in "${workers[@]}"; do
+        (
+            ssh "${SSH_OPTS[@]}" "$w" '
+                sudo mkdir -p /usr/local/share/fsperf-jobs /usr/local/share/fsperf-profiles &&
+                sudo rm -f /usr/local/share/fsperf-jobs/*.fio /usr/local/share/fsperf-profiles/*.profile
+            ' >/dev/null
+            scp "${SSH_OPTS[@]}" "$fsperf_root/fio-runner" "$w:/tmp/fio-runner.new" >/dev/null
+            scp "${SSH_OPTS[@]}" "$fsperf_root/jobs/"*.fio "$w:/tmp/" >/dev/null
+            scp "${SSH_OPTS[@]}" "$fsperf_root/profiles/"*.profile "$w:/tmp/" >/dev/null
+            ssh "${SSH_OPTS[@]}" "$w" '
+                sudo mv /tmp/fio-runner.new /usr/local/bin/fio-runner &&
+                sudo chmod +x /usr/local/bin/fio-runner &&
+                sudo mv /tmp/*.fio /usr/local/share/fsperf-jobs/ &&
+                sudo mv /tmp/*.profile /usr/local/share/fsperf-profiles/
+            ' >/dev/null
+            echo "  $w patched"
+        ) &
+    done
+    wait
+fi
+
+# --- run wq-ssh ---
+wq_cfg=$work_dir/wq.yaml
+{
+    echo "workers:"
+    printf '  - %s\n' "${workers[@]}"
+    echo "cmd: '/usr/local/bin/fio-runner /dev/loop0 {}'"
+    echo "task_timeout: 600s"
+} > "$wq_cfg"
+
+echo "=== dispatching $ncells tasks to ${#workers[@]} workers ==="
+events_jsonl=$work_dir/events.jsonl
+"$wq_ssh" "$wq_cfg" < "$cells_jsonl" | tee "$events_jsonl" >/dev/null
+
+ndone=$(grep -c '"event":"task_done"' "$events_jsonl" || true)
+nfail=$(grep -c '"event":"task_done".*"exit":[^0]' "$events_jsonl" || true)
+echo "  task_done: $ndone (failures: $nfail)"
+
+# --- extract raw outputs from wq-ssh event stream ---
+# task_done events carry each task's stdout, which is the fio JSON.  No
+# rsync needed — this keeps the data path independent of droplet teardown
+# timing, so a transport hiccup at the end doesn't lose the whole run.
+echo "=== extracting raw outputs from event stream ==="
+combined=$work_dir/combined
+mkdir -p "$combined"
+python3 - "$events_jsonl" "$combined" <<'PYEOF'
+import json, sys
+from pathlib import Path
+events_path, combined = sys.argv[1], Path(sys.argv[2])
+n_ok = n_skipped = 0
+with open(events_path) as f:
+    for line in f:
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if ev.get("event") != "task_done" or ev.get("exit") != 0:
+            continue
+        stdout = ev.get("stdout") or ""
+        if ev.get("stdout_truncated"):
+            print(f"  WARN: {ev['task']} stdout truncated, skipping", file=sys.stderr)
+            n_skipped += 1
+            continue
+        try:
+            json.loads(stdout)  # validate
+        except json.JSONDecodeError as e:
+            print(f"  WARN: {ev['task']} stdout not valid JSON ({e}), skipping", file=sys.stderr)
+            n_skipped += 1
+            continue
+        (combined / f"{ev['task']}.json").write_text(stdout)
+        n_ok += 1
+print(f"  extracted {n_ok} cell outputs ({n_skipped} skipped)", file=sys.stderr)
+PYEOF
+n_total_raw=$(ls "$combined"/*.json 2>/dev/null | wc -l)
+echo "  total raws: $n_total_raw"
+
+# --- group raws by sample suffix (auto-detected from filenames) ---
+# Each file is <workload>[__r<N>].json.  Group by N (0 if no suffix);
+# each group becomes one digest summary.  The -rN file suffix is kept
+# for backward compat with already-published data.
+echo "=== digesting one summary per sample ==="
+mkdir -p "$results_root"
+# Discover which sample indices appear in the data
+samples=$(ls "$combined"/*.json 2>/dev/null | sed -nE 's/.*__r([0-9]+)\.json$/\1/p' | sort -un)
+[ -z "$samples" ] && samples=0
+for sN in $samples; do
+    if [ "$sN" = "0" ]; then
+        run_id="${sha}-${run_ts}"
+        match_glob="*.json"
+        strip_suffix=""
+    else
+        run_id="${sha}-${run_ts}-r${sN}"
+        match_glob="*__r${sN}.json"
+        strip_suffix="__r${sN}"
+    fi
+    raw_dir="$results_root/$run_id"
+    mkdir -p "$raw_dir"
+    n_this=0
+    for src in "$combined"/$match_glob; do
+        [ -e "$src" ] || continue
+        bn=$(basename "$src" .json)
+        # If we're processing the "no suffix" group, skip files that DO have __r suffix
+        [ "$sN" = "0" ] && [[ "$bn" =~ __r[0-9]+$ ]] && continue
+        workload_name="${bn%$strip_suffix}"
+        cp "$src" "$raw_dir/${workload_name}.json"
+        n_this=$((n_this + 1))
+    done
+    echo "  s${sN}: $n_this workloads in $raw_dir"
+    [ "$n_this" -gt 0 ] || continue
+    "$fsperf_root/digest/run" "$branch" "$run_id" \
+        --kernel "$kernel" --sha "$sha" \
+        --host-class "$DO_SIZE" --host-ip "multi"
+done
+
+echo "=== summary ==="
+ls "$results_root/${sha}-${run_ts}-"*.json 2>/dev/null | while read -r f; do
+    echo "  $f"
+done
+
+if [ "${PUBLISH:-0}" = "1" ]; then
+    echo "=== publishing to s1 ==="
+    "$fsperf_root/publish/run" "$branch"
+else
+    echo
+    echo "PUBLISH=0: local-only.  Set PUBLISH=1 to push to s1 + re-render fiolog."
+fi

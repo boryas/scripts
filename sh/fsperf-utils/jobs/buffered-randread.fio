@@ -1,0 +1,14 @@
+; Buffered random reads against an 8 GiB pre-filled file.
+[global]
+ioengine=psync
+size=8G
+runtime=180
+time_based=1
+ramp_time=10
+group_reporting=1
+fallocate=none
+allrandrepeat=1
+randseed=12345
+
+[buffered-randread]
+rw=randread

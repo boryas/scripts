@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+"""
+fsperf-utils digest — produce a per-run summary JSON from raw fio outputs.
+
+The "per-run" unit is one droplet's pass through a set of fio jobs.
+Raw fio JSONs live at:
+
+    ~/fsperf-results/<branch>/<run_id>/<job-name>.json
+
+The summary lands at:
+
+    ~/fsperf-results/<branch>/<run_id>.json
+
+Schema (intentionally shallow & schemaless-by-job-so-new-jobs-just-work):
+
+    {
+      "version": 1,
+      "branch": "for-next",
+      "sha":    "<git short>",
+      "kernel": "<uname -r>",
+      "host_class": "g-2vcpu-8gb",     # DO droplet size; "vc0", etc. for local
+      "host_ip":    "138.197.x.y",     # debug traceback
+      "started":  "2026-05-22T22:21:01Z",
+      "ended":    "2026-05-22T22:46:55Z",
+      "jobs": {
+        "<job-name>": {
+          "elapsed_ms": <int>,
+          "read":  {"bw_bytes": ..., "iops": ..., "io_bytes": ...,
+                    "lat_ns_mean": ..., "clat_ns_p50": ..., "clat_ns_p99": ...},
+          "write": {... same shape ...},
+          "raw_file": "<run_id>/<job>.json"
+        },
+        ...
+      }
+    }
+
+Both `read` and `write` sub-blocks are present for every job (fio always
+emits both sides in its JSON, with zeros on the inactive side).  Adding
+a new fio metric → new sub-key; no schema migration anywhere.
+
+Usage:
+    fsperf-utils digest <branch> <run_id> \\
+        --kernel <ver> --sha <sha> --host-class <class> --host-ip <ip> \\
+        [--started <iso8601>] [--ended <iso8601>] [--raw-dir <path>]
+
+--raw-dir defaults to ~/fsperf-results/<branch>/<run_id>/.  Override
+for ingesting raw JSONs that aren't yet in the canonical layout
+(e.g. /tmp/fsperf-cv/<ip>/ from an ad-hoc experiment).
+"""
+import argparse
+import datetime as dt
+import json
+import os
+import sys
+from pathlib import Path
+
+
+RESULTS_ROOT = Path(os.path.expanduser("~/fsperf-results"))
+
+
+def extract_side(j, side):
+    """Pull the metrics we care about from one side ('read' or 'write')
+    of a fio job dict.  Returns None if side has zero activity (e.g.
+    a write job's 'read' section)."""
+    s = j.get(side, {})
+    if not s or s.get("io_bytes", 0) == 0:
+        return None
+    pct = s.get("clat_ns", {}).get("percentile", {})
+    return {
+        "bw_bytes":     s.get("bw_bytes", 0),
+        "iops":         s.get("iops", 0.0),
+        "io_bytes":     s.get("io_bytes", 0),
+        "lat_ns_mean":  s.get("lat_ns", {}).get("mean", 0),
+        "clat_ns_mean": s.get("clat_ns", {}).get("mean", 0),
+        "clat_ns_p50":  pct.get("50.000000", 0),
+        "clat_ns_p99":  pct.get("99.000000", 0),
+        "clat_ns_p999": pct.get("99.900000", 0),
+    }
+
+
+def digest_job(raw_path):
+    """Parse one raw fio JSON file → (cell_name, summary_dict).
+
+    We key by the *filename* (= cell name like `buffered-append__zstd`)
+    rather than fio's `jobname` field.  The .fio files have a single
+    `[<job>]` section header, so multiple profiles of the same job all
+    produce identical `jobname` strings — keying by jobname would
+    silently collapse three profiles into one entry.  Filename carries
+    the full cell identity (job + profile), so it's the right key."""
+    with open(raw_path) as f:
+        data = json.load(f)
+    j = data["jobs"][0]
+    name = raw_path.stem
+    out = {"elapsed_ms": j.get("job_runtime", 0)}
+    for side in ("read", "write"):
+        side_out = extract_side(j, side)
+        if side_out is not None:
+            out[side] = side_out
+    out["raw_file"] = str(raw_path.relative_to(RESULTS_ROOT)) if raw_path.is_relative_to(RESULTS_ROOT) else str(raw_path)
+    return name, out
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("branch", help="branch / patch_name (e.g. for-next, folio-fixes, adhoc/whatever)")
+    ap.add_argument("run_id", help="unique run id (e.g. <sha>-<ts>)")
+    ap.add_argument("--kernel", required=True)
+    ap.add_argument("--sha", required=True)
+    ap.add_argument("--host-class", required=True,
+                    help="DO droplet size or local-vm name (e.g. g-2vcpu-8gb, c-8, vc0)")
+    ap.add_argument("--host-ip", default="",
+                    help="public IP / hostname of the worker for debug traceback")
+    ap.add_argument("--started", default="",
+                    help="ISO-8601 start time (defaults to first fio raw mtime)")
+    ap.add_argument("--ended", default="",
+                    help="ISO-8601 end time (defaults to last fio raw mtime)")
+    ap.add_argument("--raw-dir", default=None,
+                    help="dir containing raw fio JSONs (default: ~/fsperf-results/<branch>/<run_id>/)")
+    args = ap.parse_args()
+
+    branch_dir = RESULTS_ROOT / args.branch
+    branch_dir.mkdir(parents=True, exist_ok=True)
+    raw_dir = Path(args.raw_dir) if args.raw_dir else (branch_dir / args.run_id)
+    if not raw_dir.is_dir():
+        print(f"raw dir not found: {raw_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    # If raw_dir wasn't already at the canonical path, copy raws into it
+    # so traceback links from the summary stay self-contained.
+    canonical = branch_dir / args.run_id
+    if raw_dir != canonical:
+        canonical.mkdir(parents=True, exist_ok=True)
+        for src in sorted(raw_dir.glob("*.json")):
+            dst = canonical / src.name
+            if not dst.exists():
+                dst.write_bytes(src.read_bytes())
+        raw_dir = canonical
+
+    jobs = {}
+    raws = sorted(raw_dir.glob("*.json"))
+    if not raws:
+        print(f"no *.json in {raw_dir}", file=sys.stderr)
+        sys.exit(1)
+    for raw in raws:
+        if raw.stat().st_size < 50:
+            print(f"skipping empty/short: {raw}", file=sys.stderr)
+            continue
+        try:
+            name, summary = digest_job(raw)
+        except (json.JSONDecodeError, KeyError) as e:
+            print(f"skipping un-parseable {raw}: {e}", file=sys.stderr)
+            continue
+        jobs[name] = summary
+
+    started = args.started
+    ended = args.ended
+    if not started or not ended:
+        mtimes = [r.stat().st_mtime for r in raws]
+        if not started:
+            started = dt.datetime.fromtimestamp(min(mtimes), tz=dt.timezone.utc).isoformat().replace("+00:00", "Z")
+        if not ended:
+            ended = dt.datetime.fromtimestamp(max(mtimes), tz=dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+    summary = {
+        "version": 1,
+        "branch": args.branch,
+        "sha": args.sha,
+        "kernel": args.kernel,
+        "host_class": args.host_class,
+        "host_ip": args.host_ip,
+        "started": started,
+        "ended": ended,
+        "jobs": jobs,
+    }
+
+    out_path = branch_dir / f"{args.run_id}.json"
+    with open(out_path, "w") as f:
+        json.dump(summary, f, indent=2)
+        f.write("\n")
+    print(f"wrote {out_path}", file=sys.stderr)
+    print(f"  {len(jobs)} jobs: {', '.join(sorted(jobs))}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,14 @@
+; Buffered O_APPEND writes: each write extends the file at EOF.
+; `size` caps total bytes; with time_based=1 fio stops at min(runtime, size).
+[global]
+ioengine=psync
+size=8G
+runtime=180
+time_based=1
+ramp_time=10
+group_reporting=1
+fallocate=none
+
+[buffered-append]
+rw=write
+file_append=1

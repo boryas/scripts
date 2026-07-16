@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# fio-runner: mkfs+mount a scratch device with a profile's mount opts,
+# run one fio job, umount.  Designed to be invoked per-task by wq-ssh.
+# Stdout is fio's JSON output (and only that); setup/cleanup messages
+# go to stderr.  Exit code is fio's exit code.
+#
+# Usage:
+#   fio-runner <scratch_dev> <cell>
+#
+# A "cell" is "<job>__<profile>", e.g. buffered-randread__zstd.
+# Jobs live at /usr/local/share/fsperf-jobs/<job>.fio.
+# Profiles live at /usr/local/share/fsperf-profiles/<profile>.profile
+# (key=value: mount_opts, compat).
+set -eu
+
+if [ $# -ne 2 ]; then
+    echo "usage: fio-runner <scratch_dev> <cell>  (cell = <job>__<profile>)" >&2
+    exit 22
+fi
+
+dev=$1
+cell=$2
+
+# If the cell has a __r<N> replica suffix (set by cells/run --replicas),
+# strip it before parsing.  The replica index is encoded in the wq-ssh
+# task name so each fio output lands in /tmp/fsperf-out/<cell>__r<N>.json
+# (unique per task) and the orchestrator groups by replica afterwards.
+case "$cell" in
+    *__r[0-9]|*__r[0-9][0-9])
+        cell_no_replica=${cell%__r*}
+        ;;
+    *)
+        cell_no_replica=$cell
+        ;;
+esac
+
+# Parse <job>__<profile>.
+case "$cell_no_replica" in
+    *__*)
+        job=${cell_no_replica%__*}
+        profile=${cell_no_replica##*__}
+        ;;
+    *)
+        echo "fio-runner: cell '$cell' is not in <job>__<profile>[__r<N>] form" >&2
+        exit 22
+        ;;
+esac
+
+jobs_dir=${FSPERF_JOBS_DIR:-/usr/local/share/fsperf-jobs}
+profiles_dir=${FSPERF_PROFILES_DIR:-/usr/local/share/fsperf-profiles}
+job_file="$jobs_dir/$job.fio"
+profile_file="$profiles_dir/$profile.profile"
+mnt=/mnt/fsperf
+
+if [ ! -r "$job_file" ]; then
+    echo "fio-runner: job not found: $job_file" >&2
+    exit 2
+fi
+if [ ! -r "$profile_file" ]; then
+    echo "fio-runner: profile not found: $profile_file" >&2
+    exit 2
+fi
+
+# Parse profile.  Only `mount_opts=` matters here; `compat=` is consumed
+# by the cells-gen script when deciding what to enqueue.
+mount_opts=$(awk -F= '/^mount_opts=/{ sub(/^mount_opts=/, ""); print; exit }' "$profile_file" || true)
+
+cleanup() {
+    sudo umount "$mnt" 2>/dev/null || true
+    sudo rm -f "${fio_out:-}"
+}
+trap cleanup EXIT
+
+echo "[fio-runner] cell=$cell job=$job profile=$profile mount_opts='${mount_opts:-<none>}'" >&2
+echo "[fio-runner] mkfs.btrfs $dev" >&2
+sudo mkfs.btrfs -f "$dev" >&2
+
+sudo mkdir -p "$mnt"
+mount_args="-o noatime"
+if [ -n "${mount_opts:-}" ]; then
+    mount_args="-o noatime,$mount_opts"
+fi
+echo "[fio-runner] mount $mount_args $dev -> $mnt" >&2
+# shellcheck disable=SC2086
+sudo mount $mount_args "$dev" "$mnt"
+
+echo "[fio-runner] fio $job_file (--directory=$mnt)" >&2
+fio_out=$(sudo mktemp /tmp/fio-runner.XXXXXX.json)
+sudo fio --output-format=json --output="$fio_out" --directory="$mnt" "$job_file" >&2
+sudo cat "$fio_out"

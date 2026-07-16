@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# fsperf-utils publish [<branch>]
+#
+# Push fsperf-results to s1 and re-render the static site.  Three steps:
+#   1. rsync the fsperf-utils scripts dir to s1 (so the renderer is current)
+#   2. rsync the branch's summaries + raw fio JSONs to s1's persistent volume
+#   3. ssh s1 to invoke html/run, which writes into the nginx-served dir
+#
+# With no args: publishes all branches.  With <branch>: just that branch's
+# data; renderer always reads the whole tree from s1 so the resulting
+# pages reflect the full picture.
+#
+# Mirrors fstests-utils/publish.  Same convention: s1 is the canonical
+# store; local ~/fsperf-results is the working copy.
+set -euo pipefail
+
+branch=${1:-}
+
+S1_HOST="${S1_HOST:-s1}"
+S1_HTML_DIR="${S1_HTML_DIR:-/usr/local/share/site/static/html/fiolog}"
+SCRIPTS_SRC="$HOME/repos/scripts/sh/fsperf-utils/"
+SCRIPTS_DST="$S1_HOST:repos/scripts/sh/fsperf-utils/"
+RESULTS_SRC="$HOME/fsperf-results/"
+RESULTS_DST="$S1_HOST:fsperf-results/"
+
+echo "publish: rsync scripts -> $SCRIPTS_DST"
+rsync -az --delete "$SCRIPTS_SRC" "$SCRIPTS_DST"
+
+if [ -n "$branch" ]; then
+    echo "publish: rsync results/$branch -> $RESULTS_DST"
+    rsync -az "$RESULTS_SRC$branch/" "$RESULTS_DST$branch/"
+else
+    echo "publish: rsync all results -> $RESULTS_DST"
+    rsync -az "$RESULTS_SRC" "$RESULTS_DST"
+fi
+
+echo "publish: rendering on $S1_HOST -> $S1_HTML_DIR"
+ssh "$S1_HOST" "HTML_DIR='$S1_HTML_DIR' ~/repos/scripts/sh/fsperf-utils/html/run"

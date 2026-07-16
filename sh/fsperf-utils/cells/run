@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""
+fsperf-utils cells — emit wq-ssh task JSONL for the workload matrix.
+
+Walks <jobs-dir>/*.fio and <profiles-dir>/*.profile, takes the Cartesian
+product, and emits one JSONL line per (job, profile) "workload" that
+satisfies the profile's `compat=` glob list:
+
+    {"name":"buffered-randread__default","timeout":"300s"}
+
+A workload is the basic unit of work for wq-ssh — fio-runner consumes
+the `name` field as its arg.  --k N emits each workload N times with
+__r1..rN suffixes for K-sample collection.  Compat-skipped workloads
+(e.g. dio-write × zstd, since dio bypasses compression) are not emitted.
+
+Output is suitable for piping to `wq-ssh < cells.jsonl`.
+"""
+import argparse
+import fnmatch
+import json
+import os
+import sys
+from pathlib import Path
+
+
+SELF_DIR = Path(__file__).resolve().parent.parent
+DEFAULT_JOBS = SELF_DIR / "jobs"
+DEFAULT_PROFILES = SELF_DIR / "profiles"
+
+
+def parse_profile(path):
+    """Return {'mount_opts': str, 'compat': [glob, ...]}."""
+    out = {"mount_opts": "", "compat": ["*"]}
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            if k == "mount_opts":
+                out["mount_opts"] = v
+            elif k == "compat":
+                out["compat"] = v.split() if v.strip() else ["*"]
+    return out
+
+
+def matches_any(name, globs):
+    return any(fnmatch.fnmatchcase(name, g) for g in globs)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--jobs-dir", default=str(DEFAULT_JOBS))
+    ap.add_argument("--profiles-dir", default=str(DEFAULT_PROFILES))
+    ap.add_argument("--timeout", default="300s",
+                    help="per-task wq-ssh timeout (default 300s = 180s fio + ~2min buffer)")
+    ap.add_argument("--k", type=int, default=1, dest="k",
+                    help="samples per workload (default 1 = nightly singleton)")
+    ap.add_argument("--filter", default=None,
+                    help=("comma-separated list of <job>__<profile> workload names; "
+                          "only emit workloads matching one of these (after compat). "
+                          "Used for --fast mode in bench/run."))
+    args = ap.parse_args()
+    filter_set = set(args.filter.split(",")) if args.filter else None
+
+    jobs_dir = Path(args.jobs_dir)
+    profiles_dir = Path(args.profiles_dir)
+    jobs = sorted(p.stem for p in jobs_dir.glob("*.fio"))
+    profiles = sorted(p for p in profiles_dir.glob("*.profile"))
+
+    if not jobs:
+        print(f"no jobs in {jobs_dir}", file=sys.stderr)
+        sys.exit(1)
+    if not profiles:
+        print(f"no profiles in {profiles_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    emitted = 0
+    skipped_compat = 0
+    skipped_filter = 0
+    for profile_path in profiles:
+        prof_name = profile_path.stem
+        prof = parse_profile(profile_path)
+        for job in jobs:
+            if not matches_any(job, prof["compat"]):
+                skipped_compat += 1
+                continue
+            workload = f"{job}__{prof_name}"
+            if filter_set is not None and workload not in filter_set:
+                skipped_filter += 1
+                continue
+            for r in range(1, args.k + 1):
+                name = workload if args.k == 1 else f"{workload}__r{r}"
+                print(json.dumps({"name": name, "timeout": args.timeout}))
+                emitted += 1
+
+    msg = (f"tasks: {emitted} emitted (K={args.k}), "
+           f"{skipped_compat} skipped (compat)")
+    if skipped_filter:
+        msg += f", {skipped_filter} skipped (filter)"
+    print(msg, file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

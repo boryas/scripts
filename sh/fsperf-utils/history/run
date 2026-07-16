@@ -1,0 +1,286 @@
+#!/usr/bin/env python3
+"""
+fsperf-utils history — walk per-run summary JSONs and emit a tabular view.
+
+Storage shape (set up by `fsperf-utils digest`):
+
+    ~/fsperf-results/<branch>/<run_id>.json
+    ~/fsperf-results/<branch>/<run_id>/<job>.json   (raws)
+
+<branch> here can be anything under ~/fsperf-results that has *.json
+summaries: `for-next`, `baselines`, `adhoc/<label>`.
+
+Three modes:
+
+  fsperf-utils history <branch>
+      Per-run summary table: run_id, sha, host_class, host_ip,
+      started, n_jobs.  Newest first.
+
+  fsperf-utils history <branch> <job>
+      Per-run table for one job: run_id, sha, host, bw, iops,
+      lat_mean, p99.  Auto-picks read or write side based on which
+      one has non-zero io_bytes in each row.
+
+  fsperf-utils history <branch> <job> <metric>
+      Single-column timeline of one metric.  <metric> can be a short
+      alias (bw, iops, lat, p99) or a dotted path into the summary
+      (e.g. read.clat_ns_p99, write.bw_bytes, elapsed_ms).
+
+Flags:
+  -n N, --limit N     keep only the most recent N runs (default 20)
+  --json              emit raw JSON list instead of a table
+  --since YYYY-MM-DD  filter by start date
+
+Examples:
+  fsperf-utils history adhoc/c8-variance-2026-05-22
+  fsperf-utils history adhoc/c8-variance-2026-05-22 buffered-randread-16g
+  fsperf-utils history for-next buffered-randread-16g bw -n 7
+  fsperf-utils history for-next buffered-randread-16g read.clat_ns_p99 --json
+"""
+import argparse
+import datetime as dt
+import json
+import os
+import sys
+from pathlib import Path
+
+
+RESULTS_ROOT = Path(os.path.expanduser("~/fsperf-results"))
+
+# Short alias → (preferred-side, dotted path).  None side means "pick
+# whichever has non-zero io_bytes" — i.e. the dominant side of the job.
+ALIASES = {
+    "bw":     (None, "bw_bytes"),
+    "iops":   (None, "iops"),
+    "lat":    (None, "lat_ns_mean"),
+    "lat_mean": (None, "lat_ns_mean"),
+    "p50":    (None, "clat_ns_p50"),
+    "p99":    (None, "clat_ns_p99"),
+    "p999":   (None, "clat_ns_p999"),
+}
+
+
+def load_summaries(branch_dir):
+    """Read all <run_id>.json files from a branch dir, newest first."""
+    rows = []
+    for p in sorted(branch_dir.glob("*.json")):
+        try:
+            with open(p) as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"skipping {p}: {e}", file=sys.stderr)
+            continue
+        data["_run_id"] = p.stem
+        data["_path"] = p
+        rows.append(data)
+    # newest first by started timestamp (fall back to run_id sort)
+    rows.sort(key=lambda r: (r.get("started", ""), r.get("_run_id", "")), reverse=True)
+    return rows
+
+
+def pick_side(job_entry):
+    """Return the dominant side ('read' or 'write') for a job entry,
+    or None if neither has activity."""
+    for side in ("read", "write"):
+        s = job_entry.get(side)
+        if s and s.get("io_bytes", 0) > 0:
+            return side
+    return None
+
+
+def resolve_metric(metric, job_entry):
+    """Resolve a metric spec (alias or dotted) to a (side, leaf) value.
+    Returns (display_name, value) or (display_name, None) if missing."""
+    if metric in ALIASES:
+        preferred_side, leaf = ALIASES[metric]
+        side = preferred_side or pick_side(job_entry)
+        if side is None:
+            return metric, None
+        v = job_entry.get(side, {}).get(leaf)
+        return f"{side}.{leaf}", v
+
+    # dotted path: top-level key or side.leaf
+    parts = metric.split(".")
+    cur = job_entry
+    for p in parts:
+        if not isinstance(cur, dict):
+            return metric, None
+        cur = cur.get(p)
+        if cur is None:
+            return metric, None
+    return metric, cur
+
+
+def fmt_bw(b):
+    """Format bw bytes as 'X.X MB/s' for table display."""
+    if b is None:
+        return "-"
+    return f"{b/1e6:.1f}"
+
+
+def fmt_us(ns):
+    """Format ns as 'X.X' microseconds."""
+    if ns is None:
+        return "-"
+    return f"{ns/1000:.1f}"
+
+
+def fmt_iops(i):
+    if i is None:
+        return "-"
+    return f"{int(i)}"
+
+
+def fmt_ts(ts):
+    """Trim ISO to YYYY-MM-DD HH:MM (UTC, no seconds)."""
+    if not ts:
+        return "-"
+    return ts.replace("T", " ")[:16]
+
+
+def short_sha(s):
+    return (s or "")[:12]
+
+
+def mode_branch(rows):
+    """Per-run summary table: run_id, sha, host_class, host_ip, started, n_jobs."""
+    if not rows:
+        print("(no runs)")
+        return
+    header = ("run_id", "sha", "host", "ip", "started", "jobs")
+    widths = (38, 12, 14, 16, 16, 4)
+    print("  ".join(h.ljust(w) for h, w in zip(header, widths)))
+    print("  ".join("-" * w for w in widths))
+    for r in rows:
+        jobs = list(r.get("jobs", {}).keys())
+        cols = [
+            r["_run_id"],
+            short_sha(r.get("sha")),
+            r.get("host_class", ""),
+            r.get("host_ip", ""),
+            fmt_ts(r.get("started", "")),
+            str(len(jobs)),
+        ]
+        print("  ".join(c[:w].ljust(w) for c, w in zip(cols, widths)))
+
+
+def mode_job(rows, job):
+    """Per-run table for one job: run_id, sha, host_ip, bw, iops, lat_mean, p99."""
+    matching = [r for r in rows if job in r.get("jobs", {})]
+    if not matching:
+        print(f"(no runs have job {job!r})")
+        return
+    header = ("sha", "host", "ip", "started", "bw_MB", "iops", "lat_us", "p99_us")
+    widths = (12, 14, 16, 16, 7, 6, 8, 9)
+    print("  ".join(h.ljust(w) for h, w in zip(header, widths)))
+    print("  ".join("-" * w for w in widths))
+    for r in matching:
+        e = r["jobs"][job]
+        side = pick_side(e)
+        s = e.get(side, {}) if side else {}
+        cols = [
+            short_sha(r.get("sha")),
+            r.get("host_class", ""),
+            r.get("host_ip", ""),
+            fmt_ts(r.get("started", "")),
+            fmt_bw(s.get("bw_bytes")),
+            fmt_iops(s.get("iops")),
+            fmt_us(s.get("lat_ns_mean")),
+            fmt_us(s.get("clat_ns_p99")),
+        ]
+        print("  ".join(c[:w].ljust(w) for c, w in zip(cols, widths)))
+
+
+def mode_metric(rows, job, metric, want_json):
+    """Single-metric timeline: ts, sha, host_ip, metric value."""
+    matching = []
+    metric_label = metric
+    for r in rows:
+        e = r.get("jobs", {}).get(job)
+        if not e:
+            continue
+        label, v = resolve_metric(metric, e)
+        metric_label = label
+        if v is None:
+            continue
+        matching.append({
+            "ts": r.get("started", ""),
+            "sha": r.get("sha"),
+            "host_class": r.get("host_class"),
+            "host_ip": r.get("host_ip"),
+            "value": v,
+        })
+    if not matching:
+        print(f"(no runs have job {job!r} with metric {metric!r})")
+        return
+    if want_json:
+        json.dump(matching, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return
+    header = ("started", "sha", "host", "ip", metric_label)
+    widths = (16, 12, 14, 16, 18)
+    print("  ".join(h.ljust(w) for h, w in zip(header, widths)))
+    print("  ".join("-" * w for w in widths))
+    for r in matching:
+        # Auto-format value: ns → us if metric looks like latency; bytes → MB if "bw"
+        v = r["value"]
+        if isinstance(v, (int, float)):
+            if "lat" in metric_label or "clat" in metric_label:
+                vstr = f"{v/1000:.2f} us"
+            elif "bw" in metric_label:
+                vstr = f"{v/1e6:.2f} MB/s"
+            elif "iops" in metric_label:
+                vstr = f"{int(v)}"
+            elif "ms" in metric_label:
+                vstr = f"{v/1000:.1f} s"
+            else:
+                vstr = f"{v}"
+        else:
+            vstr = str(v)
+        cols = [
+            fmt_ts(r["ts"]),
+            short_sha(r["sha"]),
+            r.get("host_class") or "",
+            r.get("host_ip") or "",
+            vstr,
+        ]
+        print("  ".join(c[:w].ljust(w) for c, w in zip(cols, widths)))
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("branch", help="branch path under ~/fsperf-results (e.g. for-next, adhoc/foo)")
+    ap.add_argument("job", nargs="?", help="optional job name; without it, show per-run summary")
+    ap.add_argument("metric", nargs="?", help="optional metric (alias or dotted path)")
+    ap.add_argument("-n", "--limit", type=int, default=20,
+                    help="keep only the N most recent runs (default 20)")
+    ap.add_argument("--since", default=None, help="filter to runs started on or after YYYY-MM-DD")
+    ap.add_argument("--json", action="store_true", help="emit JSON instead of a table (metric mode only)")
+    args = ap.parse_args()
+
+    branch_dir = RESULTS_ROOT / args.branch
+    if not branch_dir.is_dir():
+        print(f"branch dir not found: {branch_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    rows = load_summaries(branch_dir)
+    if args.since:
+        try:
+            since_ts = dt.datetime.fromisoformat(args.since).replace(tzinfo=dt.timezone.utc).isoformat().replace("+00:00", "Z")
+        except ValueError as e:
+            print(f"--since must be YYYY-MM-DD: {e}", file=sys.stderr)
+            sys.exit(2)
+        rows = [r for r in rows if r.get("started", "") >= since_ts]
+    rows = rows[: args.limit]
+
+    if args.metric:
+        mode_metric(rows, args.job, args.metric, args.json)
+    elif args.job:
+        mode_job(rows, args.job)
+    else:
+        mode_branch(rows)
+
+
+if __name__ == "__main__":
+    main()

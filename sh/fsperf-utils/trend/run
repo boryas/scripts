@@ -1,0 +1,256 @@
+#!/usr/bin/env python3
+"""
+fsperf-utils trend [--branch B] [--window N] [--workload PAT]
+                   [--metric M] [--threshold K]
+                   [--inject SPEC] [--json]
+
+For each workload, look for a single step change in the most recent N
+samples.  Walks every candidate split point in the window, computes how
+far the median shifts (in MAD units of the larger side), and reports
+the best split if it exceeds --threshold (default 4).
+
+This is single-change-point CPD within a rolling window:
+  - Avoids "find every change in 2 years of data" archeology.
+  - At ~50 samples per workload, brute force is instantaneous.
+  - When real regressions stick (which they usually do on for-next),
+    they introduce a step that this finds.
+
+Injection:
+  --inject 'WORKLOAD=PCT@INDEX' multiplies the value by (1+PCT/100) for
+  samples at INDEX and later in the windowed sequence.  Use to validate
+  the detector before a real regression appears, e.g.
+    --inject 'dio-seqread__default=-5@30'
+  applies a -5% step at sample 30 of the window.  Repeat the flag for
+  multiple injections.
+
+Output:
+  Plain table with one row per workload that flagged.  Includes the
+  SHA range crossed at the change point so you can `git log` the
+  suspects.  --json emits all workloads (flagged or not) plus the per-
+  workload best-split metadata so downstream tools can post-process.
+"""
+
+import argparse
+import fnmatch
+import glob
+import json
+import re
+import statistics
+import sys
+from pathlib import Path
+
+
+METRIC_PATHS = {
+    # metric flag -> (read_side_key, write_side_key, unit_div, unit, dir)
+    # dir: +1 means higher is better, -1 means lower is better
+    "bw":   ("bw_bytes",    "bw_bytes",    1e6, "MB/s", +1),
+    "iops": ("iops",        "iops",        1.0, "iops", +1),
+    "lat":  ("lat_ns_mean", "lat_ns_mean", 1e3, "µs",   -1),
+    "p99":  ("clat_ns_p99", "clat_ns_p99", 1e3, "µs",   -1),
+}
+
+MIN_SEGMENT = 5  # min samples on each side for MAD to be meaningful
+
+
+def mad(values):
+    """Median absolute deviation."""
+    if not values:
+        return 0
+    m = statistics.median(values)
+    return statistics.median(abs(v - m) for v in values)
+
+
+def parse_inject(spec):
+    """'WORKLOAD=PCT@INDEX' -> (workload, pct_as_float, index_int)"""
+    m = re.match(r'^([^=]+)=([+-]?\d+(?:\.\d+)?)@(\d+)$', spec)
+    if not m:
+        raise ValueError(f"bad --inject spec: {spec!r} (want WORKLOAD=PCT@INDEX)")
+    return m.group(1), float(m.group(2)), int(m.group(3))
+
+
+def best_split(values, threshold):
+    """Walk every split point; return (idx, score, before_med, after_med) or None.
+
+    Score = |median_after - median_before| / quad_mean(mad_before, mad_after).
+    Per-side MAD respects the possibility that the change altered the noise
+    level itself (e.g. lock-contention patches widen the distribution).
+    Quadratic mean = sqrt((mad_b² + mad_a²) / 2) matches the spirit of pooled
+    variance: equals the single MAD when the sides agree, sits between max
+    and arithmetic mean when they don't.
+    """
+    import math
+    n = len(values)
+    if n < 2 * MIN_SEGMENT:
+        return None
+    best = None
+    for i in range(MIN_SEGMENT, n - MIN_SEGMENT + 1):
+        before, after = values[:i], values[i:]
+        bm = statistics.median(before)
+        am = statistics.median(after)
+        mad_b = mad(before)
+        mad_a = mad(after)
+        noise = math.sqrt((mad_b**2 + mad_a**2) / 2)
+        if noise == 0:
+            # Both sides perfectly tight: fall back to the other if only one
+            # was zero, else skip.
+            noise = mad_a or mad_b
+            if noise == 0:
+                continue
+        score = abs(am - bm) / noise
+        if best is None or score > best[1]:
+            best = (i, score, bm, am)
+    if best is None or best[1] < threshold:
+        return None
+    return best
+
+
+def collect_series(branch, window, metric_key):
+    """{workload: [(ts, sha, side, value), ...]} ordered by ts."""
+    read_key, write_key, *_ = METRIC_PATHS[metric_key]
+    branch_dir = Path(f"~/fsperf-results/{branch}").expanduser()
+    series = {}
+    for path in sorted(branch_dir.glob("*.json")):
+        try:
+            with open(path) as f:
+                d = json.load(f)
+        except Exception:
+            continue
+        ts = d.get("ts") or d.get("ended") or d.get("sha", "")
+        # Most cron summaries don't carry a top-level ts; fall back to filename
+        # which has a timestamp suffix.
+        ts = ts or path.name
+        sha = d.get("sha", "?")
+        for w, e in (d.get("jobs") or {}).items():
+            for side, mkey in (("read", read_key), ("write", write_key)):
+                sd = e.get(side) or {}
+                if not sd or sd.get("io_bytes", 0) == 0:
+                    continue
+                v = sd.get(mkey)
+                if v is None:
+                    continue
+                key = f"{w}.{side}"
+                series.setdefault(key, []).append((ts, sha, v))
+    # Sort by timestamp and trim to window
+    for k in series:
+        series[k].sort(key=lambda r: r[0])
+        if window > 0:
+            series[k] = series[k][-window:]
+    return series
+
+
+def apply_injections(series, injections):
+    """Mutate series per --inject specs."""
+    for spec in injections:
+        wl, pct, idx = parse_inject(spec)
+        # Match against the workload prefix (without .read/.write)
+        matched = False
+        for key in series:
+            if key.startswith(wl + ".") or key == wl:
+                matched = True
+                vals = series[key]
+                mul = 1 + pct / 100.0
+                series[key] = [
+                    (ts, sha, (v * mul if i >= idx else v))
+                    for i, (ts, sha, v) in enumerate(vals)
+                ]
+        if not matched:
+            print(f"warning: --inject {spec!r} matched no workload", file=sys.stderr)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--branch", default="for-next")
+    ap.add_argument("--window", type=int, default=50,
+                    help="last N samples per workload (default 50; 0 = all)")
+    ap.add_argument("--workload", default="*",
+                    help="glob to filter workloads (default *)")
+    ap.add_argument("--metric", default="bw", choices=list(METRIC_PATHS),
+                    help="which fio metric to track (default bw)")
+    ap.add_argument("--threshold", type=float, default=4.0,
+                    help="report change point if shift > K MADs (default 4)")
+    ap.add_argument("--inject", action="append", default=[],
+                    help="synthetic step for validation: 'WL=PCT@IDX'")
+    ap.add_argument("--json", action="store_true")
+    args = ap.parse_args()
+
+    series = collect_series(args.branch, args.window, args.metric)
+    series = {k: v for k, v in series.items() if fnmatch.fnmatchcase(k, args.workload) or
+              fnmatch.fnmatchcase(k.split(".")[0], args.workload)}
+    if args.inject:
+        apply_injections(series, args.inject)
+
+    meta = METRIC_PATHS[args.metric]
+    unit_div, unit = meta[2], meta[3]
+    good_dir = meta[4]
+
+    results = []
+    for key in sorted(series):
+        rows = series[key]
+        values = [v for _, _, v in rows]
+        n = len(values)
+        if n < 2 * MIN_SEGMENT:
+            results.append({"workload": key, "n": n, "skipped": "too few samples"})
+            continue
+        best = best_split(values, args.threshold)
+        if best is None:
+            # Still record overall median for json output
+            results.append({"workload": key, "n": n, "no_change": True,
+                            "median": statistics.median(values)})
+            continue
+        idx, score, bm, am = best
+        delta_pct = (am - bm) / bm * 100.0 if bm else 0.0
+        sha_before = rows[idx - 1][1]
+        sha_after = rows[idx][1]
+        ts_before = rows[idx - 1][0]
+        ts_after = rows[idx][0]
+        # direction
+        if (delta_pct > 0 and good_dir > 0) or (delta_pct < 0 and good_dir < 0):
+            tag = "improvement"
+        else:
+            tag = "regression"
+        results.append({
+            "workload": key, "n": n, "change_idx": idx, "score": score,
+            "before_median": bm, "after_median": am,
+            "delta_pct": delta_pct, "tag": tag,
+            "sha_before": sha_before, "sha_after": sha_after,
+            "ts_before": ts_before, "ts_after": ts_after,
+            "n_before": idx, "n_after": n - idx,
+        })
+
+    if args.json:
+        json.dump({"branch": args.branch, "window": args.window,
+                   "metric": args.metric, "threshold": args.threshold,
+                   "results": results}, sys.stdout, indent=2, default=str)
+        sys.stdout.write("\n")
+        return
+
+    flagged = [r for r in results if r.get("change_idx") is not None]
+    print(f"fsperf-utils trend  branch={args.branch}  metric={args.metric}  "
+          f"window={args.window}  threshold={args.threshold} MADs")
+    print(f"  {len(series)} workloads analyzed, {len(flagged)} with change points")
+    print()
+    if not flagged:
+        print("no change points detected.")
+        return
+
+    flagged.sort(key=lambda r: -r["score"])
+    for r in flagged:
+        wl = r["workload"]
+        b = r["before_median"] / unit_div
+        a = r["after_median"] / unit_div
+        print(f"== {wl}  [{r['tag'].upper()}] ==")
+        print(f"  change at sample {r['change_idx']}/{r['n']}  (score = {r['score']:.1f} MADs)")
+        print(f"  before: median {b:>8.2f} {unit}  (n={r['n_before']})")
+        print(f"  after:  median {a:>8.2f} {unit}  (n={r['n_after']})")
+        print(f"  delta:  {r['delta_pct']:+.1f}%")
+        print(f"  crossed: {r['sha_before']}  ->  {r['sha_after']}")
+        # If both shas have a 12-char hex prefix, suggest the git log range
+        sb, sa = r["sha_before"].split("-")[0], r["sha_after"].split("-")[0]
+        if re.match(r"^[0-9a-f]{8,}$", sb) and re.match(r"^[0-9a-f]{8,}$", sa) and sb != sa:
+            print(f"  suspects: git -C ~/repos/linux log {sb}..{sa} --oneline")
+        print()
+
+
+if __name__ == "__main__":
+    main()

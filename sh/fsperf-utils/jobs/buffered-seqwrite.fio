@@ -1,0 +1,12 @@
+; Buffered sequential writes into an 8 GiB file (overwrite, looping).
+[global]
+ioengine=psync
+size=8G
+runtime=180
+time_based=1
+ramp_time=10
+group_reporting=1
+fallocate=none
+
+[buffered-seqwrite]
+rw=write
