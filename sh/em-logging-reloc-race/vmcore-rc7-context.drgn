@@ -1,0 +1,74 @@
+#!/usr/bin/env drgn
+# Full context around the rc7 victim: whole modified_extents list, rbtree state,
+# and any task concurrently logging/fsyncing inode 216049 or doing relocation.
+import sys
+from drgn import Object, cast, container_of, offsetof
+from drgn.helpers.linux.list import list_for_each_entry, list_empty
+from drgn.helpers.linux.pid import for_each_task
+
+INODE = 0xffff00010903aec8
+VICTIM = 0xffff00016df98060
+
+FLAGS = [(0x01,"PINNED"),(0x02,"CZLIB"),(0x04,"CLZO"),(0x08,"CZSTD"),
+         (0x10,"PREALLOC"),(0x20,"LOGGING"),(0x40,"MERGED")]
+def fstr(f): return "|".join(n for b,n in FLAGS if f & b) or "0"
+
+def dump_em(em, tag=""):
+    f = int(em.flags); r = int(em.refs.refs.counter)
+    rbpc = int(em.rb_node.__rb_parent_color)
+    in_tree = (rbpc & ~3) != em.rb_node.address_of_().value_()
+    print(f"  {tag}em={hex(em.value_())} start={int(em.start)} len={int(em.len)} "
+          f"offset={int(em.offset)} ram={int(em.ram_bytes)} dbytenr={int(em.disk_bytenr)} "
+          f"gen={int(em.generation)} flags=0x{f:x}({fstr(f)}) refs={r} in_tree={in_tree}")
+
+inode = Object(prog, 'struct btrfs_inode *', INODE)
+emt = inode.extent_tree
+print("=== inode 216049 modified_extents (full walk from head) ===")
+head = emt.modified_extents
+print(f"  head@{hex(head.address_of_().value_())} next={hex(head.next.value_())} prev={hex(head.prev.value_())} empty={list_empty(head.address_of_())}")
+try:
+    ems = list(list_for_each_entry('struct extent_map', head.address_of_(), 'list'))
+    print(f"  {len(ems)} member(s):")
+    for em in ems:
+        dump_em(em, tag="[VICTIM] " if em.value_()==VICTIM else "")
+except Exception as e:
+    print(f"  list walk err: {e}")
+
+print("\n=== is victim still in the rbtree? scan extent_tree.root ===")
+try:
+    from drgn.helpers.linux.rbtree import rbtree_inorder_for_each_entry
+    found=False; n=0
+    for em in rbtree_inorder_for_each_entry('struct extent_map', emt.root.address_of_(), 'rb_node'):
+        n+=1
+        if em.value_()==VICTIM: found=True
+        if n>200000: print("  [rbtree>200k, bail]"); break
+    print(f"  rbtree em count={n} victim_in_rbtree={found}")
+except Exception as e:
+    print(f"  rbtree err: {e}")
+
+print("\n=== scan all tasks for btrfs logging / fsync / relocation ===")
+KEYS = ("btrfs_log_inode","btrfs_sync_file","btrfs_log_changed_extents","log_one_extent",
+        "btrfs_drop_extent_map_range","invalidate_extent_cache","relocate_block_group",
+        "btrfs_relocate","merge_reloc","btrfs_extent_map_shrinker","btrfs_scan_inode",
+        "btrfs_remove_extent_mapping","split_extent_map")
+try:
+    for task in for_each_task(prog):
+        try:
+            comm = task.comm.string_().decode()
+            pid = int(task.pid)
+            st = prog.stack_trace(task)
+        except Exception:
+            continue
+        frames = []
+        hit = False
+        for fr in st:
+            nm = str(fr.name) if fr.name else "?"
+            frames.append(nm)
+            if any(k in nm for k in KEYS):
+                hit = True
+        if hit:
+            print(f"  pid={pid} comm={comm}")
+            for nm in frames[:22]:
+                print(f"      {nm}")
+except Exception as e:
+    print(f"  task scan err: {e}")

@@ -1,0 +1,62 @@
+#!/usr/bin/env drgn
+# inode 216049 fsync/ordered state + broad task scan for any writeback/endio actor.
+import sys
+from drgn import Object, cast, container_of
+from drgn.helpers.linux.list import list_for_each_entry
+from drgn.helpers.linux.rbtree import rbtree_inorder_for_each_entry
+from drgn.helpers.linux.pid import for_each_task
+
+INODE = 0xffff00010903aec8
+inode = Object(prog, 'struct btrfs_inode *', INODE)
+
+print("=== inode 216049 fsync-relevant state ===")
+try:
+    rf = int(inode.runtime_flags)
+    print(f"  runtime_flags=0x{rf:x}")
+    # BTRFS_INODE_NEEDS_FULL_SYNC bit
+    for nm in ("BTRFS_INODE_NEEDS_FULL_SYNC","BTRFS_INODE_COW_WRITE_ERROR"):
+        try:
+            bit = int(prog.constant(nm))
+            print(f"    {nm}(bit{bit}) set={bool(rf & (1<<bit))}")
+        except Exception as e:
+            print(f"    {nm}: {e}")
+    for fld in ("logged_trans","last_log_commit","last_trans","delalloc_bytes",
+                "new_delalloc_bytes","outstanding_extents"):
+        try: print(f"  {fld}={int(getattr(inode, fld))}")
+        except Exception: pass
+except Exception as e:
+    print("  err", e)
+
+print("\n=== inode 216049 in-flight ordered extents (ordered_tree) ===")
+try:
+    n=0
+    for oe in rbtree_inorder_for_each_entry('struct btrfs_ordered_extent',
+                                            inode.ordered_tree.address_of_(), 'rb_node'):
+        n+=1
+        fl = int(oe.flags)
+        print(f"  oe file_offset={int(oe.file_offset)} num_bytes={int(oe.num_bytes)} "
+              f"disk_bytenr={int(oe.disk_bytenr)} flags=0x{fl:x}")
+        if n>50: print("  ...>50"); break
+    if n==0: print("  (none)")
+except Exception as e:
+    print("  ordered_tree err (field name?):", e)
+
+print("\n=== broad task scan: any btrfs writeback/endio/drop/ordered actor ===")
+KEYS = ("cow_file_range","run_delalloc","writepages","btrfs_finish_one_ordered",
+        "finish_ordered","btrfs_work","end_bbio","btrfs_replace_extent_map",
+        "btrfs_drop_extent_map","btrfs_unpin_extent_cache","submit_compressed",
+        "async_cow","compress","btrfs_writepage","extent_writepage",
+        "btrfs_log_inode","btrfs_sync_file","kswapd","try_to_free")
+seen=0
+for task in for_each_task(prog):
+    try:
+        comm = task.comm.string_().decode(); pid=int(task.pid)
+        st = prog.stack_trace(task)
+    except Exception:
+        continue
+    names=[str(f.name) if f.name else "?" for f in st]
+    if any(any(k in nm for k in KEYS) for nm in names):
+        seen+=1
+        print(f"  pid={pid} comm={comm}")
+        for nm in names[:20]: print(f"      {nm}")
+if not seen: print("  (no writeback/endio/ordered/log task active at crash)")

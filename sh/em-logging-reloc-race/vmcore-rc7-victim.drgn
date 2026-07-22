@@ -1,0 +1,101 @@
+#!/usr/bin/env drgn
+# Analyze the rc7 (f782c3cf77ec) vmcore: victim em captured by the diagnostic
+# BUG() in btrfs_free_extent_map (extent_map.c:83) at the moment of the bad free.
+# Victim em real addr = x28 from the BUG register dump.
+import sys
+from drgn import Object, cast, container_of, offsetof
+from drgn.helpers.linux.list import list_for_each_entry
+
+EM = int(sys.argv[1], 0) if len(sys.argv) > 1 else 0xffff00016df98060
+
+FLAGS = [(0x01,"PINNED"),(0x02,"CZLIB"),(0x04,"CLZO"),(0x08,"CZSTD"),
+         (0x10,"PREALLOC"),(0x20,"LOGGING"),(0x40,"MERGED")]
+def fstr(f): return "|".join(n for b,n in FLAGS if f & b) or "0"
+
+def dump_em(em, tag=""):
+    try:
+        f = int(em.flags); r = int(em.refs.refs.counter)
+        rbpc = int(em.rb_node.__rb_parent_color)
+        in_tree = (rbpc & ~3) != em.rb_node.address_of_().value_()
+        print(f"  {tag}em={hex(em.value_())} start={int(em.start)} len={int(em.len)} "
+              f"disk_bytenr={int(em.disk_bytenr)} disk_num_bytes={int(em.disk_num_bytes)} "
+              f"offset={int(em.offset)} ram_bytes={int(em.ram_bytes)} gen={int(em.generation)} "
+              f"flags=0x{f:x}({fstr(f)}) refs={r} in_tree={in_tree} "
+              f"next={hex(em.list.next.value_())} prev={hex(em.list.prev.value_())}")
+    except Exception as e:
+        print(f"  {tag}em={hex(em.value_())} DECODE ERROR: {e}")
+
+em = Object(prog, 'struct extent_map *', EM)
+print("=== VICTIM em (x28 from BUG regs) ===")
+dump_em(em)
+
+# ---- offsets to translate a modified_extents head back to its btrfs_inode ----
+off_et = offsetof(prog.type('struct btrfs_inode'), 'extent_tree')
+off_me = offsetof(prog.type('struct extent_map_tree'), 'modified_extents')
+head_off = off_et + off_me
+print(f"\noffsetof(btrfs_inode.extent_tree)={off_et} "
+      f"offsetof(extent_map_tree.modified_extents)={off_me} head_off={head_off}")
+
+# ---- walk em->list forward with cycle detection, find the list head ----
+print("\n=== walk em->list .next (find head / detect cycle) ===")
+start_addr = em.list.address_of_().value_()
+seen = set([start_addr])
+members = [em]
+node = em.list.next
+head_addr = None
+for step in range(4000):
+    a = node.value_()
+    if a == start_addr:
+        print(f"  [returned to victim after {step} steps -> pure CYCLE, no head]"); break
+    if a in seen:
+        print(f"  [inner cycle at {hex(a)} step {step}]"); break
+    seen.add(a)
+    cand = container_of(node, 'struct extent_map', 'list')
+    # heuristic: a real em has plausible flags/refs; the head does not
+    try:
+        cf = int(cand.flags); cr = int(cand.refs.refs.counter)
+        looks_em = (0 <= cf <= 0x7f) and (0 < cr < 100000)
+    except Exception:
+        looks_em = False
+    if looks_em:
+        members.append(cand)
+        node = node.next
+    else:
+        head_addr = a
+        print(f"  [HEAD found at {hex(a)} after {step} member(s)]")
+        break
+else:
+    print("  [4000 steps, no head]")
+
+print(f"\n=== {len(members)} member em(s) on the list (victim first) ===")
+for m in members[:200]:
+    dump_em(m, tag="[V] " if m.value_()==EM else "")
+
+# ---- resolve owning inode ----
+if head_addr is not None:
+    inode_addr = head_addr - head_off
+    inode = Object(prog, 'struct btrfs_inode *', inode_addr)
+    print(f"\n=== OWNING INODE @ {hex(inode_addr)} ===")
+    try:
+        ino = int(inode.vfs_inode.i_ino)
+        mode = int(inode.vfs_inode.i_mode)
+        isreg = (mode & 0o170000) == 0o100000
+        islnk = (mode & 0o170000) == 0o120000
+        root = inode.root
+        rootid = int(root.root_key.objectid)
+        print(f"  i_ino={ino}(0x{ino:x}) i_mode=0o{mode:o} S_ISREG={isreg} S_ISLNK={islnk} "
+              f"root_objectid={rootid}")
+        for fld in ("logged_trans","last_log_commit","last_trans","last_sub_trans",
+                    "first_index","last_index"):
+            try: print(f"  {fld}={int(getattr(inode, fld))}")
+            except Exception: pass
+        try:
+            fs_info = root.fs_info
+            print(f"  fs_info.generation={int(fs_info.generation)} "
+                  f"last_trans_committed={int(fs_info.last_trans_committed)}")
+            print(f"  fs_info.balance_ctl={hex(fs_info.balance_ctl.value_())} "
+                  f"reloc_ctl={hex(fs_info.reloc_ctl.value_())}")
+        except Exception as e:
+            print(f"  fs_info read err: {e}")
+    except Exception as e:
+        print(f"  inode decode err: {e}")

@@ -1,0 +1,312 @@
+btrfs: extent map with EXTENT_FLAG_LOGGING freed while on modified_extents
+(BUG at fs/btrfs/extent_map.c btrfs_free_extent_map, RCU stall in
+btrfs_log_inode on production)
+
+Summary
+-------
+
+A compressed extent map is freed by the extent map shrinker while it still
+has EXTENT_FLAG_LOGGING set and is still linked on an inode's
+modified_extents list.  On a debug build this trips a diagnostic BUG() in
+btrfs_free_extent_map().  On production builds the same free corrupts the
+modified_extents list (the freed object is left linked), and a later fast
+fsync of the same inode spins forever walking the corrupted list in
+btrfs_log_inode(), which is detected as an RCU stall and panics
+(panic_on_rcu_stall=1).
+
+Root cause: btrfs_drop_extent_map_range() clears EXTENT_FLAG_LOGGING on the
+extent map being split and copies it onto the new split maps.  This is the
+opposite of what the code intends (and of what its own comment says).  When
+a drop runs while the map is being logged, it mints a split that carries
+EXTENT_FLAG_LOGGING, is placed on modified_extents, and holds only the tree
+reference (no logging reference).  Nothing ever clears the flag or drops a
+matching reference, so the shrinker eventually frees it while it is still
+listed.
+
+Kernel version
+--------------
+
+7.1.0-0_fbk0_rc7_0_gf782c3cf77ec (aarch64), builtin btrfs.
+
+The extent_map.c and tree-log.c code discussed below is unchanged between
+this build and current v7.1 tips.
+
+Machine type
+------------
+
+arm64, 64K page size with 4K sector size (btrfs subpage mode), mount
+options include compress-force=zstd:3.  Single device.
+
+Crash / warning (cleaned up)
+----------------------------
+
+  BTRFS: freed while still in tree or on a list:
+    em=... start=12914688 len=4096 disk_bytenr=220922499072
+    disk_num_bytes=4096 offset=12288 ram_bytes=20480 generation=43362
+    flags=0x28 refs=0 in_tree=0 list_empty=0 list=(next=... prev=...)
+  kernel BUG at fs/btrfs/extent_map.c
+  Internal error: Oops - BUG
+  CPU: 62 Comm: kworker/u294:3 Not tainted
+  Workqueue: events_unbound btrfs_extent_map_shrinker_worker
+  pc : btrfs_extent_map_shrinker_worker
+  Call trace:
+    btrfs_extent_map_shrinker_worker
+    process_scheduled_works
+    worker_thread
+    kthread
+    ret_from_fork
+
+flags=0x28 decodes to EXTENT_FLAG_COMPRESS_ZSTD (0x8) plus
+EXTENT_FLAG_LOGGING (0x20).  list_empty=0 means the map was still linked on
+a list when its last reference was dropped.
+
+Vmcore analysis
+---------------
+
+The BUG() in btrfs_free_extent_map() fires before kmem_cache_free(), so the
+offending map is intact in the dump.  Its address is in a register of the
+faulting frame.  drgn confirms the map matches the printed values exactly:
+
+  start=12914688 len=4096 offset=12288 ram_bytes=20480
+  disk_bytenr=220922499072 disk_num_bytes=4096 generation=43362
+  flags=0x28 (COMPRESS_ZSTD|LOGGING) refs=0 in_tree=false
+
+Walking em->list back to its head identifies the owning inode:
+
+  - inode number 216049, i_mode 0100644 (regular file), subvolume root 504
+  - logged_trans == 43362 == fs_info.generation == em->generation, i.e. the
+    inode was logged in the current transaction and the map is a
+    current-transaction extent
+  - fs_info.balance_ctl == NULL and fs_info.reloc_ctl == NULL: no balance
+    or relocation was running at the instant of the bad free
+  - the inode's modified_extents list holds two maps:
+
+      em A  start=12918784 len=12288 offset=0 ram=12288
+            disk_bytenr=221338947584 flags=0x8 (ZSTD) refs=1 in_tree=true
+      em B  start=12914688 len=4096  offset=12288 ram=20480
+            disk_bytenr=220922499072 flags=0x28 (ZSTD|LOGGING) refs=0
+            in_tree=false   (this is the victim)
+
+  - a scan of every task shows the only btrfs activity in the whole system
+    is the shrinker itself (btrfs_free_extent_map <- btrfs_scan_inode <-
+    btrfs_scan_root <- btrfs_extent_map_shrinker_worker).  No task is
+    logging or fsyncing this inode, no relocation task exists, and the
+    inode has no in-flight ordered extents.
+
+The victim geometry (offset=12288, len=4096, ram_bytes=20480) is a single
+surviving 4K slice of a 20K compressed extent that started at file offset
+12902400.  A whole-extent map would have offset 0 and len == ram_bytes.  So
+the victim is a split produced by btrfs_drop_extent_map_range(), not a map
+created directly by btrfs_get_extent()/create_io_em().
+
+Why the state can only come from the drop split
+-----------------------------------------------
+
+EXTENT_FLAG_LOGGING is set in exactly one place, tree-log.c
+btrfs_log_changed_extents():
+
+  refcount_inc(&em->refs);
+  em->flags |= EXTENT_FLAG_LOGGING;
+  list_add_tail(&em->list, &extents);
+
+That is, whenever the logger sets the flag it also takes an extra reference
+and moves the map onto its private list, and later clears the flag and
+drops that reference:
+
+  ret = log_one_extent(trans, inode, em, path, ctx);
+  write_lock(&tree->lock);
+  btrfs_clear_em_logging(inode, em);
+  btrfs_free_extent_map(em);
+
+A map that went through this path ends up with LOGGING cleared and off all
+lists.  The victim instead has LOGGING set, sits on modified_extents, and
+had only one reference (the tree reference) when the shrinker dropped it to
+zero.  It therefore never went through the logger's set/clear path.  The
+only other way LOGGING can appear on a map is the copy in
+btrfs_drop_extent_map_range() (see below).  This is what produced the
+victim.
+
+The bug
+-------
+
+fs/btrfs/extent_map.c btrfs_drop_extent_map_range():
+
+  flags = em->flags;
+  /*
+   * In case we split the extent map, we want to preserve the
+   * EXTENT_FLAG_LOGGING flag on our extent map, but we don't want
+   * it on the new extent maps.
+   */
+  em->flags &= ~(EXTENT_FLAG_PINNED | EXTENT_FLAG_LOGGING);
+  modified = !list_empty(&em->list);
+  ...
+  split->flags = flags;                 /* both split branches */
+  ...
+  replace_extent_mapping(inode, em, split, modified);
+
+The comment states the intent: keep LOGGING on em, do not put it on the
+splits.  The code does the opposite.  It clears LOGGING on em, and leaves
+LOGGING set in the local copy "flags", which is then assigned to every
+split via "split->flags = flags".
+
+Consequences when a drop runs on a map that is being logged (em has LOGGING
+set and is on the logger's private list, so "modified" is true):
+
+  1) em->flags loses LOGGING.  In replace_extent_mapping() the guard
+
+       if (!(cur->flags & EXTENT_FLAG_LOGGING))
+               list_del_init(&cur->list);
+
+     now unlinks em from the logger's private list, so the logger never
+     processes it and never drops its extra reference (a reference leak of
+     the original map).
+
+  2) The split is created with LOGGING set and added to modified_extents by
+     setup_extent_mapping() (modified == true), holding only the tree
+     reference.  No logger owns it, so nothing clears LOGGING or drops a
+     matching reference.
+
+Later the shrinker reaches the split.  In btrfs_remove_extent_mapping():
+
+  if (!(em->flags & EXTENT_FLAG_LOGGING))
+          list_del_init(&em->list);
+  remove_em(inode, em);
+
+LOGGING is set, so list_del_init() is skipped; remove_em() removes it from
+the rbtree, and the following btrfs_free_extent_map() drops the tree
+reference from 1 to 0 and frees the map while it is still on
+modified_extents.  On a debug build this is the BUG() above.  On production
+the freed object stays linked, so a subsequent fast fsync of the inode
+loops forever in tree-log.c btrfs_log_inode() walking the corrupted
+modified_extents list, producing the RCU stall seen in the fleet.
+
+The race
+--------
+
+Logger side, tree-log.c btrfs_log_changed_extents():
+
+  list_add_tail(&em->list, &extents);   /* under tree->lock, LOGGING set */
+  ...
+  write_unlock(&tree->lock);
+  ret = log_one_extent(trans, inode, em, path, ctx);
+  write_lock(&tree->lock);
+
+The lock is dropped around log_one_extent().  During that window the maps
+still queued on the private list have LOGGING set.
+
+The drop can only poison a map if it lands on one still queued on the
+logger's private list during the window above, so that "modified" is true
+and the inverted split is added to modified_extents.
+
+Dropper side, fs/btrfs/extent_map.c btrfs_drop_extent_map_range() acquires
+tree->lock and performs the split described above.  btrfs_sync_file() holds
+the inode's i_rwsem and i_mmap_lock across logging, so the concurrent drop
+must come from a path that takes neither.  Enumerating the drop callers:
+
+  - i_rwsem-guarded, therefore excluded while fsync holds i_rwsem write:
+    buffered write, direct IO write, truncate, hole punch, fallocate,
+    reflink/clone, and inode eviction.
+
+  - the inode's own writeback: excluded because a fast fsync flushes and
+    then waits for it.  Even with compression, btrfs_fdatawrite_range()
+    issues a second filemap_fdatawrite_range() that blocks on the page
+    lock the async worker holds until after create_io_em() (the drop) has
+    run, so those drops complete before logging starts.
+
+  - fs/btrfs/extent_map.c btrfs_split_extent_map() (ordered extent split):
+    asserts the map is neither compressed nor LOGGING, so it cannot touch
+    a compressed logged map.
+
+  - normal ordered completion: fs/btrfs/inode.c btrfs_finish_one_ordered()
+    calls btrfs_unpin_extent_cache(), which does not split or drop.
+
+Two drop paths survive: they run without i_rwsem and are not waited on by a
+fast fsync (which attaches ordered extents and lets them complete during or
+after logging rather than waiting for them):
+
+  1) relocation, fs/btrfs/relocation.c invalidate_extent_cache(), which
+     drops em ranges on regular file inodes holding only the io_tree extent
+     lock (btrfs_lock_extent()); the logger never takes that lock.
+
+  2) the ordered completion error/truncate path, fs/btrfs/inode.c
+     btrfs_finish_one_ordered() -> btrfs_drop_extent_map_range(), reached
+     when an ordered extent completes with an IO error or is truncated.
+
+The caller that won the race in this dump cannot be recovered: it had
+already returned by the time of the crash (only the shrinker is active,
+balance_ctl and reloc_ctl are NULL, and there are no in-flight ordered
+extents).  balance_ctl/reloc_ctl being NULL at the free does not rule out
+relocation as the minter, since relocation clears reloc_ctl as soon as it
+finishes and the poisoned map persists until the shrinker reaches it.  The
+victim's state can only be produced by the drop inversion firing on a
+logged map, so a qualifying drop did occur.  The persistence also requires
+that no fsync of the inode ran between the mint and the free, since a later
+fsync pulls the map back off modified_extents and heals it; that, plus the
+narrow window, explains why the crash is sporadic and hard to reproduce.
+
+The fix below removes the hazard regardless of which drop path races, which
+is the appropriate remedy because it restores the invariant the code
+documents rather than relying on "a drop never overlaps logging", which
+this dump shows is not guaranteed.  To positively identify the racing
+caller, add a WARN() with dump_stack() at the top of
+btrfs_drop_extent_map_range()'s per-map loop when em->flags has
+EXTENT_FLAG_LOGGING set; that records the offending stack at the moment of
+the mint rather than at the much later free.
+
+Suspect commit
+--------------
+
+The split copy "split->flags = flags" comes from 4c0c8cfc843345 (2022).
+The "flags = em->flags" capture and the comment come from e4cc1483f35940
+(Filipe Manana, 2023), which handled LOGGING correctly:
+
+  flags = em->flags;
+  clear_bit(EXTENT_FLAG_PINNED, &em->flags);
+  /* preserve LOGGING on our em, but not on the new extent maps */
+  clear_bit(EXTENT_FLAG_LOGGING, &flags);
+
+Here LOGGING is cleared on the local copy "flags" (so the splits do not get
+it) and left set on em.  The inversion was introduced by f86f7a75e2fb5f
+("btrfs: use the flags of an extent map to identify the compression type",
+Filipe Manana, 2023), which converted the flag words from a bitmap to a
+plain field.  Its hunk in btrfs_drop_extent_map_range() is:
+
+  -		clear_bit(EXTENT_FLAG_PINNED, &em->flags);
+  ...
+  -		clear_bit(EXTENT_FLAG_LOGGING, &flags);
+  +		em->flags &= ~(EXTENT_FLAG_PINNED | EXTENT_FLAG_LOGGING);
+
+The PINNED clear was translated correctly (clear on em).  The LOGGING clear
+was changed from "clear on the copy flags" to "clear on em", which inverts
+the behavior: the copy now keeps LOGGING and is stamped onto the splits,
+and em loses it.  This was presented as a mechanical refactor and the
+behavioral change appears unintended.
+
+Fix
+---
+
+Restore the e4cc1483 semantics: clear PINNED on em, and clear LOGGING on
+the copy used to build the splits.
+
+  		flags = em->flags;
+  		/*
+  		 * In case we split the extent map, we want to preserve the
+  		 * EXTENT_FLAG_LOGGING flag on our extent map, but we don't
+  		 * want it on the new extent maps.
+  		 */
+  -		em->flags &= ~(EXTENT_FLAG_PINNED | EXTENT_FLAG_LOGGING);
+  +		em->flags &= ~EXTENT_FLAG_PINNED;
+  +		flags &= ~EXTENT_FLAG_LOGGING;
+  		modified = !list_empty(&em->list);
+
+With this change a split never carries LOGGING, so it is a normal modified
+map that the shrinker can evict safely (LOGGING clear, so list_del_init()
+runs before the free) and that the next fast fsync will log.  The original
+em keeps LOGGING, so replace_extent_mapping() leaves it on the logger's
+private list and the logger cleans it up, which also removes the reference
+leak of the original.
+
+Note on the shrinker-side approach: making the shrinker skip maps with
+LOGGING set (attempted upstream and then reverted) only hides the free.  It
+leaves the poisoned split on modified_extents and leaks the original map's
+reference.  The correct fix is in the drop path.

@@ -1,0 +1,81 @@
+#!/usr/bin/env drgn
+# Walk a btrfs inode's extent_tree.modified_extents with CYCLE DETECTION and dump
+# each extent_map's state, to characterize the list corruption behind the
+# btrfs_log_inode (tree-log.c:7153) RCU stall.
+#
+# Usage:
+#   drgn -s /tmp/vmlinux-7.1.0-0_fbk0_rc2_0_geae9071be4d8 -c <vmcore> walk_modified_extents.drgn [inode_ptr]
+# Default inode_ptr matches host twshared131076 crash 2026-06-26 23:04 (ino 0x348ae).
+import sys
+from drgn import Object, cast, container_of
+
+# Defaults: host twshared103142 crash (full vmcore), CPU 68 dnf fdatasync, ino 0x3497a.
+INODE  = int(sys.argv[1], 0) if len(sys.argv) > 1 else 0xffff0000eda3c518
+CURSOR = int(sys.argv[2], 0) if len(sys.argv) > 2 else 0xffff0008b2b21ba0  # btrfs_log_inode loop cursor `n`
+
+# EXTENT_FLAG_* bit values (enum ENUM_BIT order in extent_map.h)
+FLAGS = [(0x01,"PINNED"),(0x02,"CZLIB"),(0x04,"CLZO"),(0x08,"CZSTD"),
+         (0x10,"PREALLOC"),(0x20,"LOGGING"),(0x40,"MERGED")]
+def fstr(f):
+    return "|".join(n for b,n in FLAGS if f & b) or "0"
+
+inode = Object(prog, 'struct btrfs_inode *', INODE)
+emt = inode.extent_tree.address_of_()
+head = emt.modified_extents.address_of_()
+head_addr = head.value_()
+try:    ino = hex(int(inode.vfs_inode.i_ino))
+except Exception: ino = '?'
+print(f"inode={hex(INODE)} ino={ino} cursor_n={hex(CURSOR)} "
+      f"extent_tree={hex(emt.value_())} modified_extents.head={hex(head_addr)}")
+print(f"  head.next={hex(emt.modified_extents.next.value_())} head.prev={hex(emt.modified_extents.prev.value_())}")
+
+# --- collect rbtree em addresses (for in-tree cross-check) with cycle-safe bound ---
+tree_ems = set()
+try:
+    from drgn.helpers.linux.rbtree import rbtree_inorder_for_each_entry
+    for em in rbtree_inorder_for_each_entry('struct extent_map', emt.root.address_of_(), 'rb_node'):
+        tree_ems.add(em.value_())
+        if len(tree_ems) > 100000:
+            print("  [rbtree walk bailed at 100k -- rbtree may be corrupt too]"); break
+    print(f"  rbtree em count: {len(tree_ems)}")
+except Exception as e:
+    print(f"  rbtree walk error: {e}")
+
+# --- manual .next walk with cycle detection ---
+print("=== modified_extents .next walk (cycle-detecting) ===")
+seen = {}
+node = emt.modified_extents.next
+for step in range(500):
+    naddr = node.value_()
+    if naddr == head_addr:
+        print(f"  [reached head at step {step}: list is well-formed, length={step}]"); break
+    if naddr in seen:
+        print(f"  *** CYCLE detected: {hex(naddr)} first seen step {seen[naddr]}, revisited step {step} ***"); break
+    seen[naddr] = step
+    try:
+        em = container_of(node, 'struct extent_map', 'list')
+        emaddr = em.value_()
+        flags = int(em.flags)
+        refs = int(em.refs.refs.counter)
+        start = int(em.start); length = int(em.len)
+        gen = int(em.generation)
+        nxt = em.list.next.value_(); prv = em.list.prev.value_()
+        rbpc = int(em.rb_node.__rb_parent_color)
+        rb_self = em.rb_node.address_of_().value_()
+        in_tree_flag = (rbpc != rb_self)          # RB_EMPTY_NODE => not in tree
+        in_rbtree = emaddr in tree_ems
+        cur = "  <<<CURSOR(n)" if emaddr == CURSOR else ""
+        print(f"  [{step}] em={hex(emaddr)} flags={fstr(flags)}(0x{flags:x}) refs={refs} "
+              f"start={start} len={length} gen={gen} in_tree(rb)={in_tree_flag} in_rbtree(walk)={in_rbtree} "
+              f"next={hex(nxt)} prev={hex(prv)}{cur}")
+    except Exception as e:
+        print(f"  [{step}] node={hex(naddr)} DECODE ERROR: {e}")
+    node = node.next
+else:
+    print("  [stopped at 500 steps without finding head -- large cycle or huge list]")
+
+print("=== interpretation hints ===")
+print("  - LOGGING set on a node  => the f86f7a75 split-inherits-LOGGING / fsync-owned em")
+print("  - in_tree(rb)=False / in_rbtree=False => freed-or-removed em still on the list (UAF/free-on-list)")
+print("  - refs==0 or huge        => refcount imbalance")
+print("  - MERGED set             => came through try_merge_map")
